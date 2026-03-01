@@ -74,6 +74,7 @@ void Configuration::writeConfiguration(void)
     configuration->setValue("toggleChromaDuringSeek", settings.viewOptions.toggleChromaDuringSeek);
     configuration->setValue("resizeFrameWithWindow", settings.viewOptions.resizeFrameWithWindow);
     configuration->setValue("showExportBoundary", settings.viewOptions.showExportBoundary);
+    configuration->setValue("exportBoundaryThickness", settings.viewOptions.exportBoundaryThickness);
     configuration->endGroup();
 
     // Sync the settings with disk
@@ -115,6 +116,9 @@ void Configuration::readConfiguration(void)
     settings.viewOptions.toggleChromaDuringSeek = configuration->value("toggleChromaDuringSeek", false).toBool();
     settings.viewOptions.resizeFrameWithWindow = configuration->value("resizeFrameWithWindow", true).toBool();
     settings.viewOptions.showExportBoundary = configuration->value("showExportBoundary", false).toBool();
+    settings.viewOptions.exportBoundaryThickness = configuration->value("exportBoundaryThickness", 4).toInt();
+    if (settings.viewOptions.exportBoundaryThickness < 1) settings.viewOptions.exportBoundaryThickness = 1;
+    if (settings.viewOptions.exportBoundaryThickness > 8) settings.viewOptions.exportBoundaryThickness = 8;
     configuration->endGroup();
 }
 
@@ -145,6 +149,7 @@ void Configuration::setDefault(void)
     settings.viewOptions.toggleChromaDuringSeek = false;
     settings.viewOptions.resizeFrameWithWindow = true;
     settings.viewOptions.showExportBoundary = false;
+    settings.viewOptions.exportBoundaryThickness = 4;
 
     // Write the configuration
     writeConfiguration();
@@ -323,4 +328,14 @@ void Configuration::setShowExportBoundary(bool showExportBoundary)
 bool Configuration::getShowExportBoundary(void)
 {
     return settings.viewOptions.showExportBoundary;
+}
+
+void Configuration::setExportBoundaryThickness(qint32 exportBoundaryThickness)
+{
+    settings.viewOptions.exportBoundaryThickness = exportBoundaryThickness;
+}
+
+qint32 Configuration::getExportBoundaryThickness(void)
+{
+    return settings.viewOptions.exportBoundaryThickness;
 }

@@ -68,6 +68,8 @@ public:
     bool getResizeFrameWithWindow(void);
     void setShowExportBoundary(bool showExportBoundary);
     bool getShowExportBoundary(void);
+    void setExportBoundaryThickness(qint32 exportBoundaryThickness);
+    qint32 getExportBoundaryThickness(void);
 
 signals:
 
@@ -103,6 +105,7 @@ private:
         bool toggleChromaDuringSeek;
         bool resizeFrameWithWindow;
         bool showExportBoundary;
+        qint32 exportBoundaryThickness;
     };
 
     // Overall settings structure

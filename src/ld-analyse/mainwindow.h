@@ -120,6 +120,7 @@ private slots:
     void videoLevelsChangedSignalHandler(qint32 blackLevel, qint32 whiteLevel);
     void chromaDecoderConfigChangedSignalHandler();
     void exportBoundaryToggledSignalHandler(bool enabled);
+    void exportBoundaryThicknessChangedSignalHandler(int thickness);
 
     // Tbc Source signal handlers
     void on_busy(QString infoMessage);
@@ -158,6 +159,7 @@ private:
     TbcSource tbcSource;
     bool displayAspectRatio;
     bool showExportBoundary = false;
+    qint32 exportBoundaryThickness = 4;
 	bool autoResize = true;
 	bool resizeFrameWithWindow = true;
     qint32 lastScopeLine;

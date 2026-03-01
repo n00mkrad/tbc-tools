@@ -172,9 +172,12 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     // Connect to the video parameters changed signal
     connect(videoParametersDialog, &VideoParametersDialog::videoParametersChanged, this, &MainWindow::videoParametersChangedSignalHandler);
     connect(videoParametersDialog, &VideoParametersDialog::exportBoundaryToggled, this, &MainWindow::exportBoundaryToggledSignalHandler);
+    connect(videoParametersDialog, &VideoParametersDialog::exportBoundaryThicknessChanged, this, &MainWindow::exportBoundaryThicknessChangedSignalHandler);
 
     showExportBoundary = configuration.getShowExportBoundary();
     videoParametersDialog->setShowExportBoundary(showExportBoundary);
+    exportBoundaryThickness = configuration.getExportBoundaryThickness();
+    videoParametersDialog->setExportBoundaryThickness(exportBoundaryThickness);
 
     // Connect to the chroma decoder configuration changed signal
     connect(chromaDecoderConfigDialog, &ChromaDecoderConfigDialog::chromaDecoderConfigChanged, this, &MainWindow::chromaDecoderConfigChangedSignalHandler);
@@ -802,7 +805,8 @@ void MainWindow::updateImageViewer()
                 painter.setRenderHint(QPainter::Antialiasing, false);
 
                 QPen pen(QColor(255, 0, 0));
-                pen.setWidth(4);
+                const int thickness = (exportBoundaryThickness < 1) ? 1 : ((exportBoundaryThickness > 8) ? 8 : exportBoundaryThickness);
+                pen.setWidth(thickness);
                 pen.setJoinStyle(Qt::MiterJoin);
                 painter.setPen(pen);
                 painter.setBrush(Qt::NoBrush);
@@ -2118,6 +2122,15 @@ void MainWindow::exportBoundaryToggledSignalHandler(bool enabled)
 {
     showExportBoundary = enabled;
     configuration.setShowExportBoundary(enabled);
+    configuration.writeConfiguration();
+
+    updateImageViewer();
+}
+
+void MainWindow::exportBoundaryThicknessChangedSignalHandler(int thickness)
+{
+    exportBoundaryThickness = thickness;
+    configuration.setExportBoundaryThickness(thickness);
     configuration.writeConfiguration();
 
     updateImageViewer();

@@ -1,16 +1,23 @@
-# ld-decode Tools
+# TBC Tools
 
-This is the complete suite of tools for processing LaserDisc captures and TBC (Time Base Corrected) files. The ld-decode project provides professional-grade tools for digitizing, processing, and analyzing analog video sources with exceptional quality and accuracy.
+This is the complete suite of tools for processing TBC (Time Base Corrected) files from the decode projects, [vhs-decode](https://github.com/oyvindln/vhs-decode/wiki), [cvbs-decode](https://github.com/oyvindln/vhs-decode/wiki/CVBS-Composite-Decode), [ld-decode](https://github.com/happycube/ld-decode). 
+
+These tools are for analyzing analog video sources, handling the 4fsc video data, metadata and final tweaks in chroma-decoding and levels before converting to YUV digital video files. 
+
+Please see the [releases page](https://github.com/harrypm/tbc-tools/releases/) for ready to use self-contained binarys for production usage. 
 
 ## Tool Categories
 
 ### Core Processing Tools
+
 - **ld-process-vbi** - Decode Vertical Blanking Interval data
 - **ld-process-vits** - Process Vertical Interval Test Signals
 - **ld-process-ac3** - Extract Dolby Digital AC3 audio tracks
 
 ### EFM Decoder Suite
+
 *Replaces deprecated ld-process-efm with staged decoding and stacking capabilities*
+
 - **efm-decoder-f2** - Convert EFM T-values to F2 sections
 - **efm-decoder-d24** - Convert F2 sections to Data24 format
 - **efm-decoder-audio** - Convert EFM Data24 sections to 16-bit stereo PCM audio
@@ -18,6 +25,7 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 - **efm-stacker-f2** - Combine multiple F2 captures for improved quality
 
 ### Analysis and Quality Tools
+
 - **ld-analyse** - GUI tool for TBC file analysis and visualization
 - **ld-discmap** - TBC and VBI alignment and correction tool
 - **ld-dropout-correct** - Advanced dropout detection and correction
@@ -25,41 +33,37 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 - **ld-disc-stacker** - Combine multiple TBC captures for improved quality
 
 ### Export and Conversion Tools
+
 - **ld-export-metadata** - Export TBC metadata to external formats
 - **ld-lds-converter** - Convert between 10-bit and 16-bit LaserDisc sample formats
-- **tbc-metadata-converter** - Convert between old internal JSON and new internal SQLite metadata formats
+- **tbc-metadata-converter** - Convert between  JSON & SQLite metadata formats
 
 ### Utility Scripts
+
 - **ld-compress** - Compress TBC files for storage (in scripts/)
 - **filtermaker** - Create custom filtering profiles (in scripts/)
 - **tbc-video-export-legacy** - Legacy TBC to video conversion (archived)
 
 ## Getting Started
 
-1. **Capture Processing**: Start with `ld-decode` to convert raw RF captures to TBC format
-2. **Quality Analysis**: Use `ld-analyse` to assess capture quality and identify issues
-3. **Correction**: Apply `ld-dropout-correct` for dropout repair if needed
-4. **Chroma Decoding**: Process composite sources with `ld-chroma-decoder`
-5. **Export**: Convert to final formats using `tbc-video-export`
+1. **Analysis**: Use `ld-analyse` to assess capture quality and identify issues such as off-set images or chroma phase/gain correction.
+2. **Correction**: Apply `ld-dropout-correct` for dropout masking
+3. **Export**: Convert to final formats using `tbc-video-export` to chroma-decode and encode a video file
 
 ## Important Notes
 
-- **Metadata Formats**: SQLite (`.tbc.db`) is the primary internal metadata format, with JSON metadata still supported by selected tools and workflows
-- **File Extensions**: TBC files use `.tbc` extension; metadata is commonly `.tbc.db` (SQLite) and can also be `.json` where supported
-- **Dependencies**: Most tools require FFmpeg and other multimedia libraries
-- **Performance**: Many tools support multi-threading for faster processing
-
-> [!WARNING]  
-> The SQLite metadata format is **internal to ld-decode tools only** and subject to change without notice. External tools and scripts should **not** access this database directly. Instead, use `ld-export-metadata` or similar tools to export metadata in stable, documented formats.
+- **Metadata Formats**: SQLite (`.tbc.db`) is the 2026-present metadata format, JSON metadata (2017-2026) being still supported by the tools and used by many older builds for the decode suite. 
+- **File Extensions**: TBC files use `.tbc` extension; metadata is commonly `.tbc.json` & `.tbc.db` (SQLite) 
+- **Dependencies**: Most tools require FFmpeg and other multimedia libraries.
+- **Performance**: Many tools support multi-threading for fast real-time or faster processing.
 
 ## Documentation
 
 Each tool directory contains detailed README.md files with:
-- Comprehensive usage instructions
+- Basic usage instructions
 - Complete option references
-- Practical examples
+- Usage examples
 - Input/output format specifications
-- Troubleshooting guides
+- Troubleshooting Refrences
 
-See individual tool directories for specific documentation.
-
+See individual tool directories for specific tool documentation.

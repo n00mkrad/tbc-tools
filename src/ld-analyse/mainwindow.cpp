@@ -208,14 +208,14 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
         ui->posTimecodeLineEdit->setPlaceholderText(tr("HH:MM:SS:FF"));
         ui->posTimecodeLineEdit->setMaxLength(15);
         ui->posTimecodeLineEdit->setAlignment(Qt::AlignCenter);
-        ui->posTimecodeLineEdit->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        ui->posTimecodeLineEdit->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         QFont valueFont = ui->posTimecodeLineEdit->font();
-        valueFont.setPointSize(qMax(11, valueFont.pointSize() + 2));
+        valueFont.setPointSize(qMax(11, valueFont.pointSize() + 1));
         ui->posTimecodeLineEdit->setFont(valueFont);
         const QFontMetrics valueMetrics(valueFont);
-        const int valueMinWidth = valueMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 28;
+        const int valueMinWidth = valueMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 10;
         ui->posTimecodeLineEdit->setMinimumWidth(valueMinWidth);
-        ui->posTimecodeLineEdit->setMaximumWidth(valueMinWidth + 26);
+        ui->posTimecodeLineEdit->setMaximumWidth(valueMinWidth + 8);
         ui->posTimecodeLineEdit->setVisible(false);
     }
     if (ui->posNumberSpinBox) {
@@ -310,9 +310,6 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     const QByteArray savedMainGeometry = configuration.getMainWindowGeometry();
     if (!savedMainGeometry.isEmpty()) {
         restoreGeometry(savedMainGeometry);
-    }
-    if (width() < 1180) {
-        resize(1180, qMax(height(), 700));
     }
     scaleFactor = configuration.getMainWindowScaleFactor();
 
@@ -566,6 +563,7 @@ void MainWindow::resetGui()
     ui->posNumberSpinBox->setValue(1);
     if (ui->posTimecodeLineEdit) {
         ui->posTimecodeLineEdit->setText(frameToTimecode(1));
+        ui->posTimecodeLineEdit->setVisible(true);
     }
     ui->posHorizontalSlider->setValue(1);
    (this->width() >= 930) ? ui->dropoutsPushButton->setText(tr("Dropouts Off")) : ui->dropoutsPushButton->setText(tr("Drop N"));
@@ -676,8 +674,13 @@ void MainWindow::updateGuiUnloaded()
     // Update the current field/frame number
     setCurrentFrame(1);
     ui->posNumberSpinBox->setValue(1);
+    ui->posNumberSpinBox->setVisible(false);
+    if (ui->posNumberSpinBoxLabel) {
+        ui->posNumberSpinBoxLabel->setVisible(false);
+    }
     if (ui->posTimecodeLineEdit) {
         ui->posTimecodeLineEdit->setText(frameToTimecode(1));
+        ui->posTimecodeLineEdit->setVisible(true);
     }
     ui->posHorizontalSlider->setValue(1);
 
@@ -2705,6 +2708,55 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
     int width = this->width();
+    const auto setButtonMaxWidth = [](QPushButton *button, int maxWidth) {
+        if (button) {
+            button->setMaximumWidth(maxWidth);
+        }
+    };
+
+    if (width > 1000) {
+        setButtonMaxWidth(ui->videoPushButton, 80);
+        setButtonMaxWidth(ui->aspectPushButton, 70);
+        setButtonMaxWidth(ui->dropoutsPushButton, 115);
+        setButtonMaxWidth(ui->sourcesPushButton, 110);
+        setButtonMaxWidth(ui->viewPushButton, 100);
+        setButtonMaxWidth(ui->fieldOrderPushButton, 145);
+        if (ui->horizontalSpacer) {
+            ui->horizontalSpacer->changeSize(12, 30, QSizePolicy::Maximum, QSizePolicy::Minimum);
+        }
+        if (ui->horizontalSpacer_2) {
+            ui->horizontalSpacer_2->changeSize(12, 20, QSizePolicy::Maximum, QSizePolicy::Minimum);
+        }
+    } else if (width >= 930) {
+        setButtonMaxWidth(ui->videoPushButton, 72);
+        setButtonMaxWidth(ui->aspectPushButton, 64);
+        setButtonMaxWidth(ui->dropoutsPushButton, 102);
+        setButtonMaxWidth(ui->sourcesPushButton, 98);
+        setButtonMaxWidth(ui->viewPushButton, 92);
+        setButtonMaxWidth(ui->fieldOrderPushButton, 118);
+        if (ui->horizontalSpacer) {
+            ui->horizontalSpacer->changeSize(8, 30, QSizePolicy::Maximum, QSizePolicy::Minimum);
+        }
+        if (ui->horizontalSpacer_2) {
+            ui->horizontalSpacer_2->changeSize(8, 20, QSizePolicy::Maximum, QSizePolicy::Minimum);
+        }
+    } else {
+        setButtonMaxWidth(ui->videoPushButton, 58);
+        setButtonMaxWidth(ui->aspectPushButton, 52);
+        setButtonMaxWidth(ui->dropoutsPushButton, 74);
+        setButtonMaxWidth(ui->sourcesPushButton, 70);
+        setButtonMaxWidth(ui->viewPushButton, 66);
+        setButtonMaxWidth(ui->fieldOrderPushButton, 88);
+        if (ui->horizontalSpacer) {
+            ui->horizontalSpacer->changeSize(4, 30, QSizePolicy::Maximum, QSizePolicy::Minimum);
+        }
+        if (ui->horizontalSpacer_2) {
+            ui->horizontalSpacer_2->changeSize(4, 20, QSizePolicy::Maximum, QSizePolicy::Minimum);
+        }
+    }
+    if (ui->horizontalLayout_3) {
+        ui->horizontalLayout_3->invalidate();
+    }
 
 	//field order rename depending on size
 	if (!tbcSource.getFieldOrder())

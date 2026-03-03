@@ -38,6 +38,13 @@ elseif(UNIX)
     ${ld-analyse_SOURCES})
 endif()
 
+if(APPLE)
+    set(APP_ICON_RESOURCE_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/Graphics/appicon.icns")
+    target_sources(ld-analyse PRIVATE ${APP_ICON_RESOURCE_MACOS})
+    set_source_files_properties(${APP_ICON_RESOURCE_MACOS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+    set_target_properties(ld-analyse PROPERTIES MACOSX_BUNDLE_ICON_FILE "appicon.icns")
+endif()
+
 
 target_include_directories(ld-analyse PRIVATE
     ${FFTW_INCLUDE_DIR}

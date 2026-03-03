@@ -14,6 +14,8 @@
 #include <QtGlobal>
 #include <QCommandLineParser>
 #include <QLoggingCategory>
+#include <QPixmap>
+#include <QStyleFactory>
 
 #ifdef Q_OS_WIN
 #include <QSettings>
@@ -24,6 +26,28 @@
 #endif
 
 #include "tbc/logging.h"
+namespace {
+QIcon bundledApplicationIcon()
+{
+    QIcon icon;
+    const QStringList iconResources = {
+        QStringLiteral(":/icons/Graphics/16-analyse.png"),
+        QStringLiteral(":/icons/Graphics/32-analyse.png"),
+        QStringLiteral(":/icons/Graphics/64-analyse.png"),
+        QStringLiteral(":/icons/Graphics/128-analyse.png"),
+        QStringLiteral(":/icons/Graphics/256-analyse.png")
+    };
+
+    for (const QString &resource : iconResources) {
+        QPixmap pixmap(resource);
+        if (!pixmap.isNull()) {
+            icon.addPixmap(pixmap);
+        }
+    }
+
+    return icon;
+}
+} // namespace
 
 // Cross-platform function to detect if system is in dark mode
 bool isDarkModeEnabled() {
@@ -103,6 +127,12 @@ int main(int argc, char *argv[])
     qInstallMessageHandler(filteredDebugOutputHandler);
 
     QApplication a(argc, argv);
+#ifdef Q_OS_WIN
+    // Use Fusion on Windows so theme/palette rendering remains consistent.
+    if (QStyleFactory::keys().contains(QStringLiteral("Fusion"), Qt::CaseInsensitive)) {
+        a.setStyle(QStringLiteral("Fusion"));
+    }
+#endif
 
     // Set application name and version
     QCoreApplication::setApplicationName("ld-analyse");
@@ -113,9 +143,15 @@ int main(int argc, char *argv[])
     // This must match the installed .desktop file name (without .desktop extension)
     QGuiApplication::setDesktopFileName("ld-analyse");
     
-    // Set application icon (for window decorations and taskbar)
-    // QIcon::fromTheme will find the icon we installed to /usr/local/share/icons/hicolor/
-    a.setWindowIcon(QIcon::fromTheme("ld-analyse"));
+    // Set application icon (for window decorations and taskbar/dock).
+    // QIcon::fromTheme works on desktops with an installed theme; otherwise use bundled assets.
+    QIcon appIcon = QIcon::fromTheme(QStringLiteral("ld-analyse"));
+    if (appIcon.isNull()) {
+        appIcon = bundledApplicationIcon();
+    }
+    if (!appIcon.isNull()) {
+        a.setWindowIcon(appIcon);
+    }
 
     // Set up the command line parser
     QCommandLineParser parser;

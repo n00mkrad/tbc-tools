@@ -93,9 +93,11 @@ private slots:
     void on_endPushButton_clicked();
     void on_startPushButton_clicked();
     void on_posNumberSpinBox_editingFinished();
+    void on_posTimecodeLineEdit_editingFinished();
     void on_posHorizontalSlider_valueChanged(int value);
     void on_posHorizontalSlider_sliderPressed();
     void on_posHorizontalSlider_sliderReleased();
+    void on_posHorizontalSlider_customContextMenuRequested(const QPoint &pos);
     void on_videoPushButton_clicked();
     void on_aspectPushButton_clicked();
     void on_dropoutsPushButton_clicked();
@@ -193,7 +195,13 @@ private:
     void updateAspectPushButton();
     void updateSourcesPushButton();
     void updateMetadataStatusPanel();
+    void updateBottomStatusReadout();
     void setViewValues();
+    int timecodeFrameRate() const;
+    QString frameToTimecode(qint32 frameNumber) const;
+    QString framesToDurationTimecode(qint32 frameCount) const;
+    qint32 timecodeToFrame(const QString &timecodeText, bool *ok = nullptr) const;
+    void updatePositionEditorValue(qint32 currentNumber);
     void setCurrentFrame(qint32 frame);
     void setCurrentField(qint32 field);
     void sanitizeCurrentPosition();

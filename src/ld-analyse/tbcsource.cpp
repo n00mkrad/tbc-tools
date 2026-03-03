@@ -1391,6 +1391,15 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
         QStringList candidates;
         candidates << (info.filePath() + QStringLiteral(".db"));
         candidates << (info.filePath() + QStringLiteral(".json"));
+        const QString basePath = QDir(info.absolutePath()).filePath(info.completeBaseName());
+        const QString baseDbCandidate = basePath + QStringLiteral(".db");
+        if (!candidates.contains(baseDbCandidate)) {
+            candidates << baseDbCandidate;
+        }
+        const QString baseJsonCandidate = basePath + QStringLiteral(".json");
+        if (!candidates.contains(baseJsonCandidate)) {
+            candidates << baseJsonCandidate;
+        }
         const QString suffix = info.suffix().toLower();
         if (suffix == QLatin1String("ytbc")
             || suffix == QLatin1String("ctbc")

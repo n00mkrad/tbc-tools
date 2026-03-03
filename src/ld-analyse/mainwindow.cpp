@@ -19,12 +19,18 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QIcon>
+#include <QMenu>
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
+#include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QStyle>
 #include <QStyleFactory>
 #include <QSvgRenderer>
+#include <QStringList>
+#include <QTextStream>
+#include <QDateTime>
 #include <QtMath>
 #include <QUuid>
 
@@ -113,6 +119,81 @@ QString formatOptionalBoolFromInt(qint32 value)
     }
     return value != 0 ? QStringLiteral("Yes") : QStringLiteral("No");
 }
+
+void appendUniqueCandidate(QStringList &candidates, const QString &candidate)
+{
+    if (candidate.isEmpty()) {
+        return;
+    }
+
+    for (const QString &existing : candidates) {
+        if (existing.compare(candidate, Qt::CaseInsensitive) == 0) {
+            return;
+        }
+    }
+    candidates.append(candidate);
+}
+
+QString resolveSourceFilenameForMetadata(const QString &metadataFilename)
+{
+    const QFileInfo metadataInfo(metadataFilename);
+    if (!metadataInfo.exists()) {
+        return QString();
+    }
+
+    const QString metadataStem = metadataInfo.completeBaseName();
+    const QString metadataStemLower = metadataStem.toLower();
+    const QDir metadataDir(metadataInfo.absolutePath());
+
+    QStringList sourceCandidates;
+    const auto appendFileNameCandidate = [&metadataDir, &sourceCandidates](const QString &fileName) {
+        appendUniqueCandidate(sourceCandidates, metadataDir.filePath(fileName));
+    };
+
+    auto replaceSuffix = [](const QString &fileName, const QString &suffix, const QString &replacement) {
+        QString output = fileName;
+        output.chop(suffix.size());
+        output.append(replacement);
+        return output;
+    };
+
+    if (metadataStemLower.endsWith(QStringLiteral(".tbc"))
+        || metadataStemLower.endsWith(QStringLiteral(".ytbc"))
+        || metadataStemLower.endsWith(QStringLiteral(".ctbc"))
+        || metadataStemLower.endsWith(QStringLiteral(".tbcy"))
+        || metadataStemLower.endsWith(QStringLiteral(".tbcc"))) {
+        appendFileNameCandidate(metadataStem);
+
+        if (metadataStemLower.endsWith(QStringLiteral(".ctbc"))) {
+            appendFileNameCandidate(replaceSuffix(metadataStem, QStringLiteral(".ctbc"), QStringLiteral(".ytbc")));
+        } else if (metadataStemLower.endsWith(QStringLiteral(".tbcc"))) {
+            appendFileNameCandidate(replaceSuffix(metadataStem, QStringLiteral(".tbcc"), QStringLiteral(".tbcy")));
+        } else if (metadataStemLower.endsWith(QStringLiteral(".ytbc"))) {
+            appendFileNameCandidate(replaceSuffix(metadataStem, QStringLiteral(".ytbc"), QStringLiteral(".ctbc")));
+        } else if (metadataStemLower.endsWith(QStringLiteral(".tbcy"))) {
+            appendFileNameCandidate(replaceSuffix(metadataStem, QStringLiteral(".tbcy"), QStringLiteral(".tbcc")));
+        } else if (metadataStemLower.endsWith(QStringLiteral("_chroma.tbc"))) {
+            appendFileNameCandidate(metadataStem.left(metadataStem.size() - QStringLiteral("_chroma.tbc").size()) + QStringLiteral(".tbc"));
+        } else if (metadataStemLower.startsWith(QStringLiteral("chroma_"))
+                   && metadataStemLower.endsWith(QStringLiteral(".tbc"))) {
+            appendFileNameCandidate(metadataStem.mid(QStringLiteral("chroma_").size()));
+        }
+    } else {
+        appendFileNameCandidate(metadataStem + QStringLiteral(".tbc"));
+        appendFileNameCandidate(metadataStem + QStringLiteral(".ytbc"));
+        appendFileNameCandidate(metadataStem + QStringLiteral(".tbcy"));
+        appendFileNameCandidate(metadataStem + QStringLiteral(".ctbc"));
+        appendFileNameCandidate(metadataStem + QStringLiteral(".tbcc"));
+    }
+
+    for (const QString &candidate : sourceCandidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return QString();
+}
 } // namespace
 
 MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidget *parent) :
@@ -120,6 +201,40 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    if (ui->mainTabWidget && ui->viewerTab) {
+        ui->mainTabWidget->setCurrentWidget(ui->viewerTab);
+    }
+    if (ui->posTimecodeLineEdit) {
+        ui->posTimecodeLineEdit->setPlaceholderText(tr("HH:MM:SS:FF"));
+        ui->posTimecodeLineEdit->setMaxLength(15);
+        ui->posTimecodeLineEdit->setAlignment(Qt::AlignCenter);
+        ui->posTimecodeLineEdit->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        QFont valueFont = ui->posTimecodeLineEdit->font();
+        valueFont.setPointSize(qMax(11, valueFont.pointSize() + 2));
+        ui->posTimecodeLineEdit->setFont(valueFont);
+        const QFontMetrics valueMetrics(valueFont);
+        const int valueMinWidth = valueMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 28;
+        ui->posTimecodeLineEdit->setMinimumWidth(valueMinWidth);
+        ui->posTimecodeLineEdit->setMaximumWidth(valueMinWidth + 26);
+        ui->posTimecodeLineEdit->setVisible(false);
+    }
+    if (ui->posNumberSpinBox) {
+        QFont spinFont = ui->posNumberSpinBox->font();
+        spinFont.setPointSize(qMax(11, spinFont.pointSize() + 2));
+        ui->posNumberSpinBox->setFont(spinFont);
+        ui->posNumberSpinBox->setAlignment(Qt::AlignCenter);
+        const QFontMetrics spinMetrics(spinFont);
+        const int spinMinWidth = spinMetrics.horizontalAdvance(QStringLiteral("000000")) + 30;
+        ui->posNumberSpinBox->setMinimumWidth(spinMinWidth);
+        ui->posNumberSpinBox->setMaximumWidth(220);
+    }
+    if (ui->horizontalLayout_3 && ui->posTimecodeLineEdit) {
+        const int timecodeIndex = ui->horizontalLayout_3->indexOf(ui->posTimecodeLineEdit);
+        if (timecodeIndex >= 0) {
+            ui->horizontalLayout_3->setStretch(timecodeIndex, 0);
+        }
+    }
+    ui->posHorizontalSlider->setContextMenuPolicy(Qt::CustomContextMenu);
     ensureSvgButtonIcon(ui->startPushButton, QStringLiteral(":/icons/Graphics/start-frame.svg"));
     ensureSvgButtonIcon(ui->previousPushButton, QStringLiteral(":/icons/Graphics/prev-frame.svg"));
     ensureSvgButtonIcon(ui->nextPushButton, QStringLiteral(":/icons/Graphics/next-frame.svg"));
@@ -147,7 +262,6 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     metadataStatusDialog = new MetadataStatusDialog(this);
     exportDialog = new ExportDialog(this);
     ui->mainTabWidget->addTab(exportDialog, tr("Export"));
-    exportDialog->setSource(&tbcSource);
 
     // Add a status bar to show the state of the source video file
     ui->statusBar->addWidget(&sourceVideoStatus);
@@ -155,7 +269,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ui->statusBar->addWidget(&vbiStatus);
     ui->statusBar->addWidget(&timeCodeStatus);
     sourceVideoStatus.setText(tr("No source video file loaded"));
-    fieldNumberStatus.setText(tr(" -  Fields: ./."));
+    fieldNumberStatus.setText(tr(" Frames: ./. Fields: ./."));
     vbiStatus.hide();
     timeCodeStatus.hide();
 
@@ -193,7 +307,13 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     connect(&tbcSource, &TbcSource::finishedSaving, this, &MainWindow::on_finishedSaving);
 
     // Load the window geometry and settings from the configuration
-    restoreGeometry(configuration.getMainWindowGeometry());
+    const QByteArray savedMainGeometry = configuration.getMainWindowGeometry();
+    if (!savedMainGeometry.isEmpty()) {
+        restoreGeometry(savedMainGeometry);
+    }
+    if (width() < 1180) {
+        resize(1180, qMax(height(), 700));
+    }
     scaleFactor = configuration.getMainWindowScaleFactor();
 
     vbiDialog->restoreGeometry(configuration.getVbiDialogGeometry());
@@ -392,6 +512,9 @@ void MainWindow::setGuiEnabled(bool enabled)
 {
     // Enable the field/frame controls
     ui->posNumberSpinBox->setEnabled(enabled);
+    if (ui->posTimecodeLineEdit) {
+        ui->posTimecodeLineEdit->setEnabled(enabled);
+    }
     ui->previousPushButton->setEnabled(enabled);
     ui->nextPushButton->setEnabled(enabled);
     ui->startPushButton->setEnabled(enabled);
@@ -441,6 +564,9 @@ void MainWindow::resetGui()
     ui->posHorizontalSlider->setMinimum(1);
 
     ui->posNumberSpinBox->setValue(1);
+    if (ui->posTimecodeLineEdit) {
+        ui->posTimecodeLineEdit->setText(frameToTimecode(1));
+    }
     ui->posHorizontalSlider->setValue(1);
    (this->width() >= 930) ? ui->dropoutsPushButton->setText(tr("Dropouts Off")) : ui->dropoutsPushButton->setText(tr("Drop N"));
 
@@ -503,27 +629,8 @@ void MainWindow::updateGuiLoaded()
         ui->actionVectorscope->setEnabled(false);
     }
 
-    // Update the status bar
-    QString statusText;
-	if(tbcSource.getVideoParameters().tapeFormat != "") {
-		statusText += (tbcSource.getVideoParameters().tapeFormat + " ");
-	}
-    statusText += tbcSource.getSystemDescription();
-    if (metadataOnly) {
-        statusText += tr(" metadata loaded with ");
-    } else {
-        statusText += tr(" source loaded with ");
-    }
-
-    if (tbcSource.getFieldViewEnabled()) {
-        statusText += QString::number(tbcSource.getNumberOfFields());
-        statusText += tr(" fields available");
-    } else {
-        statusText += QString::number(tbcSource.getNumberOfFrames());
-        statusText += tr(" sequential frames available");
-    }
-
-    sourceVideoStatus.setText(statusText);
+    // Update the status bar readout
+    updateBottomStatusReadout();
 
     // Update source mode button
     updateSourcesPushButton();
@@ -558,9 +665,6 @@ void MainWindow::updateGuiLoaded()
 	}
 
     updateMetadataStatusPanel();
-    if (exportDialog) {
-        exportDialog->setSource(&tbcSource);
-    }
 }
 
 // Method to update the GUI when a file is unloaded
@@ -572,6 +676,9 @@ void MainWindow::updateGuiUnloaded()
     // Update the current field/frame number
     setCurrentFrame(1);
     ui->posNumberSpinBox->setValue(1);
+    if (ui->posTimecodeLineEdit) {
+        ui->posTimecodeLineEdit->setText(frameToTimecode(1));
+    }
     ui->posHorizontalSlider->setValue(1);
 
     // Set the window title
@@ -579,7 +686,7 @@ void MainWindow::updateGuiUnloaded()
 
     // Set the status bar text
     sourceVideoStatus.setText(tr("No source video file loaded"));
-    fieldNumberStatus.setText(tr("- Fields: ./."));
+    fieldNumberStatus.setText(tr(" Frames: ./. Fields: ./."));
     vbiStatus.hide();
     timeCodeStatus.hide();
 
@@ -738,17 +845,7 @@ void MainWindow::showImage()
 {
     tbcSource.load(currentFrameNumber, currentFieldNumber);
 
-    // Show the field numbers
-    if (tbcSource.getViewMode() == TbcSource::ViewMode::FIELD_VIEW) {
-        fieldNumberStatus.setText(QString(" - Field:  %1 (%2/2) - Frame: %3")
-                                  .arg(currentFieldNumber)
-                                  .arg(currentFieldNumber % 2 ? 1 : 2)
-                                  .arg(currentFrameNumber));
-    } else {
-        fieldNumberStatus.setText(QString(" - Fields: %1/%2")
-                                  .arg(tbcSource.getFirstFieldNumber())
-                                  .arg(tbcSource.getSecondFieldNumber()));
-    }
+    updateBottomStatusReadout();
 
     // Show VBI position in the status bar, if available
     if (tbcSource.getIsFrameVbiValid()) {
@@ -1039,7 +1136,8 @@ void MainWindow::loadTbcFile(QString inputFileName, bool forceMetadataOnly)
     QString suffix = inputInfo.suffix().toLower();
     bool isJson = (suffix == "json");
     bool isSqlite = (suffix == "db");
-    bool isMetadataOnly = forceMetadataOnly || isJson || isSqlite;
+    const bool isMetadataInput = isJson || isSqlite;
+    bool isMetadataOnly = forceMetadataOnly;
 
     if (forceMetadataOnly && !isJson && !isSqlite) {
         QString dbCandidate = resolvedInput;
@@ -1070,6 +1168,25 @@ void MainWindow::loadTbcFile(QString inputFileName, bool forceMetadataOnly)
         suffix = QFileInfo(resolvedInput).suffix().toLower();
         isJson = (suffix == "json");
         isSqlite = (suffix == "db");
+        isMetadataOnly = true;
+    }
+
+    if (!forceMetadataOnly && (isJson || isSqlite)) {
+        const QString resolvedSourceFilename = resolveSourceFilenameForMetadata(resolvedInput);
+        if (!resolvedSourceFilename.isEmpty()) {
+            if (isJson) {
+                metadataJsonLoaded = true;
+                metadataJsonFilename = resolvedInput;
+            }
+
+            // Keep reload behaviour aligned with the file the user selected.
+            lastFilename = resolvedInput;
+            tbcSource.loadSource(resolvedSourceFilename, resolvedInput);
+            return;
+        }
+
+        isMetadataOnly = true;
+    } else if (isMetadataInput) {
         isMetadataOnly = true;
     }
 
@@ -1119,6 +1236,145 @@ void MainWindow::updateVectorscopeDialogue()
 }
 
 // Method to set the view (field/frame) values
+int MainWindow::timecodeFrameRate() const
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        return 30;
+    }
+    switch (tbcSource.getSystem()) {
+    case PAL:
+        return 25;
+    case PAL_M:
+    case NTSC:
+    default:
+        return 30;
+    }
+}
+
+QString MainWindow::frameToTimecode(qint32 frameNumber) const
+{
+    const int fps = qMax(1, timecodeFrameRate());
+    const qint64 frameIndex = qMax<qint64>(0, static_cast<qint64>(frameNumber) - 1);
+    const qint64 totalSeconds = frameIndex / fps;
+    const qint64 framePart = frameIndex % fps;
+    const qint64 hours = totalSeconds / 3600;
+    const qint64 minutes = (totalSeconds % 3600) / 60;
+    const qint64 seconds = totalSeconds % 60;
+    return QStringLiteral("%1:%2:%3:%4")
+        .arg(hours, 2, 10, QChar('0'))
+        .arg(minutes, 2, 10, QChar('0'))
+        .arg(seconds, 2, 10, QChar('0'))
+        .arg(framePart, 2, 10, QChar('0'));
+}
+
+QString MainWindow::framesToDurationTimecode(qint32 frameCount) const
+{
+    const int fps = qMax(1, timecodeFrameRate());
+    const qint64 safeFrameCount = qMax<qint64>(0, frameCount);
+    const qint64 totalSeconds = safeFrameCount / fps;
+    const qint64 framePart = safeFrameCount % fps;
+    const qint64 hours = totalSeconds / 3600;
+    const qint64 minutes = (totalSeconds % 3600) / 60;
+    const qint64 seconds = totalSeconds % 60;
+    return QStringLiteral("%1:%2:%3:%4")
+        .arg(hours, 2, 10, QChar('0'))
+        .arg(minutes, 2, 10, QChar('0'))
+        .arg(seconds, 2, 10, QChar('0'))
+        .arg(framePart, 2, 10, QChar('0'));
+}
+
+qint32 MainWindow::timecodeToFrame(const QString &timecodeText, bool *ok) const
+{
+    if (ok) {
+        *ok = false;
+    }
+
+    const QString trimmed = timecodeText.trimmed();
+    if (trimmed.isEmpty()) {
+        return 1;
+    }
+
+    bool numericOk = false;
+    const qint32 numericFrame = trimmed.toInt(&numericOk);
+    if (numericOk) {
+        if (ok) {
+            *ok = true;
+        }
+        return qMax(1, numericFrame);
+    }
+
+    static const QRegularExpression pattern(
+        QStringLiteral("^\\s*(\\d+):(\\d{1,2}):(\\d{1,2}):(\\d{1,2})\\s*$"));
+    const QRegularExpressionMatch match = pattern.match(trimmed);
+    if (!match.hasMatch()) {
+        return 1;
+    }
+
+    bool hoursOk = false;
+    bool minutesOk = false;
+    bool secondsOk = false;
+    bool framesOk = false;
+    const qint64 hours = match.captured(1).toLongLong(&hoursOk);
+    const int minutes = match.captured(2).toInt(&minutesOk);
+    const int seconds = match.captured(3).toInt(&secondsOk);
+    const int frames = match.captured(4).toInt(&framesOk);
+    const int fps = qMax(1, timecodeFrameRate());
+    if (!hoursOk || !minutesOk || !secondsOk || !framesOk
+        || minutes < 0 || minutes >= 60
+        || seconds < 0 || seconds >= 60
+        || frames < 0 || frames >= fps) {
+        return 1;
+    }
+
+    const qint64 totalFrames = ((hours * 3600) + (minutes * 60) + seconds) * fps + frames + 1;
+    if (ok) {
+        *ok = true;
+    }
+    return static_cast<qint32>(qMax<qint64>(1, totalFrames));
+}
+
+void MainWindow::updatePositionEditorValue(qint32 currentNumber)
+{
+    if (ui->posNumberSpinBox) {
+        const QSignalBlocker blocker(ui->posNumberSpinBox);
+        ui->posNumberSpinBox->setValue(currentNumber);
+    }
+    if (ui->posTimecodeLineEdit && !tbcSource.getFieldViewEnabled()) {
+        const QSignalBlocker blocker(ui->posTimecodeLineEdit);
+        ui->posTimecodeLineEdit->setText(frameToTimecode(currentNumber));
+    }
+}
+
+void MainWindow::updateBottomStatusReadout()
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        sourceVideoStatus.setText(tr("No source video file loaded"));
+        fieldNumberStatus.setText(tr(" Frames: ./. Fields: ./."));
+        return;
+    }
+
+    QString sourcePrefix;
+    if (!tbcSource.getVideoParameters().tapeFormat.isEmpty()) {
+        sourcePrefix += tbcSource.getVideoParameters().tapeFormat + QLatin1Char(' ');
+    }
+    sourcePrefix += tbcSource.getSystemDescription();
+    sourcePrefix += tbcSource.getIsMetadataOnly()
+                        ? tr(" Metadata Duration: ")
+                        : tr(" Source Duration: ");
+    sourcePrefix += framesToDurationTimecode(tbcSource.getNumberOfFrames());
+    sourceVideoStatus.setText(sourcePrefix);
+
+    const qint32 totalFrames = qMax(1, tbcSource.getNumberOfFrames());
+    const qint32 totalFields = qMax(1, tbcSource.getNumberOfFields());
+    const qint32 frameCurrent = qBound(1, currentFrameNumber, totalFrames);
+    const qint32 firstField = qBound(1, tbcSource.getFirstFieldNumber(), totalFields);
+    const qint32 secondField = qBound(1, tbcSource.getSecondFieldNumber(), totalFields);
+    fieldNumberStatus.setText(QStringLiteral(" Frames: %1/%2 Fields: %3/%4")
+                                  .arg(frameCurrent)
+                                  .arg(totalFrames)
+                                  .arg(firstField)
+                                  .arg(secondField));
+}
 void MainWindow::setViewValues()
 {
     qint32 currentNumber, maximum;
@@ -1172,14 +1428,28 @@ void MainWindow::setViewValues()
 	}
 
     ui->posNumberSpinBox->setMaximum(maximum);
-    ui->posNumberSpinBox->setValue(currentNumber);
+    updatePositionEditorValue(currentNumber);
     ui->posHorizontalSlider->setMaximum(maximum);
     ui->posHorizontalSlider->setPageStep(maximum / 100);
     ui->posHorizontalSlider->setValue(currentNumber);
 
+    if (ui->posTimecodeLineEdit) {
+        const bool fieldView = tbcSource.getFieldViewEnabled();
+        ui->posNumberSpinBox->setVisible(fieldView);
+        ui->posTimecodeLineEdit->setVisible(!fieldView);
+        if (!fieldView) {
+            ui->posTimecodeLineEdit->setText(frameToTimecode(currentNumber));
+        }
+    }
+
     ui->viewPushButton->setText(buttonLabel);
-    ui->posNumberSpinBoxLabel->setText(spinLabel);
-    ui->posNumberSpinBoxLabel->repaint();
+    if (ui->posNumberSpinBoxLabel) {
+        const bool fieldView = tbcSource.getFieldViewEnabled();
+        ui->posNumberSpinBoxLabel->setVisible(fieldView);
+        if (fieldView) {
+            ui->posNumberSpinBoxLabel->setText(spinLabel);
+        }
+    }
 }
 
 // Set the current frame, field is updated based on frame number
@@ -1552,7 +1822,7 @@ void MainWindow::on_previousPushButton_clicked()
         currentNumber = currentFrameNumber;
     }
 
-    ui->posNumberSpinBox->setValue(currentNumber);
+    updatePositionEditorValue(currentNumber);
     ui->posHorizontalSlider->setValue(currentNumber);
 }
 
@@ -1572,7 +1842,7 @@ void MainWindow::on_nextPushButton_clicked()
         currentNumber = currentFrameNumber;
     }
 
-    ui->posNumberSpinBox->setValue(currentNumber);
+    updatePositionEditorValue(currentNumber);
     ui->posHorizontalSlider->setValue(currentNumber);
 }
 
@@ -1622,7 +1892,7 @@ void MainWindow::on_endPushButton_clicked()
         uiNumber = currentFieldNumber;
     }
 
-    ui->posNumberSpinBox->setValue(uiNumber);
+    updatePositionEditorValue(uiNumber);
     ui->posHorizontalSlider->setValue(uiNumber);
 }
 
@@ -1636,38 +1906,51 @@ void MainWindow::on_startPushButton_clicked()
         uiNumber = currentFieldNumber;
     }
 
-    ui->posNumberSpinBox->setValue(uiNumber);
+    updatePositionEditorValue(uiNumber);
     ui->posHorizontalSlider->setValue(uiNumber);
 }
 
 // Field/Frame number spin box editing has finished
 void MainWindow::on_posNumberSpinBox_editingFinished()
 {
+    if (!tbcSource.getIsSourceLoaded() || !tbcSource.getFieldViewEnabled()) {
+        return;
+    }
     qint32 currentNumber;
     qint32 totalNumber;
-
-    if (tbcSource.getFieldViewEnabled()) {
-        currentNumber = currentFieldNumber;
-        totalNumber = tbcSource.getNumberOfFields();
-    } else {
-        currentNumber = currentFrameNumber;
-        totalNumber = tbcSource.getNumberOfFrames();
-    }
+    currentNumber = currentFieldNumber;
+    totalNumber = tbcSource.getNumberOfFields();
 
     if (ui->posNumberSpinBox->value() != currentNumber) {
         if (ui->posNumberSpinBox->value() < 1) ui->posNumberSpinBox->setValue(1);
         if (ui->posNumberSpinBox->value() > totalNumber) ui->posNumberSpinBox->setValue(totalNumber);
-
-        if (tbcSource.getFieldViewEnabled()) {
-            setCurrentField(ui->posNumberSpinBox->value());
-            currentNumber = currentFieldNumber;
-        } else {
-            setCurrentFrame(ui->posNumberSpinBox->value());
-            currentNumber = currentFrameNumber;
-        }
+        setCurrentField(ui->posNumberSpinBox->value());
+        currentNumber = currentFieldNumber;
 
         ui->posHorizontalSlider->setValue(currentNumber);
     }
+}
+
+void MainWindow::on_posTimecodeLineEdit_editingFinished()
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getFieldViewEnabled() || !ui->posTimecodeLineEdit) {
+        return;
+    }
+
+    bool ok = false;
+    qint32 requestedFrame = timecodeToFrame(ui->posTimecodeLineEdit->text(), &ok);
+    if (!ok) {
+        ui->posTimecodeLineEdit->setText(frameToTimecode(currentFrameNumber));
+        statusBar()->showMessage(tr("Invalid timecode. Use HH:MM:SS:FF."), 3000);
+        return;
+    }
+
+    const qint32 clampedFrame = qBound<qint32>(1, requestedFrame, qMax(1, tbcSource.getNumberOfFrames()));
+    if (clampedFrame != currentFrameNumber) {
+        setCurrentFrame(clampedFrame);
+        ui->posHorizontalSlider->setValue(clampedFrame);
+    }
+    ui->posTimecodeLineEdit->setText(frameToTimecode(currentFrameNumber));
 }
 
 // Field/frame slider value has changed
@@ -1675,9 +1958,13 @@ void MainWindow::on_posHorizontalSlider_valueChanged(int value)
 {
     if (!tbcSource.getIsSourceLoaded()) return;
     
-    // Update the spinbox immediately for visual feedback
+    // Update the active position editor immediately for visual feedback
     if (ui->posNumberSpinBox->isEnabled()) {
-        ui->posNumberSpinBox->setValue(value);
+        if (tbcSource.getFieldViewEnabled()) {
+            ui->posNumberSpinBox->setValue(value);
+        } else if (ui->posTimecodeLineEdit && ui->posTimecodeLineEdit->isEnabled()) {
+            ui->posTimecodeLineEdit->setText(frameToTimecode(value));
+        }
     }
     
     // Store the pending value
@@ -1714,6 +2001,50 @@ void MainWindow::on_posHorizontalSlider_sliderReleased()
             setCurrentFrame(pendingSliderValue);
         }
         pendingSliderValue = -1;
+    }
+}
+
+void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint &pos)
+{
+    if (!ui || !ui->posHorizontalSlider || !exportDialog || !tbcSource.getIsSourceLoaded()) {
+        return;
+    }
+
+    const QSlider *slider = ui->posHorizontalSlider;
+    const int sliderWidth = qMax(1, slider->width());
+    const int xPosition = qBound(0, pos.x(), sliderWidth);
+    const int sliderValue = QStyle::sliderValueFromPosition(slider->minimum(),
+                                                             slider->maximum(),
+                                                             xPosition,
+                                                             sliderWidth);
+    int framePoint = sliderValue;
+    if (tbcSource.getFieldViewEnabled()) {
+        framePoint = (sliderValue + 1) / 2;
+    }
+    framePoint = qBound(1, framePoint, qMax(1, tbcSource.getNumberOfFrames()));
+    const QString framePointTimecode = frameToTimecode(framePoint);
+
+    QMenu sliderMenu(this);
+    QAction *setInPointAction = sliderMenu.addAction(tr("Set In Point (%1 | %2)")
+                                                        .arg(framePoint)
+                                                        .arg(framePointTimecode));
+    QAction *setOutPointAction = sliderMenu.addAction(tr("Set Out Point (%1 | %2)")
+                                                         .arg(framePoint)
+                                                         .arg(framePointTimecode));
+    QAction *selectedAction = sliderMenu.exec(ui->posHorizontalSlider->mapToGlobal(pos));
+    if (!selectedAction) {
+        return;
+    }
+    if (selectedAction == setInPointAction) {
+        exportDialog->setInPoint(framePoint);
+        statusBar()->showMessage(tr("Export In point set to frame %1 (%2)")
+                                     .arg(framePoint)
+                                     .arg(framePointTimecode), 3000);
+    } else if (selectedAction == setOutPointAction) {
+        exportDialog->setOutPoint(framePoint);
+        statusBar()->showMessage(tr("Export Out point set to frame %1 (%2)")
+                                     .arg(framePoint)
+                                     .arg(framePointTimecode), 3000);
     }
 }
 
@@ -2319,6 +2650,12 @@ void MainWindow::on_finishedLoading(bool success)
         // Update the GUI
         resetGui();
         updateGuiLoaded();
+        if (ui && ui->mainTabWidget && ui->viewerTab) {
+            ui->mainTabWidget->setCurrentWidget(ui->viewerTab);
+        }
+        if (exportDialog) {
+            exportDialog->setSource(&tbcSource);
+        }
 
         // Set the main window title
         this->setWindowTitle(tr("ld-analyse - ") + tbcSource.getCurrentSourceFilename());

@@ -10,15 +10,24 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFontMetrics>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QMessageBox>
+#include <QLineEdit>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QSignalBlocker>
+#include <QSpinBox>
 #include <QStandardPaths>
+#include <QTextStream>
 #include <QUuid>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QHeaderView>
 #include <QAbstractItemView>
+#include <QTimer>
 #include <signal.h>
 
 namespace {
@@ -120,14 +129,66 @@ QStringList parseProfiles(const QString &rawOutput, QString *defaultProfile)
     return profiles;
 }
 
+struct ActiveAreaFrameDefaults {
+    int ffll = 0;
+    int lfll = 0;
+    int ffrl = 0;
+    int lfrl = 0;
+};
 
-bool parseProgressLine(const QString &line, ExportDialog::ExportProcessStat *stat)
+ActiveAreaFrameDefaults activeAreaDefaultsForSystem(int system)
+{
+    switch (system) {
+    case PAL:
+    case PAL_M:
+        return {22, 308, 44, 620};
+    case NTSC:
+    default:
+        return {20, 259, 40, 525};
+    }
+}
+
+bool hasExplicitVerticalFraming(const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    return videoParameters.firstActiveFieldLine > 0
+           && videoParameters.lastActiveFieldLine > 0
+           && videoParameters.firstActiveFrameLine > 0
+           && videoParameters.lastActiveFrameLine > 0;
+}
+
+bool usesCustomVerticalFraming(const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    if (!videoParameters.isValid || !hasExplicitVerticalFraming(videoParameters)) {
+        return false;
+    }
+
+    const ActiveAreaFrameDefaults defaults = activeAreaDefaultsForSystem(videoParameters.system);
+    return videoParameters.firstActiveFieldLine != defaults.ffll
+           || videoParameters.lastActiveFieldLine != defaults.lfll
+           || videoParameters.firstActiveFrameLine != defaults.ffrl
+           || videoParameters.lastActiveFrameLine != defaults.lfrl;
+}
+
+double frameRateForSystem(int system)
+{
+    switch (system) {
+    case PAL:
+        return 25.0;
+    case PAL_M:
+    case NTSC:
+    default:
+        return 30000.0 / 1001.0;
+    }
+}
+
+
+bool parseRealtimeProgressLine(const QString &line, ExportDialog::ExportProcessStat *stat)
 {
     if (!stat) {
         return false;
     }
     static const QRegularExpression progressPattern(
-        QStringLiteral("^\\s*[/\\\\\\-|●○]?\\s*([a-z0-9\\-]+)\\s*(?:\\(([^)]+)\\))?\\s*([A-Za-z%]+)\\s*:\\s*(\\d+)(?:/(\\d+))?.*?errors:\\s*(\\d+)(?:.*?fps:\\s*([0-9.]+))?"),
+        QStringLiteral("^\\s*[/\\\\\\-|●○]?\\s*([A-Za-z0-9_.\\-]+)\\s*(?:\\(([^)]+)\\))?\\s*([A-Za-z0-9_%/\\-]+)\\s*:\\s*([0-9,]+)(?:/([0-9,]+))?.*?errors:\\s*([0-9,]+)(?:.*?fps:\\s*([0-9.,]+))?"),
         QRegularExpression::CaseInsensitiveOption);
     const QRegularExpressionMatch match = progressPattern.match(line);
     if (!match.hasMatch()) {
@@ -157,6 +218,153 @@ bool parseProgressLine(const QString &line, ExportDialog::ExportProcessStat *sta
     }
     return !stat->process.isEmpty();
 }
+bool parseFfmpegProgressLine(const QString &line, ExportDialog::ExportProcessStat *stat)
+{
+    if (!stat) {
+        return false;
+    }
+    static const QRegularExpression ffmpegPattern(
+        QStringLiteral("frame\\s*=\\s*([0-9,]+)\\s+fps\\s*=\\s*([0-9.,]+)"),
+        QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatchIterator matches = ffmpegPattern.globalMatch(line);
+    if (!matches.hasNext()) {
+        return false;
+    }
+    QRegularExpressionMatch match;
+    while (matches.hasNext()) {
+        match = matches.next();
+    }
+
+    stat->process = QStringLiteral("ffmpeg");
+    stat->tbcType = QStringLiteral("—");
+    stat->trackedName = QStringLiteral("frame");
+    stat->current = match.captured(1).trimmed();
+    stat->total = QStringLiteral("—");
+    stat->errors = QStringLiteral("0");
+    stat->fps = match.captured(2).trimmed();
+    return !stat->current.isEmpty();
+}
+
+bool parseInfoProgressLine(const QString &line, ExportDialog::ExportProcessStat *stat)
+{
+    if (!stat) {
+        return false;
+    }
+
+    static const QRegularExpression framesProcessedPattern(
+        QStringLiteral("^\\s*Info:\\s*([0-9,]+)\\s+frames\\s+processed\\s*-\\s*([0-9.,]+)\\s+FPS\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatch match = framesProcessedPattern.match(line);
+    if (match.hasMatch()) {
+        stat->process = QStringLiteral("ld-chroma-decoder");
+        stat->tbcType = QStringLiteral("—");
+        stat->trackedName = QStringLiteral("frame");
+        stat->current = match.captured(1).trimmed();
+        stat->total = QStringLiteral("—");
+        stat->errors = QStringLiteral("0");
+        stat->fps = match.captured(2).trimmed();
+        return !stat->current.isEmpty();
+    }
+
+    static const QRegularExpression writtenFramePattern(
+        QStringLiteral("^\\s*Info:\\s*Processed\\s+and\\s+written\\s+frame\\s+([0-9,]+)\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    match = writtenFramePattern.match(line);
+    if (match.hasMatch()) {
+        stat->process = QStringLiteral("ld-chroma-decoder");
+        stat->tbcType = QStringLiteral("—");
+        stat->trackedName = QStringLiteral("frame");
+        stat->current = match.captured(1).trimmed();
+        stat->total = QStringLiteral("—");
+        stat->errors = QStringLiteral("0");
+        stat->fps = QStringLiteral("—");
+        return !stat->current.isEmpty();
+    }
+
+    static const QRegularExpression startLengthPattern(
+        QStringLiteral("^\\s*Info:\\s*Processing\\s+from\\s+start\\s+frame\\s*#\\s*([0-9,]+)\\s+with\\s+a\\s+length\\s+of\\s+([0-9,]+)\\s+frames\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    match = startLengthPattern.match(line);
+    if (match.hasMatch()) {
+        const QString startFrameText = match.captured(1).trimmed();
+        const QString totalText = match.captured(2).trimmed();
+        QString startFrameDigits = startFrameText;
+        bool startOk = false;
+        const int startFrame = startFrameDigits.remove(QLatin1Char(',')).toInt(&startOk);
+        stat->process = QStringLiteral("ld-chroma-decoder");
+        stat->tbcType = QStringLiteral("—");
+        stat->trackedName = QStringLiteral("frame");
+        stat->current = startOk && startFrame > 0 ? QString::number(startFrame - 1) : QStringLiteral("0");
+        stat->total = totalText.isEmpty() ? QStringLiteral("—") : totalText;
+        stat->errors = QStringLiteral("0");
+        stat->fps = QStringLiteral("—");
+        return true;
+    }
+
+    static const QRegularExpression dropoutWorkloadPattern(
+        QStringLiteral("^\\s*Info:\\s*Using\\s+[0-9,]+\\s+threads\\s+to\\s+process\\s+([0-9,]+)\\s+frames\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    match = dropoutWorkloadPattern.match(line);
+    if (match.hasMatch()) {
+        stat->process = QStringLiteral("ld-dropout-correct");
+        stat->tbcType = QStringLiteral("—");
+        stat->trackedName = QStringLiteral("frame");
+        stat->current = QStringLiteral("0");
+        stat->total = match.captured(1).trimmed();
+        stat->errors = QStringLiteral("0");
+        stat->fps = QStringLiteral("—");
+        return true;
+    }
+
+    return false;
+}
+
+bool parseCompletionSummaryLine(const QString &line, ExportDialog::ExportProcessStat *stat)
+{
+    if (!stat) {
+        return false;
+    }
+
+    static const QRegularExpression dropoutCompletePattern(
+        QStringLiteral("^\\s*Info:\\s*Dropout correction complete\\s*-\\s*([0-9,]+)\\s+frames?\\s+in\\s+[0-9.]+\\s+seconds\\s*\\(\\s*([0-9.,]+)\\s+FPS\\s*\\)"),
+        QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatch match = dropoutCompletePattern.match(line);
+    if (match.hasMatch()) {
+        stat->process = QStringLiteral("ld-dropout-correct");
+        stat->tbcType = QStringLiteral("—");
+        stat->trackedName = QStringLiteral("frame");
+        stat->current = match.captured(1).trimmed();
+        stat->total = stat->current;
+        stat->errors = QStringLiteral("0");
+        stat->fps = match.captured(2).trimmed();
+        return !stat->current.isEmpty();
+    }
+
+    static const QRegularExpression processingCompletePattern(
+        QStringLiteral("^\\s*Info:\\s*Processing complete\\s*-\\s*([0-9,]+)\\s+frames?\\s+in\\s+[0-9.]+\\s+seconds\\s*\\(\\s*([0-9.,]+)\\s+FPS\\s*\\)"),
+        QRegularExpression::CaseInsensitiveOption);
+    match = processingCompletePattern.match(line);
+    if (match.hasMatch()) {
+        stat->process = QStringLiteral("ld-chroma-decoder");
+        stat->tbcType = QStringLiteral("—");
+        stat->trackedName = QStringLiteral("frame");
+        stat->current = match.captured(1).trimmed();
+        stat->total = stat->current;
+        stat->errors = QStringLiteral("0");
+        stat->fps = match.captured(2).trimmed();
+        return !stat->current.isEmpty();
+    }
+
+    return false;
+}
+
+bool parseProgressLine(const QString &line, ExportDialog::ExportProcessStat *stat)
+{
+    return parseRealtimeProgressLine(line, stat)
+        || parseInfoProgressLine(line, stat)
+        || parseFfmpegProgressLine(line, stat)
+        || parseCompletionSummaryLine(line, stat);
+}
 
 }
 
@@ -167,8 +375,141 @@ ExportDialog::ExportDialog(QWidget *parent) :
     ui->setupUi(this);
 
     ui->inputLineEdit->setReadOnly(true);
-    ui->profileComboBox->setEditable(true);
-    ui->profileComboBox->setInsertPolicy(QComboBox::NoInsert);
+    ui->profileComboBox->setEditable(false);
+    if (ui->resolutionModeComboBox) {
+        ui->resolutionModeComboBox->clear();
+        ui->resolutionModeComboBox->addItem(tr("Active Area"), QStringLiteral("active_area"));
+        ui->resolutionModeComboBox->addItem(tr("Active + VBI"), QStringLiteral("active_vbi"));
+        ui->resolutionModeComboBox->addItem(tr("User Defined"), QStringLiteral("user_defined"));
+        const int activeAreaIndex = ui->resolutionModeComboBox->findData(QStringLiteral("active_area"));
+        ui->resolutionModeComboBox->setCurrentIndex(activeAreaIndex >= 0 ? activeAreaIndex : 0);
+    }
+    if (ui->audioProfileComboBox) {
+        ui->audioProfileComboBox->clear();
+        ui->audioProfileComboBox->addItem(tr("FLAC 16-bit"), QStringLiteral("flac_16"));
+        ui->audioProfileComboBox->addItem(tr("FLAC 24-bit"), QStringLiteral("flac_24"));
+        ui->audioProfileComboBox->addItem(tr("PCM 16-bit"), QStringLiteral("pcm_16"));
+        ui->audioProfileComboBox->addItem(tr("PCM 24-bit"), QStringLiteral("pcm_24"));
+        const int pcm24Index = ui->audioProfileComboBox->findData(QStringLiteral("pcm_24"));
+        ui->audioProfileComboBox->setCurrentIndex(pcm24Index >= 0 ? pcm24Index : 0);
+    }
+    if (ui->inPointTimecodeLineEdit) {
+        ui->inPointTimecodeLineEdit->setPlaceholderText(tr("HH:MM:SS:FF"));
+        ui->inPointTimecodeLineEdit->setMaxLength(15);
+        ui->inPointTimecodeLineEdit->setAlignment(Qt::AlignCenter);
+        QFont inFont = ui->inPointTimecodeLineEdit->font();
+        inFont.setPointSize(qMax(10, inFont.pointSize() + 1));
+        ui->inPointTimecodeLineEdit->setFont(inFont);
+    }
+    if (ui->outPointTimecodeLineEdit) {
+        ui->outPointTimecodeLineEdit->setPlaceholderText(tr("HH:MM:SS:FF"));
+        ui->outPointTimecodeLineEdit->setMaxLength(15);
+        ui->outPointTimecodeLineEdit->setAlignment(Qt::AlignCenter);
+        QFont outFont = ui->outPointTimecodeLineEdit->font();
+        outFont.setPointSize(qMax(10, outFont.pointSize() + 1));
+        ui->outPointTimecodeLineEdit->setFont(outFont);
+    }
+    if (ui->rangeLengthValueLabel) {
+        QFont durationFont = ui->rangeLengthValueLabel->font();
+        durationFont.setPointSize(qMax(10, durationFont.pointSize() + 1));
+        ui->rangeLengthValueLabel->setFont(durationFont);
+    }
+    if (ui->actionLayout) {
+        if (ui->actionSpacer) {
+            ui->actionSpacer->changeSize(0, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
+        }
+        if (ui->outPointLabel && ui->outPointTimecodeLineEdit) {
+            ui->actionLayout->removeWidget(ui->outPointLabel);
+            const int outEditIndex = ui->actionLayout->indexOf(ui->outPointTimecodeLineEdit);
+            ui->actionLayout->insertWidget(qMax(0, outEditIndex), ui->outPointLabel);
+        }
+        if (ui->rangeLengthLabel && ui->rangeLengthValueLabel && ui->outPointTimecodeLineEdit) {
+            ui->actionLayout->removeWidget(ui->rangeLengthLabel);
+            ui->actionLayout->removeWidget(ui->rangeLengthValueLabel);
+            const int outEditIndex = ui->actionLayout->indexOf(ui->outPointTimecodeLineEdit);
+            int insertIndex = qMax(0, outEditIndex + 1);
+            ui->actionLayout->insertWidget(insertIndex++, ui->rangeLengthLabel);
+            ui->actionLayout->insertWidget(insertIndex, ui->rangeLengthValueLabel);
+        }
+        if (ui->cancelButton) {
+            const int cancelIndex = ui->actionLayout->indexOf(ui->cancelButton);
+            if (cancelIndex >= 0) {
+                ui->actionLayout->insertStretch(cancelIndex, 1);
+            }
+        }
+        ui->actionLayout->invalidate();
+    }
+    if (ui->inPointSpinBox && ui->outPointSpinBox) {
+        ui->inPointSpinBox->setMinimum(1);
+        ui->inPointSpinBox->setMaximum(1);
+        ui->inPointSpinBox->setValue(1);
+        ui->outPointSpinBox->setMinimum(1);
+        ui->outPointSpinBox->setMaximum(1);
+        ui->outPointSpinBox->setValue(1);
+
+        connect(ui->inPointSpinBox, &QSpinBox::valueChanged, this, [this](int value) {
+            if (!ui->outPointSpinBox) {
+                return;
+            }
+            if (ui->outPointSpinBox->value() < value) {
+                ui->outPointSpinBox->setValue(value);
+            }
+            updateRangeLengthLabel();
+            syncRangeTimecodeEditors();
+        });
+        connect(ui->outPointSpinBox, &QSpinBox::valueChanged, this, [this](int value) {
+            if (!ui->inPointSpinBox) {
+                return;
+            }
+            if (value < ui->inPointSpinBox->value()) {
+                ui->inPointSpinBox->setValue(value);
+            }
+            updateRangeLengthLabel();
+            syncRangeTimecodeEditors();
+        });
+    }
+    if (ui->inPointSpinBox && ui->outPointSpinBox
+        && ui->inPointTimecodeLineEdit && ui->outPointTimecodeLineEdit) {
+        ui->inPointSpinBox->setVisible(false);
+        ui->outPointSpinBox->setVisible(false);
+        connect(ui->inPointTimecodeLineEdit, &QLineEdit::editingFinished, this, [this]() {
+            if (!ui || !ui->inPointTimecodeLineEdit || !ui->inPointSpinBox || !ui->outPointSpinBox) {
+                return;
+            }
+            bool ok = false;
+            int inFrame = timecodeToFrame(ui->inPointTimecodeLineEdit->text(), &ok);
+            if (!ok) {
+                syncRangeTimecodeEditors();
+                appendStatus(tr("Invalid In timecode. Use HH:MM:SS:FF."));
+                return;
+            }
+            inFrame = qBound(ui->inPointSpinBox->minimum(), inFrame, ui->inPointSpinBox->maximum());
+            ui->inPointSpinBox->setValue(inFrame);
+            if (ui->outPointSpinBox->value() < inFrame) {
+                ui->outPointSpinBox->setValue(inFrame);
+            }
+            syncRangeTimecodeEditors();
+        });
+        connect(ui->outPointTimecodeLineEdit, &QLineEdit::editingFinished, this, [this]() {
+            if (!ui || !ui->outPointTimecodeLineEdit || !ui->outPointSpinBox || !ui->inPointSpinBox) {
+                return;
+            }
+            bool ok = false;
+            int outFrame = timecodeToFrame(ui->outPointTimecodeLineEdit->text(), &ok);
+            if (!ok) {
+                syncRangeTimecodeEditors();
+                appendStatus(tr("Invalid Out timecode. Use HH:MM:SS:FF."));
+                return;
+            }
+            outFrame = qBound(ui->outPointSpinBox->minimum(), outFrame, ui->outPointSpinBox->maximum());
+            ui->outPointSpinBox->setValue(outFrame);
+            if (outFrame < ui->inPointSpinBox->value()) {
+                ui->inPointSpinBox->setValue(outFrame);
+            }
+            syncRangeTimecodeEditors();
+        });
+    }
+    updateRangeLengthLabel();
     if (ui->processStatsTable) {
         ui->processStatsTable->setColumnCount(7);
         ui->processStatsTable->setHorizontalHeaderLabels({
@@ -187,6 +528,7 @@ ExportDialog::ExportDialog(QWidget *parent) :
         ui->processStatsTable->setAlternatingRowColors(true);
         ui->processStatsTable->horizontalHeader()->setStretchLastSection(true);
         ui->processStatsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        ui->processStatsTable->setMinimumHeight(90);
     }
     if (ui->logTextEdit) {
         ui->logTextEdit->setMaximumBlockCount(3);
@@ -226,6 +568,203 @@ void ExportDialog::setSource(TbcSource *source)
     refreshProfiles();
 }
 
+void ExportDialog::setInPoint(int frameNumber)
+{
+    if (!ui || !ui->inPointSpinBox || !ui->outPointSpinBox) {
+        return;
+    }
+    const int clamped = qBound(ui->inPointSpinBox->minimum(), frameNumber, ui->inPointSpinBox->maximum());
+    ui->inPointSpinBox->setValue(clamped);
+    if (ui->outPointSpinBox->value() < clamped) {
+        ui->outPointSpinBox->setValue(clamped);
+    }
+    updateRangeLengthLabel();
+    syncRangeTimecodeEditors();
+}
+
+void ExportDialog::setOutPoint(int frameNumber)
+{
+    if (!ui || !ui->inPointSpinBox || !ui->outPointSpinBox) {
+        return;
+    }
+    const int clamped = qBound(ui->outPointSpinBox->minimum(), frameNumber, ui->outPointSpinBox->maximum());
+    ui->outPointSpinBox->setValue(clamped);
+    if (clamped < ui->inPointSpinBox->value()) {
+        ui->inPointSpinBox->setValue(clamped);
+    }
+    updateRangeLengthLabel();
+    syncRangeTimecodeEditors();
+}
+
+void ExportDialog::updateRangeControlsForSource(bool resetToFullRange)
+{
+    if (!ui || !ui->inPointSpinBox || !ui->outPointSpinBox) {
+        return;
+    }
+
+    const bool canUseRange = exportAvailable && tbcSource && tbcSource->getIsSourceLoaded() && !tbcSource->getIsMetadataOnly();
+    if (!canUseRange) {
+        const QSignalBlocker blockIn(ui->inPointSpinBox);
+        const QSignalBlocker blockOut(ui->outPointSpinBox);
+        ui->inPointSpinBox->setMinimum(1);
+        ui->inPointSpinBox->setMaximum(1);
+        ui->inPointSpinBox->setValue(1);
+        ui->outPointSpinBox->setMinimum(1);
+        ui->outPointSpinBox->setMaximum(1);
+        ui->outPointSpinBox->setValue(1);
+        updateRangeLengthLabel();
+        syncRangeTimecodeEditors();
+        return;
+    }
+
+    const int totalFrames = qMax(1, tbcSource->getNumberOfFrames());
+    int inPoint = ui->inPointSpinBox->value();
+    int outPoint = ui->outPointSpinBox->value();
+    if (resetToFullRange) {
+        inPoint = 1;
+        outPoint = totalFrames;
+    } else {
+        inPoint = qBound(1, inPoint, totalFrames);
+        outPoint = qBound(1, outPoint, totalFrames);
+        if (outPoint < inPoint) {
+            outPoint = inPoint;
+        }
+    }
+
+    const QSignalBlocker blockIn(ui->inPointSpinBox);
+    const QSignalBlocker blockOut(ui->outPointSpinBox);
+    ui->inPointSpinBox->setMinimum(1);
+    ui->inPointSpinBox->setMaximum(totalFrames);
+    ui->inPointSpinBox->setValue(inPoint);
+    ui->outPointSpinBox->setMinimum(1);
+    ui->outPointSpinBox->setMaximum(totalFrames);
+    ui->outPointSpinBox->setValue(outPoint);
+
+    updateRangeLengthLabel();
+    syncRangeTimecodeEditors();
+}
+
+void ExportDialog::updateRangeLengthLabel()
+{
+    if (!ui || !ui->rangeLengthValueLabel || !ui->inPointSpinBox || !ui->outPointSpinBox) {
+        return;
+    }
+    if (!exportAvailable) {
+        ui->rangeLengthValueLabel->setText(QStringLiteral("—"));
+        return;
+    }
+    const int inPoint = ui->inPointSpinBox->value();
+    const int outPoint = ui->outPointSpinBox->value();
+    const qint64 frameCount = qMax<qint64>(0, static_cast<qint64>(outPoint) - static_cast<qint64>(inPoint) + 1);
+    const int fps = qMax(1, timecodeFrameRate());
+    const qint64 totalSeconds = frameCount / fps;
+    const qint64 framePart = frameCount % fps;
+    const qint64 hours = totalSeconds / 3600;
+    const qint64 minutes = (totalSeconds % 3600) / 60;
+    const qint64 seconds = totalSeconds % 60;
+    ui->rangeLengthValueLabel->setText(QStringLiteral("%1:%2:%3:%4")
+                                           .arg(hours, 2, 10, QChar('0'))
+                                           .arg(minutes, 2, 10, QChar('0'))
+                                           .arg(seconds, 2, 10, QChar('0'))
+                                           .arg(framePart, 2, 10, QChar('0')));
+}
+
+int ExportDialog::timecodeFrameRate() const
+{
+    int system = NTSC;
+    if (tbcSource && tbcSource->getIsSourceLoaded()) {
+        system = tbcSource->getVideoParameters().system;
+    }
+    switch (static_cast<VideoSystem>(system)) {
+    case PAL:
+        return 25;
+    case PAL_M:
+    case NTSC:
+    default:
+        return 30;
+    }
+}
+
+QString ExportDialog::frameToTimecode(int frameNumber) const
+{
+    const int fps = qMax(1, timecodeFrameRate());
+    const qint64 frameIndex = qMax<qint64>(0, static_cast<qint64>(frameNumber) - 1);
+    const qint64 totalSeconds = frameIndex / fps;
+    const qint64 framePart = frameIndex % fps;
+    const qint64 hours = totalSeconds / 3600;
+    const qint64 minutes = (totalSeconds % 3600) / 60;
+    const qint64 seconds = totalSeconds % 60;
+    return QStringLiteral("%1:%2:%3:%4")
+        .arg(hours, 2, 10, QChar('0'))
+        .arg(minutes, 2, 10, QChar('0'))
+        .arg(seconds, 2, 10, QChar('0'))
+        .arg(framePart, 2, 10, QChar('0'));
+}
+
+int ExportDialog::timecodeToFrame(const QString &timecodeText, bool *ok) const
+{
+    if (ok) {
+        *ok = false;
+    }
+    const QString trimmed = timecodeText.trimmed();
+    if (trimmed.isEmpty()) {
+        return 1;
+    }
+
+    bool numericOk = false;
+    const int numericFrame = trimmed.toInt(&numericOk);
+    if (numericOk) {
+        if (ok) {
+            *ok = true;
+        }
+        return qMax(1, numericFrame);
+    }
+
+    static const QRegularExpression pattern(
+        QStringLiteral("^\\s*(\\d+):(\\d{1,2}):(\\d{1,2}):(\\d{1,2})\\s*$"));
+    const QRegularExpressionMatch match = pattern.match(trimmed);
+    if (!match.hasMatch()) {
+        return 1;
+    }
+
+    bool hoursOk = false;
+    bool minutesOk = false;
+    bool secondsOk = false;
+    bool framesOk = false;
+    const qint64 hours = match.captured(1).toLongLong(&hoursOk);
+    const int minutes = match.captured(2).toInt(&minutesOk);
+    const int seconds = match.captured(3).toInt(&secondsOk);
+    const int frames = match.captured(4).toInt(&framesOk);
+    const int fps = qMax(1, timecodeFrameRate());
+    if (!hoursOk || !minutesOk || !secondsOk || !framesOk
+        || minutes < 0 || minutes >= 60
+        || seconds < 0 || seconds >= 60
+        || frames < 0 || frames >= fps) {
+        return 1;
+    }
+
+    const qint64 frameNumber = ((hours * 3600) + (minutes * 60) + seconds) * fps + frames + 1;
+    if (ok) {
+        *ok = true;
+    }
+    return static_cast<int>(qMax<qint64>(1, frameNumber));
+}
+
+void ExportDialog::syncRangeTimecodeEditors()
+{
+    if (!ui || !ui->inPointSpinBox || !ui->outPointSpinBox) {
+        return;
+    }
+    if (ui->inPointTimecodeLineEdit) {
+        const QSignalBlocker blocker(ui->inPointTimecodeLineEdit);
+        ui->inPointTimecodeLineEdit->setText(frameToTimecode(ui->inPointSpinBox->value()));
+    }
+    if (ui->outPointTimecodeLineEdit) {
+        const QSignalBlocker blocker(ui->outPointTimecodeLineEdit);
+        ui->outPointTimecodeLineEdit->setText(frameToTimecode(ui->outPointSpinBox->value()));
+    }
+}
+
 void ExportDialog::updateFromSource()
 {
     const bool hasSource = tbcSource && tbcSource->getIsSourceLoaded();
@@ -234,6 +773,7 @@ void ExportDialog::updateFromSource()
 
     if (!hasSource) {
         ui->inputLineEdit->clear();
+        updateRangeControlsForSource(true);
         appendStatus(tr("No source loaded."));
         setBusy(exportProcess->state() != QProcess::NotRunning);
         return;
@@ -241,22 +781,36 @@ void ExportDialog::updateFromSource()
 
     if (metadataOnly) {
         ui->inputLineEdit->clear();
+        updateRangeControlsForSource(true);
         appendStatus(tr("Metadata-only mode (no TBC source)."));
         setBusy(exportProcess->state() != QProcess::NotRunning);
         return;
     }
 
     const QString inputFile = tbcSource->getCurrentSourceFilename();
+    bool sourceChanged = false;
     if (!inputFile.isEmpty()) {
         if (currentInputFile != inputFile) {
+            sourceChanged = true;
             currentInputFile = inputFile;
             ui->inputLineEdit->setText(inputFile);
             if (outputAutoSet || ui->outputLineEdit->text().trimmed().isEmpty()) {
                 ui->outputLineEdit->setText(defaultOutputBaseName(inputFile));
                 outputAutoSet = true;
             }
+            if (ui->resolutionModeComboBox) {
+                const LdDecodeMetaData::VideoParameters &videoParameters = tbcSource->getVideoParameters();
+                const QString modeData = usesCustomVerticalFraming(videoParameters)
+                                             ? QStringLiteral("user_defined")
+                                             : QStringLiteral("active_area");
+                const int modeIndex = ui->resolutionModeComboBox->findData(modeData);
+                if (modeIndex >= 0) {
+                    ui->resolutionModeComboBox->setCurrentIndex(modeIndex);
+                }
+            }
         }
     }
+    updateRangeControlsForSource(sourceChanged);
 
     setBusy(exportProcess->state() != QProcess::NotRunning);
     if (exportAvailable && exportProcess->state() == QProcess::NotRunning) {
@@ -410,6 +964,7 @@ void ExportDialog::on_exportButton_clicked()
         appendLog(tr("Export already running."));
         return;
     }
+    cancelRequested = false;
     appendStatus(tr("Starting export..."));
     appendLog(tr("Starting export..."));
     QString snapshotErrorMessage;
@@ -423,9 +978,89 @@ void ExportDialog::on_exportButton_clicked()
         QMessageBox::warning(this, tr("Error"), errorToShow);
         return;
     }
+    bool overwriteExisting = false;
+    const QString outputBase = sanitizeOutputBaseName(ui->outputLineEdit->text().trimmed());
+    QStringList existingOutputs;
+    if (findExistingOutputFiles(outputBase, &existingOutputs)) {
+        const int previewCount = qMin(existingOutputs.size(), 6);
+        QStringList previewLines;
+        for (int i = 0; i < previewCount; ++i) {
+            previewLines << existingOutputs.at(i);
+        }
+        if (existingOutputs.size() > previewCount) {
+            previewLines << tr("... and %1 more").arg(existingOutputs.size() - previewCount);
+        }
+
+        const QString promptText = tr("Output file(s) already exist for this base name:\n%1\n\nOverwrite existing output file(s)?")
+                                       .arg(previewLines.join(QLatin1Char('\n')));
+        const QMessageBox::StandardButton overwriteChoice = QMessageBox::question(
+            this, tr("Output already exists"), promptText, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (overwriteChoice != QMessageBox::Yes) {
+            cleanupTemporaryMetadataSnapshot();
+            appendStatus(tr("Export cancelled: output already exists."));
+            appendLog(tr("Export cancelled by user: overwrite was not confirmed."));
+            return;
+        }
+        overwriteExisting = true;
+        appendLog(tr("Overwrite confirmed for existing output file(s)."));
+    }
+    QString configErrorMessage;
+    const QString selectedProfile = ui->profileComboBox ? ui->profileComboBox->currentText().trimmed() : QString();
+    const QString selectedAudioProfile =
+        ui->audioProfileComboBox ? ui->audioProfileComboBox->currentData().toString() : QString();
+    const QString configOverridePath = createTemporaryExportConfig(&configErrorMessage,
+                                                                   selectedProfile,
+                                                                   selectedAudioProfile);
+    if (configOverridePath.isEmpty()) {
+        cleanupTemporaryMetadataSnapshot();
+        const QString errorToShow = configErrorMessage.isEmpty()
+                                        ? tr("Could not prepare export profile configuration.")
+                                        : configErrorMessage;
+        appendStatus(errorToShow);
+        appendLog(errorToShow);
+        QMessageBox::warning(this, tr("Error"), errorToShow);
+        return;
+    }
+    const int totalFrames = qMax(1, tbcSource->getNumberOfFrames());
+    int inPoint = ui->inPointSpinBox ? ui->inPointSpinBox->value() : 1;
+    int outPoint = ui->outPointSpinBox ? ui->outPointSpinBox->value() : totalFrames;
+    inPoint = qBound(1, inPoint, totalFrames);
+    outPoint = qBound(1, outPoint, totalFrames);
+    if (outPoint < inPoint) {
+        cleanupTemporaryMetadataSnapshot();
+        const QString errorToShow = tr("Out point must be greater than or equal to In point.");
+        appendStatus(errorToShow);
+        appendLog(errorToShow);
+        QMessageBox::warning(this, tr("Error"), errorToShow);
+        return;
+    }
+    const int zeroBasedStart = qMax(0, inPoint - 1);
+    const int rangeLength = outPoint - inPoint + 1;
+
+    QStringList exportAudioTracks = collectAudioTracks();
+    if (!exportAudioTracks.isEmpty() && (zeroBasedStart > 0 || rangeLength < totalFrames)) {
+        QString trimAudioErrorMessage;
+        if (!prepareTrimmedAudioTracks(zeroBasedStart, rangeLength, &exportAudioTracks, &trimAudioErrorMessage)) {
+            cleanupTemporaryMetadataSnapshot();
+            const QString errorToShow = trimAudioErrorMessage.isEmpty()
+                                            ? tr("Could not prepare audio track range.")
+                                            : trimAudioErrorMessage;
+            appendStatus(errorToShow);
+            appendLog(errorToShow);
+            QMessageBox::warning(this, tr("Error"), errorToShow);
+            return;
+        }
+        appendLog(tr("Prepared %1 range-aligned audio track(s).").arg(exportAudioTracks.size()));
+    }
 
     QString errorMessage;
-    const QStringList arguments = buildArguments(&errorMessage, metadataSnapshotPath);
+    const QStringList arguments = buildArguments(&errorMessage,
+                                                 metadataSnapshotPath,
+                                                 overwriteExisting,
+                                                 configOverridePath,
+                                                 exportAudioTracks,
+                                                 zeroBasedStart,
+                                                 rangeLength);
     if (arguments.isEmpty()) {
         cleanupTemporaryMetadataSnapshot();
         if (!errorMessage.isEmpty()) {
@@ -447,9 +1082,12 @@ void ExportDialog::on_exportButton_clicked()
     const QString commandLine = formatCommand(exportPath, arguments);
     appendLog(tr("Command: %1").arg(commandLine));
     resetProcessStats();
+    initializeProcessStats();
 
     processStdout.clear();
     processStderr.clear();
+    pendingStdoutBuffer.clear();
+    pendingStderrBuffer.clear();
     setBusy(true);
     exportProcess->setWorkingDirectory(QFileInfo(currentInputFile).absolutePath());
     {
@@ -515,9 +1153,15 @@ void ExportDialog::on_cancelButton_clicked()
         appendLog(tr("No export running."));
         return;
     }
+    if (cancelRequested) {
+        appendStatus(tr("Cancel already requested..."));
+        appendLog(tr("Cancel already requested; waiting for process to exit."));
+        return;
+    }
+    cancelRequested = true;
 
     appendStatus(tr("Cancel requested..."));
-    appendLog(tr("Cancel requested (sending Ctrl+C)."));
+    appendLog(tr("Cancel requested."));
 
 #if defined(Q_OS_UNIX)
     const qint64 pid = exportProcess->processId();
@@ -530,9 +1174,43 @@ void ExportDialog::on_cancelButton_clicked()
     } else {
         appendLog(tr("Export process ID unavailable; unable to send SIGINT."));
     }
+    QTimer::singleShot(3000, this, [this]() {
+        if (exportProcess && exportProcess->state() != QProcess::NotRunning) {
+            appendLog(tr("Process still running after SIGINT; sending kill()."));
+            exportProcess->kill();
+        }
+    });
 #else
+    const qint64 pid = exportProcess->processId();
+    bool taskkillStarted = false;
+    if (pid > 0) {
+        const QString taskkillPath = QStandardPaths::findExecutable(QStringLiteral("taskkill"));
+        const QString taskkillProgram = taskkillPath.isEmpty() ? QStringLiteral("taskkill") : taskkillPath;
+        const QStringList taskkillArgs = {
+            QStringLiteral("/PID"),
+            QString::number(pid),
+            QStringLiteral("/T"),
+            QStringLiteral("/F")
+        };
+        taskkillStarted = QProcess::startDetached(taskkillProgram, taskkillArgs);
+        if (taskkillStarted) {
+            appendLog(tr("Invoked taskkill /PID %1 /T /F for export process tree.").arg(pid));
+        } else {
+            appendLog(tr("Failed to launch taskkill for export process tree."));
+        }
+    } else {
+        appendLog(tr("Export process ID unavailable; cannot run taskkill by PID."));
+    }
     exportProcess->terminate();
-    appendLog(tr("Sent terminate request to tbc-video-export."));
+    appendLog(taskkillStarted
+                  ? tr("Sent terminate request to export process (taskkill already requested).")
+                  : tr("Sent terminate request to export process (fallback path)."));
+    QTimer::singleShot(1500, this, [this]() {
+        if (exportProcess && exportProcess->state() != QProcess::NotRunning) {
+            appendLog(tr("Process still running after terminate; sending kill()."));
+            exportProcess->kill();
+        }
+    });
 #endif
 }
 
@@ -540,7 +1218,10 @@ void ExportDialog::on_cancelButton_clicked()
 void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
     setBusy(false);
+    flushPendingProcessOutput();
     cleanupTemporaryMetadataSnapshot();
+    const bool wasCancelRequested = cancelRequested;
+    cancelRequested = false;
     const QString combinedOutput = processStdout + QStringLiteral("\n") + processStderr;
     const bool reportedFailure =
         combinedOutput.contains(QRegularExpression(QStringLiteral("\\bExport failed\\b"),
@@ -549,9 +1230,15 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
         || combinedOutput.contains(QStringLiteral("FileIOError"))
         || combinedOutput.contains(QStringLiteral("ProcessError"));
 
-    if (exitStatus == QProcess::NormalExit && exitCode == 0 && !reportedFailure) {
+    const bool success = exitStatus == QProcess::NormalExit && exitCode == 0 && !reportedFailure;
+    if (success) {
         appendStatus(tr("Export complete."));
         appendLog(tr("Export complete."));
+        return;
+    }
+    if (wasCancelRequested) {
+        appendStatus(tr("Export cancelled."));
+        appendLog(tr("Export cancelled."));
         return;
     }
 
@@ -570,62 +1257,94 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
 void ExportDialog::handleProcessError(QProcess::ProcessError)
 {
     setBusy(false);
+    flushPendingProcessOutput();
     cleanupTemporaryMetadataSnapshot();
     const QString errorText = exportProcess ? exportProcess->errorString() : QString();
+    if (cancelRequested) {
+        appendLog(errorText.isEmpty()
+                      ? tr("Process reported an error during cancellation.")
+                      : tr("Process reported an error during cancellation: %1").arg(errorText));
+        return;
+    }
     appendStatus(errorText.isEmpty() ? tr("Export failed to start.") : errorText);
     appendLog(errorText.isEmpty() ? tr("Export failed to start.") : errorText);
     QMessageBox::warning(this, tr("Export failed"),
                          errorText.isEmpty() ? tr("tbc-video-export could not be started.") : errorText);
+}
+void ExportDialog::processOutputLine(const QString &line, QString *lastStatus)
+{
+    const QString trimmed = line.trimmed();
+    if (trimmed.isEmpty() || isIgnorableLogLine(trimmed)) {
+        return;
+    }
+
+    ExportProcessStat stat;
+    if (parseProgressLine(trimmed, &stat)) {
+        updateProcessStat(stat);
+        return;
+    }
+
+    if (lastStatus) {
+        *lastStatus = trimmed;
+    }
+    appendLog(trimmed);
+}
+
+void ExportDialog::consumeProcessOutputChunk(const QString &chunk, QString *pendingBuffer)
+{
+    if (!pendingBuffer || chunk.isEmpty()) {
+        return;
+    }
+
+    QString buffer = *pendingBuffer + stripAnsiSequences(chunk);
+    ExportProcessStat ffmpegStat;
+    if (parseFfmpegProgressLine(buffer, &ffmpegStat)) {
+        updateProcessStat(ffmpegStat);
+    }
+    buffer.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+
+    const int lastNewline = buffer.lastIndexOf(QLatin1Char('\n'));
+    if (lastNewline < 0) {
+        if (buffer.size() > 32768) {
+            buffer = buffer.right(32768);
+        }
+        *pendingBuffer = buffer;
+        return;
+    }
+
+    const QString completeLines = buffer.left(lastNewline);
+    *pendingBuffer = buffer.mid(lastNewline + 1);
+
+    QString lastStatus;
+    const QStringList lines = completeLines.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const QString &line : lines) {
+        processOutputLine(line, &lastStatus);
+    }
+    if (!lastStatus.isEmpty()) {
+        appendStatus(lastStatus);
+    }
+}
+
+void ExportDialog::flushPendingProcessOutput()
+{
+    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingStdoutBuffer);
+    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingStderrBuffer);
+    pendingStdoutBuffer.clear();
+    pendingStderrBuffer.clear();
 }
 
 void ExportDialog::handleProcessStdout()
 {
     const QString chunk = QString::fromLocal8Bit(exportProcess->readAllStandardOutput());
     processStdout += chunk;
-    const QString cleaned = stripAnsiSequences(chunk);
-    const QStringList lines = cleaned.split(QRegularExpression(QStringLiteral("[\\r\\n]+")), Qt::SkipEmptyParts);
-    QString lastStatus;
-    for (const QString &line : lines) {
-        const QString trimmed = line.trimmed();
-        if (trimmed.isEmpty() || isIgnorableLogLine(trimmed)) {
-            continue;
-        }
-        ExportProcessStat stat;
-        if (parseProgressLine(trimmed, &stat)) {
-            updateProcessStat(stat);
-            continue;
-        }
-        lastStatus = trimmed;
-        appendLog(trimmed);
-    }
-    if (!lastStatus.isEmpty()) {
-        appendStatus(lastStatus);
-    }
+    consumeProcessOutputChunk(chunk, &pendingStdoutBuffer);
 }
 
 void ExportDialog::handleProcessStderr()
 {
     const QString chunk = QString::fromLocal8Bit(exportProcess->readAllStandardError());
     processStderr += chunk;
-    const QString cleaned = stripAnsiSequences(chunk);
-    const QStringList lines = cleaned.split(QRegularExpression(QStringLiteral("[\\r\\n]+")), Qt::SkipEmptyParts);
-    QString lastStatus;
-    for (const QString &line : lines) {
-        const QString trimmed = line.trimmed();
-        if (trimmed.isEmpty() || isIgnorableLogLine(trimmed)) {
-            continue;
-        }
-        ExportProcessStat stat;
-        if (parseProgressLine(trimmed, &stat)) {
-            updateProcessStat(stat);
-            continue;
-        }
-        lastStatus = trimmed;
-        appendLog(trimmed);
-    }
-    if (!lastStatus.isEmpty()) {
-        appendStatus(lastStatus);
-    }
+    consumeProcessOutputChunk(chunk, &pendingStderrBuffer);
 }
 void ExportDialog::resetProcessStats()
 {
@@ -635,10 +1354,70 @@ void ExportDialog::resetProcessStats()
     }
 }
 
+void ExportDialog::initializeProcessStats()
+{
+    if (!tbcSource || !ui->processStatsTable) {
+        return;
+    }
+
+    const int totalFramesValue = qMax(0, tbcSource->getNumberOfFrames());
+    const QString totalFrames = totalFramesValue > 0 ? QString::number(totalFramesValue) : QStringLiteral("—");
+    auto seedStat = [this, &totalFrames](const QString &process, const QString &tbcType) {
+        ExportProcessStat stat;
+        stat.process = process;
+        stat.tbcType = tbcType;
+        stat.trackedName = QStringLiteral("frame");
+        stat.current = QStringLiteral("0");
+        stat.total = totalFrames;
+        stat.errors = QStringLiteral("0");
+        stat.fps = QStringLiteral("—");
+        updateProcessStat(stat);
+    };
+
+    const TbcSource::SourceMode mode = tbcSource->getSourceMode();
+    if (mode == TbcSource::BOTH_SOURCES) {
+        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("LUMA"));
+        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("CHROMA"));
+        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("LUMA"));
+        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("CHROMA"));
+    } else if (mode == TbcSource::LUMA_SOURCE) {
+        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("LUMA"));
+        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("LUMA"));
+    } else if (mode == TbcSource::CHROMA_SOURCE) {
+        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("CHROMA"));
+        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("CHROMA"));
+    } else {
+        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("COMBINED"));
+        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("COMBINED"));
+    }
+    seedStat(QStringLiteral("ffmpeg"), QStringLiteral("—"));
+}
+
 void ExportDialog::updateProcessStat(const ExportProcessStat &stat)
 {
     if (!ui->processStatsTable) {
         return;
+    }
+    if (stat.tbcType == QStringLiteral("—")) {
+        QVector<int> processRows;
+        processRows.reserve(ui->processStatsTable->rowCount());
+        for (int rowIndex = 0; rowIndex < ui->processStatsTable->rowCount(); ++rowIndex) {
+            QTableWidgetItem *processItem = ui->processStatsTable->item(rowIndex, 0);
+            if (processItem && processItem->text() == stat.process) {
+                processRows.push_back(rowIndex);
+            }
+        }
+        if (!processRows.isEmpty()) {
+            for (const int rowIndex : processRows) {
+                setTableItem(ui->processStatsTable, rowIndex, 0, stat.process);
+                setTableItem(ui->processStatsTable, rowIndex, 2, stat.trackedName);
+                setTableItem(ui->processStatsTable, rowIndex, 3, stat.current);
+                setTableItem(ui->processStatsTable, rowIndex, 4, stat.total);
+                setTableItem(ui->processStatsTable, rowIndex, 5, stat.errors);
+                setTableItem(ui->processStatsTable, rowIndex, 6, stat.fps);
+            }
+            return;
+        }
     }
     const QString key = stat.process + QStringLiteral("|") + stat.tbcType;
     int row = processRowMap.value(key, -1);
@@ -670,6 +1449,12 @@ void ExportDialog::setBusy(bool busy)
     ui->audio3BrowseButton->setEnabled(enabled);
     ui->audio4BrowseButton->setEnabled(enabled);
     ui->profileComboBox->setEnabled(enabled);
+    if (ui->resolutionModeComboBox) {
+        ui->resolutionModeComboBox->setEnabled(enabled);
+    }
+    if (ui->audioProfileComboBox) {
+        ui->audioProfileComboBox->setEnabled(enabled);
+    }
     if (ui->logProcessOutputCheckBox) {
         ui->logProcessOutputCheckBox->setEnabled(enabled);
     }
@@ -678,6 +1463,18 @@ void ExportDialog::setBusy(bool busy)
     ui->audio2LineEdit->setEnabled(enabled);
     ui->audio3LineEdit->setEnabled(enabled);
     ui->audio4LineEdit->setEnabled(enabled);
+    if (ui->inPointSpinBox) {
+        ui->inPointSpinBox->setEnabled(enabled);
+    }
+    if (ui->outPointSpinBox) {
+        ui->outPointSpinBox->setEnabled(enabled);
+    }
+    if (ui->inPointTimecodeLineEdit) {
+        ui->inPointTimecodeLineEdit->setEnabled(enabled);
+    }
+    if (ui->outPointTimecodeLineEdit) {
+        ui->outPointTimecodeLineEdit->setEnabled(enabled);
+    }
 }
 
 QString ExportDialog::resolveVideoExportPath() const
@@ -722,6 +1519,57 @@ QString ExportDialog::resolveVideoExportPath() const
     return QString();
 }
 
+QString ExportDialog::resolveFfmpegPath() const
+{
+    const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (!fromPath.isEmpty()) {
+        return fromPath;
+    }
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    QStringList candidateDirs;
+    if (!appDir.isEmpty()) {
+        candidateDirs << appDir;
+    }
+
+    if (!currentInputFile.isEmpty()) {
+        const QString inputDir = QFileInfo(currentInputFile).absolutePath();
+        if (!inputDir.isEmpty() && !candidateDirs.contains(inputDir)) {
+            candidateDirs << inputDir;
+        }
+    }
+    const QString homeDir = QDir::homePath();
+    if (!homeDir.isEmpty()) {
+        const QString localBin = QDir(homeDir).filePath(QStringLiteral(".local/bin"));
+        const QString userBin = QDir(homeDir).filePath(QStringLiteral("bin"));
+        if (!candidateDirs.contains(localBin)) {
+            candidateDirs << localBin;
+        }
+        if (!candidateDirs.contains(userBin)) {
+            candidateDirs << userBin;
+        }
+    }
+
+    QStringList candidateNames;
+#if defined(Q_OS_WIN)
+    candidateNames << QStringLiteral("ffmpeg.exe") << QStringLiteral("ffmpeg");
+#else
+    candidateNames << QStringLiteral("ffmpeg");
+#endif
+
+    for (const QString &dir : candidateDirs) {
+        for (const QString &name : candidateNames) {
+            const QString candidate = QDir(dir).filePath(name);
+            QFileInfo candidateInfo(candidate);
+            if (candidateInfo.exists() && candidateInfo.isExecutable()) {
+                return candidate;
+            }
+        }
+    }
+
+    return QString();
+}
+
 QString ExportDialog::defaultOutputBaseName(const QString &inputFile) const
 {
     QFileInfo info(inputFile);
@@ -731,6 +1579,42 @@ QString ExportDialog::defaultOutputBaseName(const QString &inputFile) const
         return baseName;
     }
     return QDir(dir).filePath(baseName);
+}
+
+bool ExportDialog::findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const
+{
+    if (existingFiles) {
+        existingFiles->clear();
+    }
+
+    const QString sanitizedBase = sanitizeOutputBaseName(outputBase.trimmed());
+    if (sanitizedBase.isEmpty()) {
+        return false;
+    }
+
+    QFileInfo outputInfo(sanitizedBase);
+    QStringList foundFiles;
+    if (outputInfo.exists()) {
+        foundFiles << outputInfo.absoluteFilePath();
+    }
+
+    const QDir outputDir = outputInfo.absoluteDir();
+    const QString baseName = outputInfo.fileName();
+    if (outputDir.exists() && !baseName.isEmpty()) {
+        const QStringList matchedNames = outputDir.entryList(
+            QStringList() << (baseName + QStringLiteral(".*")),
+            QDir::Files | QDir::NoDotAndDotDot,
+            QDir::Name);
+        for (const QString &name : matchedNames) {
+            foundFiles << outputDir.filePath(name);
+        }
+    }
+
+    foundFiles.removeDuplicates();
+    if (existingFiles) {
+        *existingFiles = foundFiles;
+    }
+    return !foundFiles.isEmpty();
 }
 
 QString ExportDialog::sanitizeOutputBaseName(const QString &path) const
@@ -774,7 +1658,166 @@ QStringList ExportDialog::collectAudioTracks() const
     return tracks;
 }
 
-QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &inputTbcJsonOverride) const
+bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
+                                             int rangeLengthFrames,
+                                             QStringList *audioTracks,
+                                             QString *errorMessage)
+{
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+    if (!audioTracks) {
+        if (errorMessage) {
+            *errorMessage = tr("Internal error: no audio track list supplied.");
+        }
+        return false;
+    }
+    if (audioTracks->isEmpty()) {
+        return true;
+    }
+    if (!tbcSource) {
+        if (errorMessage) {
+            *errorMessage = tr("No source loaded.");
+        }
+        return false;
+    }
+
+    for (const QString &path : temporaryAudioTrackPaths) {
+        QFile::remove(path);
+    }
+    temporaryAudioTrackPaths.clear();
+
+    const QString ffmpegPath = resolveFfmpegPath();
+    if (ffmpegPath.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = tr("ffmpeg not found in PATH or alongside ld-analyse.");
+        }
+        return false;
+    }
+
+    const int totalFrames = qMax(1, tbcSource->getNumberOfFrames());
+    const int clampedStart = qBound(0, zeroBasedStartFrame, qMax(0, totalFrames - 1));
+    const int maxLength = qMax(0, totalFrames - clampedStart);
+    const int clampedLength = qBound(1, rangeLengthFrames, qMax(1, maxLength));
+    if (clampedLength <= 0) {
+        if (errorMessage) {
+            *errorMessage = tr("Invalid audio trim range.");
+        }
+        return false;
+    }
+
+    const LdDecodeMetaData::VideoParameters &videoParameters = tbcSource->getVideoParameters();
+    const double fps = frameRateForSystem(videoParameters.system);
+    if (fps <= 0.0) {
+        if (errorMessage) {
+            *errorMessage = tr("Invalid video frame rate for audio trimming.");
+        }
+        return false;
+    }
+
+    const QString startArg = QString::number(static_cast<double>(clampedStart) / fps, 'f', 6);
+    const QString durationArg = QString::number(static_cast<double>(clampedLength) / fps, 'f', 6);
+
+    QStringList trimmedTracks;
+    trimmedTracks.reserve(audioTracks->size());
+    for (int index = 0; index < audioTracks->size(); ++index) {
+        const QString sourceTrack = audioTracks->at(index).trimmed();
+        if (sourceTrack.isEmpty()) {
+            continue;
+        }
+
+        const QFileInfo sourceInfo(sourceTrack);
+        if (!sourceInfo.exists() || !sourceInfo.isFile()) {
+            for (const QString &path : trimmedTracks) {
+                QFile::remove(path);
+            }
+            trimmedTracks.clear();
+            temporaryAudioTrackPaths.clear();
+            if (errorMessage) {
+                *errorMessage = tr("Audio track not found: %1").arg(sourceTrack);
+            }
+            return false;
+        }
+
+        const QString trimmedPath = QDir::temp().filePath(
+            QStringLiteral("ld-analyse-audio-range-%1-%2.wav")
+                .arg(index + 1)
+                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        QStringList ffmpegArgs;
+        ffmpegArgs << QStringLiteral("-hide_banner")
+                   << QStringLiteral("-v") << QStringLiteral("error")
+                   << QStringLiteral("-nostdin")
+                   << QStringLiteral("-y")
+                   << QStringLiteral("-i") << sourceTrack
+                   << QStringLiteral("-ss") << startArg
+                   << QStringLiteral("-t") << durationArg
+                   << QStringLiteral("-map") << QStringLiteral("0:a:0")
+                   << QStringLiteral("-vn")
+                   << QStringLiteral("-sn")
+                   << QStringLiteral("-dn")
+                   << QStringLiteral("-c:a") << QStringLiteral("pcm_s24le")
+                   << trimmedPath;
+
+        QProcess ffmpegProcess;
+        ffmpegProcess.setProcessChannelMode(QProcess::MergedChannels);
+        ffmpegProcess.start(ffmpegPath, ffmpegArgs);
+        if (!ffmpegProcess.waitForStarted(5000)) {
+            for (const QString &path : trimmedTracks) {
+                QFile::remove(path);
+            }
+            trimmedTracks.clear();
+            temporaryAudioTrackPaths.clear();
+            if (errorMessage) {
+                *errorMessage = tr("Failed to start ffmpeg for audio track trimming.");
+            }
+            return false;
+        }
+        if (!ffmpegProcess.waitForFinished(120000)) {
+            ffmpegProcess.kill();
+            for (const QString &path : trimmedTracks) {
+                QFile::remove(path);
+            }
+            trimmedTracks.clear();
+            temporaryAudioTrackPaths.clear();
+            if (errorMessage) {
+                *errorMessage = tr("ffmpeg timed out while trimming audio tracks.");
+            }
+            return false;
+        }
+
+        const QString ffmpegOutput = QString::fromLocal8Bit(ffmpegProcess.readAllStandardOutput()).trimmed();
+        const bool ffmpegOk = ffmpegProcess.exitStatus() == QProcess::NormalExit
+                              && ffmpegProcess.exitCode() == 0
+                              && QFileInfo::exists(trimmedPath);
+        if (!ffmpegOk) {
+            QFile::remove(trimmedPath);
+            for (const QString &path : trimmedTracks) {
+                QFile::remove(path);
+            }
+            trimmedTracks.clear();
+            temporaryAudioTrackPaths.clear();
+            if (errorMessage) {
+                *errorMessage = ffmpegOutput.isEmpty()
+                                    ? tr("ffmpeg failed while trimming audio tracks.")
+                                    : ffmpegOutput;
+            }
+            return false;
+        }
+
+        trimmedTracks << trimmedPath;
+    }
+
+    temporaryAudioTrackPaths = trimmedTracks;
+    *audioTracks = trimmedTracks;
+    return true;
+}
+
+QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &inputTbcJsonOverride,
+                                         bool overwriteExisting,
+                                         const QString &configFileOverride,
+                                         const QStringList &audioTracks,
+                                         int startFrameOverride,
+                                         int lengthOverride) const
 {
     QStringList args;
     if (!tbcSource) {
@@ -799,17 +1842,55 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         }
         return args;
     }
+    const int totalFrames = qMax(1, tbcSource->getNumberOfFrames());
+    int zeroBasedStart = startFrameOverride;
+    int rangeLength = lengthOverride;
+    if (zeroBasedStart < 0 || rangeLength <= 0) {
+        int inPoint = ui->inPointSpinBox ? ui->inPointSpinBox->value() : 1;
+        int outPoint = ui->outPointSpinBox ? ui->outPointSpinBox->value() : totalFrames;
+        inPoint = qBound(1, inPoint, totalFrames);
+        outPoint = qBound(1, outPoint, totalFrames);
+        if (outPoint < inPoint) {
+            if (errorMessage) {
+                *errorMessage = tr("Out point must be greater than or equal to In point.");
+            }
+            return args;
+        }
+        zeroBasedStart = qMax(0, inPoint - 1);
+        rangeLength = outPoint - inPoint + 1;
+    }
+    zeroBasedStart = qBound(0, zeroBasedStart, qMax(0, totalFrames - 1));
+    rangeLength = qMin(rangeLength, totalFrames - zeroBasedStart);
+    if (rangeLength <= 0) {
+        if (errorMessage) {
+            *errorMessage = tr("Invalid export range.");
+        }
+        return args;
+    }
+
+    args << QStringLiteral("--start") << QString::number(zeroBasedStart);
+    args << QStringLiteral("--length") << QString::number(rangeLength);
 
     const QString profile = ui->profileComboBox->currentText().trimmed();
+    if (!configFileOverride.isEmpty()) {
+        args << QStringLiteral("--config-file") << configFileOverride;
+    }
     if (!profile.isEmpty()) {
         args << QStringLiteral("--profile") << profile;
     }
 
-    for (const QString &track : collectAudioTracks()) {
+    const QStringList tracksToUse = audioTracks.isEmpty() ? collectAudioTracks() : audioTracks;
+    for (const QString &track : tracksToUse) {
         args << QStringLiteral("--audio-track") << track;
     }
     if (ui->logProcessOutputCheckBox && ui->logProcessOutputCheckBox->isChecked()) {
         args << QStringLiteral("--log-process-output");
+    }
+#if defined(Q_OS_WIN)
+    args << QStringLiteral("--show-process-output");
+#endif
+    if (overwriteExisting) {
+        args << QStringLiteral("--overwrite");
     }
 
     const LdDecodeMetaData::VideoParameters &videoParameters = tbcSource->getVideoParameters();
@@ -830,18 +1911,25 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     if (!isSplitSource && videoParameters.lumaNR >= 0.0) {
         args << QStringLiteral("--luma-nr") << QString::number(videoParameters.lumaNR, 'f', 3);
     }
-
-    if (videoParameters.firstActiveFieldLine > 0) {
-        args << QStringLiteral("--ffll") << QString::number(videoParameters.firstActiveFieldLine);
-    }
-    if (videoParameters.lastActiveFieldLine > 0) {
-        args << QStringLiteral("--lfll") << QString::number(videoParameters.lastActiveFieldLine);
-    }
-    if (videoParameters.firstActiveFrameLine > 0) {
-        args << QStringLiteral("--ffrl") << QString::number(videoParameters.firstActiveFrameLine);
-    }
-    if (videoParameters.lastActiveFrameLine > 0) {
-        args << QStringLiteral("--lfrl") << QString::number(videoParameters.lastActiveFrameLine);
+    const QString resolutionMode = ui->resolutionModeComboBox
+                                       ? ui->resolutionModeComboBox->currentData().toString()
+                                       : QStringLiteral("active_area");
+    const bool prioritizeUserDefinedFraming = usesCustomVerticalFraming(videoParameters);
+    if (resolutionMode == QStringLiteral("active_vbi")) {
+        args << QStringLiteral("--vbi");
+    } else if (resolutionMode == QStringLiteral("user_defined") || prioritizeUserDefinedFraming) {
+        if (videoParameters.firstActiveFieldLine > 0) {
+            args << QStringLiteral("--ffll") << QString::number(videoParameters.firstActiveFieldLine);
+        }
+        if (videoParameters.lastActiveFieldLine > 0) {
+            args << QStringLiteral("--lfll") << QString::number(videoParameters.lastActiveFieldLine);
+        }
+        if (videoParameters.firstActiveFrameLine > 0) {
+            args << QStringLiteral("--ffrl") << QString::number(videoParameters.firstActiveFrameLine);
+        }
+        if (videoParameters.lastActiveFrameLine > 0) {
+            args << QStringLiteral("--lfrl") << QString::number(videoParameters.lastActiveFrameLine);
+        }
     }
 
     if (videoParameters.ntscPhaseCompensation >= 0) {
@@ -860,6 +1948,205 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
 
     args << inputFile << outputBase;
     return args;
+}
+QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
+                                                  const QString &profileName,
+                                                  const QString &audioProfileName)
+{
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+
+    if (!temporaryExportConfigPath.isEmpty()) {
+        QFile::remove(temporaryExportConfigPath);
+        temporaryExportConfigPath.clear();
+    }
+
+    const QString selectedProfile = profileName.trimmed();
+    const QString selectedAudioProfile = audioProfileName.trimmed();
+    if (selectedProfile.isEmpty() || selectedAudioProfile.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = tr("Please select both video and audio profiles.");
+        }
+        return QString();
+    }
+
+    const QString exportPath = resolveVideoExportPath();
+    if (exportPath.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = tr("tbc-video-export not found.");
+        }
+        return QString();
+    }
+
+    const QString dumpDirPath = QDir::temp().filePath(
+        QStringLiteral("ld-analyse-export-config-dump-%1")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    if (!QDir().mkpath(dumpDirPath)) {
+        if (errorMessage) {
+            *errorMessage = tr("Failed to create temporary directory for export configuration.");
+        }
+        return QString();
+    }
+    const auto cleanupDumpDir = [&dumpDirPath]() {
+        QDir dumpDir(dumpDirPath);
+        if (dumpDir.exists()) {
+            dumpDir.removeRecursively();
+        }
+    };
+
+    QProcess dumpProcess;
+    dumpProcess.setProcessChannelMode(QProcess::MergedChannels);
+    dumpProcess.setWorkingDirectory(dumpDirPath);
+    dumpProcess.start(exportPath, QStringList() << QStringLiteral("--dump-default-config"));
+    if (!dumpProcess.waitForStarted(3000)) {
+        cleanupDumpDir();
+        if (errorMessage) {
+            *errorMessage = tr("Failed to start export config generation.");
+        }
+        return QString();
+    }
+    if (!dumpProcess.waitForFinished(15000)) {
+        dumpProcess.kill();
+        cleanupDumpDir();
+        if (errorMessage) {
+            *errorMessage = tr("Export config generation timed out.");
+        }
+        return QString();
+    }
+    const QString dumpOutput = QString::fromLocal8Bit(dumpProcess.readAllStandardOutput()).trimmed();
+    if (dumpProcess.exitStatus() != QProcess::NormalExit || dumpProcess.exitCode() != 0) {
+        cleanupDumpDir();
+        if (errorMessage) {
+            *errorMessage = dumpOutput.isEmpty()
+                                ? tr("Failed to generate default export configuration.")
+                                : dumpOutput;
+        }
+        return QString();
+    }
+
+    const QString dumpedConfigPath = QDir(dumpDirPath).filePath(QStringLiteral("tbc-video-export.json"));
+    QFile dumpedConfigFile(dumpedConfigPath);
+    if (!dumpedConfigFile.open(QIODevice::ReadOnly)) {
+        cleanupDumpDir();
+        if (errorMessage) {
+            *errorMessage = tr("Failed to read generated export configuration.");
+        }
+        return QString();
+    }
+    const QByteArray configData = dumpedConfigFile.readAll();
+    dumpedConfigFile.close();
+
+    QJsonParseError parseError;
+    const QJsonDocument configDoc = QJsonDocument::fromJson(configData, &parseError);
+    if (configDoc.isNull() || !configDoc.isObject()) {
+        cleanupDumpDir();
+        if (errorMessage) {
+            *errorMessage = tr("Invalid export configuration JSON: %1").arg(parseError.errorString());
+        }
+        return QString();
+    }
+
+    QJsonObject root = configDoc.object();
+    QJsonArray audioProfiles = root.value(QStringLiteral("audio_profiles")).toArray();
+    auto upsertAudioProfile = [&audioProfiles](const QJsonObject &profileObject) {
+        const QString targetName = profileObject.value(QStringLiteral("name")).toString();
+        for (int i = 0; i < audioProfiles.size(); ++i) {
+            const QJsonObject existing = audioProfiles.at(i).toObject();
+            if (existing.value(QStringLiteral("name")).toString() == targetName) {
+                audioProfiles.replace(i, profileObject);
+                return;
+            }
+        }
+        audioProfiles.append(profileObject);
+    };
+
+    {
+        QJsonObject flac16Profile;
+        flac16Profile.insert(QStringLiteral("name"), QStringLiteral("flac_16"));
+        flac16Profile.insert(QStringLiteral("description"), QStringLiteral("FLAC 16-bits"));
+        flac16Profile.insert(QStringLiteral("codec"), QStringLiteral("flac"));
+        QJsonArray opts;
+        opts.append(QStringLiteral("-compression_level"));
+        opts.append(12);
+        opts.append(QStringLiteral("-sample_fmt"));
+        opts.append(QStringLiteral("s16"));
+        flac16Profile.insert(QStringLiteral("opts"), opts);
+        upsertAudioProfile(flac16Profile);
+    }
+    {
+        QJsonObject flac24Profile;
+        flac24Profile.insert(QStringLiteral("name"), QStringLiteral("flac_24"));
+        flac24Profile.insert(QStringLiteral("description"), QStringLiteral("FLAC 24-bits"));
+        flac24Profile.insert(QStringLiteral("codec"), QStringLiteral("flac"));
+        QJsonArray opts;
+        opts.append(QStringLiteral("-compression_level"));
+        opts.append(12);
+        opts.append(QStringLiteral("-sample_fmt"));
+        opts.append(QStringLiteral("s32"));
+        flac24Profile.insert(QStringLiteral("opts"), opts);
+        upsertAudioProfile(flac24Profile);
+    }
+    root.insert(QStringLiteral("audio_profiles"), audioProfiles);
+
+    bool audioProfileExists = false;
+    for (int i = 0; i < audioProfiles.size(); ++i) {
+        const QJsonObject audioProfileObject = audioProfiles.at(i).toObject();
+        if (audioProfileObject.value(QStringLiteral("name")).toString() == selectedAudioProfile) {
+            audioProfileExists = true;
+            break;
+        }
+    }
+    if (!audioProfileExists) {
+        cleanupDumpDir();
+        if (errorMessage) {
+            *errorMessage = tr("Unsupported audio profile selected: %1").arg(selectedAudioProfile);
+        }
+        return QString();
+    }
+
+    QJsonArray profiles = root.value(QStringLiteral("profiles")).toArray();
+    bool profileFound = false;
+    for (int i = 0; i < profiles.size(); ++i) {
+        const QJsonValue currentValue = profiles.at(i);
+        if (!currentValue.isObject()) {
+            continue;
+        }
+        QJsonObject profileObject = currentValue.toObject();
+        if (profileObject.value(QStringLiteral("name")).toString() != selectedProfile) {
+            continue;
+        }
+        profileObject.insert(QStringLiteral("audio_profile"), selectedAudioProfile);
+        profiles.replace(i, profileObject);
+        profileFound = true;
+        break;
+    }
+    if (!profileFound) {
+        cleanupDumpDir();
+        if (errorMessage) {
+            *errorMessage = tr("Selected video profile is not available in the export configuration.");
+        }
+        return QString();
+    }
+    root.insert(QStringLiteral("profiles"), profiles);
+
+    const QString configPath = QDir::temp().filePath(
+        QStringLiteral("ld-analyse-export-config-%1.json")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    QFile outputConfigFile(configPath);
+    if (!outputConfigFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        cleanupDumpDir();
+        if (errorMessage) {
+            *errorMessage = tr("Failed to write temporary export configuration.");
+        }
+        return QString();
+    }
+    outputConfigFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    outputConfigFile.close();
+
+    cleanupDumpDir();
+    temporaryExportConfigPath = configPath;
+    return temporaryExportConfigPath;
 }
 
 QString ExportDialog::createTemporaryMetadataSnapshot(QString *errorMessage)
@@ -893,11 +2180,18 @@ QString ExportDialog::createTemporaryMetadataSnapshot(QString *errorMessage)
 
 void ExportDialog::cleanupTemporaryMetadataSnapshot()
 {
-    if (temporaryInputJsonPath.isEmpty()) {
-        return;
+    if (!temporaryInputJsonPath.isEmpty()) {
+        QFile::remove(temporaryInputJsonPath);
+        temporaryInputJsonPath.clear();
     }
-    QFile::remove(temporaryInputJsonPath);
-    temporaryInputJsonPath.clear();
+    if (!temporaryExportConfigPath.isEmpty()) {
+        QFile::remove(temporaryExportConfigPath);
+        temporaryExportConfigPath.clear();
+    }
+    for (const QString &path : temporaryAudioTrackPaths) {
+        QFile::remove(path);
+    }
+    temporaryAudioTrackPaths.clear();
 }
 
 void ExportDialog::appendStatus(const QString &message)

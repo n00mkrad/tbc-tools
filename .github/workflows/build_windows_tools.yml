@@ -13,6 +13,9 @@ env:
   FLAC_FILE: "flac-1.5.0-win.zip"
   FLAC_PATH: "flac-1.5.0-win"
   FLAC_URL: "https://ftp.osuosl.org/pub/xiph/releases/flac/flac-1.5.0-win.zip"
+  TBC_VIDEO_EXPORT_FILE: "tbc-video-export.exe"
+  TBC_VIDEO_EXPORT_URL: "https://github.com/JuniorIsAJitterbug/tbc-video-export/releases/download/v0.1.8/tbc-video-export.exe"
+  TBC_VIDEO_EXPORT_LICENSE_URL: "https://raw.githubusercontent.com/JuniorIsAJitterbug/tbc-video-export/v0.1.8/LICENSE"
   # Persist vcpkg binary artifacts across runs for faster Windows builds.
   VCPKG_BINARY_CACHE_DIR: "${{ github.workspace }}\\.vcpkg-binary-cache"
   VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}\\.vcpkg-binary-cache,readwrite"
@@ -153,6 +156,24 @@ jobs:
           Expand-Archive .\\flac.zip -DestinationPath .
           Copy-Item -Path .\\${{ env.FLAC_PATH }}\\Win64\\* -Destination release\\
           Copy-Item -Path .\\${{ env.FLAC_PATH }}\\COPYING.GPL -Destination release\\LICENSES\\copyright-flac
+
+      - name: Download and copy tbc-video-export to release directory
+        if: matrix.bundle_external_tools == true
+        run: |
+          Invoke-WebRequest "${{ env.TBC_VIDEO_EXPORT_URL }}" -OutFile ".\\${{ env.TBC_VIDEO_EXPORT_FILE }}"
+          Copy-Item -Path ".\\${{ env.TBC_VIDEO_EXPORT_FILE }}" -Destination release\\
+          Invoke-WebRequest "${{ env.TBC_VIDEO_EXPORT_LICENSE_URL }}" -OutFile release\\LICENSES\\copyright-tbc-video-export
+          Push-Location release
+          .\\${{ env.TBC_VIDEO_EXPORT_FILE }} --dump-default-config
+          Pop-Location
+
+      - name: Copy sqlite runtime to release directory
+        run: |
+          $sqliteDll = "build\\vcpkg_installed\\${{ matrix.vcpkg_triplet }}\\bin\\sqlite3.dll"
+          if (-not (Test-Path $sqliteDll)) {
+            throw "sqlite3.dll not found at $sqliteDll"
+          }
+          Copy-Item -Path $sqliteDll -Destination release\\
 
       - name: Copy project license
         run: Copy-Item -Path .\\LICENSE -Destination release\\LICENSES\\copyright-tbc-tools

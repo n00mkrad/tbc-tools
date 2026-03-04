@@ -1656,11 +1656,20 @@ QString ExportDialog::resolveVideoExportPath() const
         }
     }
 
+    QStringList candidateNames;
+#if defined(Q_OS_WIN)
+    candidateNames << QStringLiteral("tbc-video-export.exe") << QStringLiteral("tbc-video-export");
+#else
+    candidateNames << QStringLiteral("tbc-video-export");
+#endif
+
     for (const QString &dir : candidateDirs) {
-        const QString candidate = QDir(dir).filePath(QStringLiteral("tbc-video-export"));
-        QFileInfo candidateInfo(candidate);
-        if (candidateInfo.exists() && candidateInfo.isExecutable()) {
-            return candidate;
+        for (const QString &name : candidateNames) {
+            const QString candidate = QDir(dir).filePath(name);
+            QFileInfo candidateInfo(candidate);
+            if (candidateInfo.exists() && candidateInfo.isExecutable()) {
+                return candidate;
+            }
         }
     }
 

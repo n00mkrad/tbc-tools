@@ -53,7 +53,8 @@ private:
     void setBusy(bool busy);
     void updateRangeControlsForSource(bool resetToFullRange);
     void updateRangeLengthLabel();
-    int timecodeFrameRate() const;
+    double timecodeFrameRate() const;
+    int timecodeFrameBaseRate() const;
     QString frameToTimecode(int frameNumber) const;
     int timecodeToFrame(const QString &timecodeText, bool *ok = nullptr) const;
     void syncRangeTimecodeEditors();

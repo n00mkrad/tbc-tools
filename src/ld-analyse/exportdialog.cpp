@@ -23,6 +23,7 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTextStream>
+#include <QtMath>
 #include <QUuid>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -141,11 +142,11 @@ ActiveAreaFrameDefaults activeAreaDefaultsForSystem(int system)
 {
     switch (system) {
     case PAL:
-    case PAL_M:
         return {22, 308, 44, 620};
+    case PAL_M:
     case NTSC:
     default:
-        return {20, 259, 40, 525};
+        return {20, 263, 40, 525};
     }
 }
 
@@ -179,6 +180,18 @@ double frameRateForSystem(int system)
     case NTSC:
     default:
         return 30000.0 / 1001.0;
+    }
+}
+
+int nominalFrameRateForSystem(int system)
+{
+    switch (system) {
+    case PAL:
+        return 25;
+    case PAL_M:
+    case NTSC:
+    default:
+        return 30;
     }
 }
 
@@ -790,9 +803,12 @@ void ExportDialog::updateRangeLengthLabel()
     const int inPoint = ui->inPointSpinBox->value();
     const int outPoint = ui->outPointSpinBox->value();
     const qint64 frameCount = qMax<qint64>(0, static_cast<qint64>(outPoint) - static_cast<qint64>(inPoint) + 1);
-    const int fps = qMax(1, timecodeFrameRate());
-    const qint64 totalSeconds = frameCount / fps;
-    const qint64 framePart = frameCount % fps;
+    const double fps = qMax(0.001, timecodeFrameRate());
+    const int frameBase = qMax(1, timecodeFrameBaseRate());
+    const double totalSecondsExact = static_cast<double>(frameCount) / fps;
+    const qint64 totalSeconds = static_cast<qint64>(qFloor(totalSecondsExact));
+    const double fractionalSeconds = totalSecondsExact - static_cast<double>(totalSeconds);
+    const int framePart = qBound(0, static_cast<int>(qFloor((fractionalSeconds * frameBase) + 1e-9)), frameBase - 1);
     const qint64 hours = totalSeconds / 3600;
     const qint64 minutes = (totalSeconds % 3600) / 60;
     const qint64 seconds = totalSeconds % 60;
@@ -803,28 +819,33 @@ void ExportDialog::updateRangeLengthLabel()
                                            .arg(framePart, 2, 10, QChar('0')));
 }
 
-int ExportDialog::timecodeFrameRate() const
+double ExportDialog::timecodeFrameRate() const
 {
     int system = NTSC;
     if (tbcSource && tbcSource->getIsSourceLoaded()) {
         system = tbcSource->getVideoParameters().system;
     }
-    switch (static_cast<VideoSystem>(system)) {
-    case PAL:
-        return 25;
-    case PAL_M:
-    case NTSC:
-    default:
-        return 30;
+    return frameRateForSystem(system);
+}
+
+int ExportDialog::timecodeFrameBaseRate() const
+{
+    int system = NTSC;
+    if (tbcSource && tbcSource->getIsSourceLoaded()) {
+        system = tbcSource->getVideoParameters().system;
     }
+    return nominalFrameRateForSystem(system);
 }
 
 QString ExportDialog::frameToTimecode(int frameNumber) const
 {
-    const int fps = qMax(1, timecodeFrameRate());
+    const double fps = qMax(0.001, timecodeFrameRate());
+    const int frameBase = qMax(1, timecodeFrameBaseRate());
     const qint64 frameIndex = qMax<qint64>(0, static_cast<qint64>(frameNumber) - 1);
-    const qint64 totalSeconds = frameIndex / fps;
-    const qint64 framePart = frameIndex % fps;
+    const double totalSecondsExact = static_cast<double>(frameIndex) / fps;
+    const qint64 totalSeconds = static_cast<qint64>(qFloor(totalSecondsExact));
+    const double fractionalSeconds = totalSecondsExact - static_cast<double>(totalSeconds);
+    const int framePart = qBound(0, static_cast<int>(qFloor((fractionalSeconds * frameBase) + 1e-9)), frameBase - 1);
     const qint64 hours = totalSeconds / 3600;
     const qint64 minutes = (totalSeconds % 3600) / 60;
     const qint64 seconds = totalSeconds % 60;
@@ -869,15 +890,17 @@ int ExportDialog::timecodeToFrame(const QString &timecodeText, bool *ok) const
     const int minutes = match.captured(2).toInt(&minutesOk);
     const int seconds = match.captured(3).toInt(&secondsOk);
     const int frames = match.captured(4).toInt(&framesOk);
-    const int fps = qMax(1, timecodeFrameRate());
+    const double fps = qMax(0.001, timecodeFrameRate());
+    const int frameBase = qMax(1, timecodeFrameBaseRate());
     if (!hoursOk || !minutesOk || !secondsOk || !framesOk
         || minutes < 0 || minutes >= 60
         || seconds < 0 || seconds >= 60
-        || frames < 0 || frames >= fps) {
+        || frames < 0 || frames >= frameBase) {
         return 1;
     }
-
-    const qint64 frameNumber = ((hours * 3600) + (minutes * 60) + seconds) * fps + frames + 1;
+    const double totalSecondsExact = static_cast<double>((hours * 3600) + (minutes * 60) + seconds)
+                                     + (static_cast<double>(frames) / static_cast<double>(frameBase));
+    const qint64 frameNumber = qRound64(totalSecondsExact * fps) + 1;
     if (ok) {
         *ok = true;
     }

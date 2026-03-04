@@ -193,7 +193,8 @@ private:
     void updateMetadataStatusPanel();
     void updateBottomStatusReadout();
     void setViewValues();
-    int timecodeFrameRate() const;
+    double timecodeFrameRate() const;
+    int timecodeFrameBaseRate() const;
     QString frameToTimecode(qint32 frameNumber) const;
     QString framesToDurationTimecode(qint32 frameCount) const;
     qint32 timecodeToFrame(const QString &timecodeText, bool *ok = nullptr) const;

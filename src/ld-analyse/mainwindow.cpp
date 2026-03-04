@@ -195,6 +195,30 @@ QString resolveSourceFilenameForMetadata(const QString &metadataFilename)
 
     return QString();
 }
+
+double frameRateForSystem(VideoSystem system)
+{
+    switch (system) {
+    case PAL:
+        return 25.0;
+    case PAL_M:
+    case NTSC:
+    default:
+        return 30000.0 / 1001.0;
+    }
+}
+
+int nominalFrameRateForSystem(VideoSystem system)
+{
+    switch (system) {
+    case PAL:
+        return 25;
+    case PAL_M:
+    case NTSC:
+    default:
+        return 30;
+    }
+}
 } // namespace
 
 MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidget *parent) :
@@ -1236,27 +1260,31 @@ void MainWindow::updateVectorscopeDialogue()
 }
 
 // Method to set the view (field/frame) values
-int MainWindow::timecodeFrameRate() const
+double MainWindow::timecodeFrameRate() const
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        return 30000.0 / 1001.0;
+    }
+    return frameRateForSystem(tbcSource.getSystem());
+}
+
+int MainWindow::timecodeFrameBaseRate() const
 {
     if (!tbcSource.getIsSourceLoaded()) {
         return 30;
     }
-    switch (tbcSource.getSystem()) {
-    case PAL:
-        return 25;
-    case PAL_M:
-    case NTSC:
-    default:
-        return 30;
-    }
+    return nominalFrameRateForSystem(tbcSource.getSystem());
 }
 
 QString MainWindow::frameToTimecode(qint32 frameNumber) const
 {
-    const int fps = qMax(1, timecodeFrameRate());
+    const double fps = qMax(0.001, timecodeFrameRate());
+    const int frameBase = qMax(1, timecodeFrameBaseRate());
     const qint64 frameIndex = qMax<qint64>(0, static_cast<qint64>(frameNumber) - 1);
-    const qint64 totalSeconds = frameIndex / fps;
-    const qint64 framePart = frameIndex % fps;
+    const double totalSecondsExact = static_cast<double>(frameIndex) / fps;
+    const qint64 totalSeconds = static_cast<qint64>(qFloor(totalSecondsExact));
+    const double fractionalSeconds = totalSecondsExact - static_cast<double>(totalSeconds);
+    const int framePart = qBound(0, static_cast<int>(qFloor((fractionalSeconds * frameBase) + 1e-9)), frameBase - 1);
     const qint64 hours = totalSeconds / 3600;
     const qint64 minutes = (totalSeconds % 3600) / 60;
     const qint64 seconds = totalSeconds % 60;
@@ -1269,10 +1297,13 @@ QString MainWindow::frameToTimecode(qint32 frameNumber) const
 
 QString MainWindow::framesToDurationTimecode(qint32 frameCount) const
 {
-    const int fps = qMax(1, timecodeFrameRate());
+    const double fps = qMax(0.001, timecodeFrameRate());
+    const int frameBase = qMax(1, timecodeFrameBaseRate());
     const qint64 safeFrameCount = qMax<qint64>(0, frameCount);
-    const qint64 totalSeconds = safeFrameCount / fps;
-    const qint64 framePart = safeFrameCount % fps;
+    const double totalSecondsExact = static_cast<double>(safeFrameCount) / fps;
+    const qint64 totalSeconds = static_cast<qint64>(qFloor(totalSecondsExact));
+    const double fractionalSeconds = totalSecondsExact - static_cast<double>(totalSeconds);
+    const int framePart = qBound(0, static_cast<int>(qFloor((fractionalSeconds * frameBase) + 1e-9)), frameBase - 1);
     const qint64 hours = totalSeconds / 3600;
     const qint64 minutes = (totalSeconds % 3600) / 60;
     const qint64 seconds = totalSeconds % 60;
@@ -1318,15 +1349,17 @@ qint32 MainWindow::timecodeToFrame(const QString &timecodeText, bool *ok) const
     const int minutes = match.captured(2).toInt(&minutesOk);
     const int seconds = match.captured(3).toInt(&secondsOk);
     const int frames = match.captured(4).toInt(&framesOk);
-    const int fps = qMax(1, timecodeFrameRate());
+    const double fps = qMax(0.001, timecodeFrameRate());
+    const int frameBase = qMax(1, timecodeFrameBaseRate());
     if (!hoursOk || !minutesOk || !secondsOk || !framesOk
         || minutes < 0 || minutes >= 60
         || seconds < 0 || seconds >= 60
-        || frames < 0 || frames >= fps) {
+        || frames < 0 || frames >= frameBase) {
         return 1;
     }
-
-    const qint64 totalFrames = ((hours * 3600) + (minutes * 60) + seconds) * fps + frames + 1;
+    const double totalSecondsExact = static_cast<double>((hours * 3600) + (minutes * 60) + seconds)
+                                     + (static_cast<double>(frames) / static_cast<double>(frameBase));
+    const qint64 totalFrames = qRound64(totalSecondsExact * fps) + 1;
     if (ok) {
         *ok = true;
     }
@@ -2113,17 +2146,10 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
     if (!ui || !ui->posHorizontalSlider || !exportDialog || !tbcSource.getIsSourceLoaded()) {
         return;
     }
-
-    const QSlider *slider = ui->posHorizontalSlider;
-    const int sliderWidth = qMax(1, slider->width());
-    const int xPosition = qBound(0, pos.x(), sliderWidth);
-    const int sliderValue = QStyle::sliderValueFromPosition(slider->minimum(),
-                                                             slider->maximum(),
-                                                             xPosition,
-                                                             sliderWidth);
-    int framePoint = sliderValue;
+    const int playbackPositionValue = tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
+    int framePoint = playbackPositionValue;
     if (tbcSource.getFieldViewEnabled()) {
-        framePoint = (sliderValue + 1) / 2;
+        framePoint = (playbackPositionValue + 1) / 2;
     }
     framePoint = qBound(1, framePoint, qMax(1, tbcSource.getNumberOfFrames()));
     const QString framePointTimecode = frameToTimecode(framePoint);

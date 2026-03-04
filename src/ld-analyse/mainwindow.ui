@@ -281,6 +281,35 @@
              </property>
             </widget>
            </item>
+          <item>
+           <widget class="QPushButton" name="playPushButton">
+            <property name="minimumSize">
+             <size>
+              <width>30</width>
+              <height>30</height>
+             </size>
+            </property>
+            <property name="toolTip">
+             <string>Play at 29.97 fps</string>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+            <property name="icon">
+             <iconset resource="ld-analyse-resources.qrc">
+              <normaloff>:/icons/Graphics/start-playback.svg</normaloff>:/icons/Graphics/start-playback.svg</iconset>
+            </property>
+            <property name="iconSize">
+             <size>
+              <width>24</width>
+              <height>24</height>
+             </size>
+            </property>
+            <property name="checkable">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
            <item>
             <widget class="QPushButton" name="nextPushButton">
              <property name="minimumSize">

@@ -10,6 +10,8 @@
         <file>Graphics/oscilloscope-target.svg</file>
         <file>Graphics/prev-frame.svg</file>
         <file>Graphics/start-frame.svg</file>
+        <file>Graphics/start-playback.svg</file>
+        <file>Graphics/stop-playback.svg</file>
         <file>Graphics/zoom-in.svg</file>
         <file>Graphics/zoom-original.svg</file>
         <file>Graphics/zoom-out.svg</file>

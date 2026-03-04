@@ -49,6 +49,7 @@ private slots:
 private:
     void updateFromSource();
     void refreshProfiles();
+    void updateProfileDependentControls();
     void setBusy(bool busy);
     void updateRangeControlsForSource(bool resetToFullRange);
     void updateRangeLengthLabel();
@@ -69,7 +70,7 @@ private:
                                bool overwriteExisting = false,
                                const QString &configFileOverride = QString(),
                                const QStringList &audioTracks = QStringList(),
-                               int startFrameOverride = -1,
+                               int startFrameOneBasedOverride = -1,
                                int lengthOverride = -1) const;
     QString createTemporaryExportConfig(QString *errorMessage,
                                         const QString &profileName,

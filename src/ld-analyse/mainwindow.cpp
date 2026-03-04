@@ -98,6 +98,7 @@ void ensureSvgButtonIcon(QAbstractButton *button, const QString &resourcePath)
     }
 }
 
+
 QString formatOptionalString(const QString &value)
 {
     return value.isEmpty() ? QStringLiteral("—") : value;
@@ -237,6 +238,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ui->posHorizontalSlider->setContextMenuPolicy(Qt::CustomContextMenu);
     ensureSvgButtonIcon(ui->startPushButton, QStringLiteral(":/icons/Graphics/start-frame.svg"));
     ensureSvgButtonIcon(ui->previousPushButton, QStringLiteral(":/icons/Graphics/prev-frame.svg"));
+    ensureSvgButtonIcon(ui->playPushButton, QStringLiteral(":/icons/Graphics/start-playback.svg"));
     ensureSvgButtonIcon(ui->nextPushButton, QStringLiteral(":/icons/Graphics/next-frame.svg"));
     ensureSvgButtonIcon(ui->endPushButton, QStringLiteral(":/icons/Graphics/end-frame.svg"));
     ensureSvgButtonIcon(ui->zoomInPushButton, QStringLiteral(":/icons/Graphics/zoom-in.svg"));
@@ -332,25 +334,17 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     // Use application palette to ensure it respects theme settings
     buttonPalette = QApplication::palette();
 
-    // Initialize slider debouncing
-    sliderDebounceTimer = new QTimer(this);
-    sliderDebounceTimer->setSingleShot(true);
-    sliderDebounceTimer->setInterval(100); // 100ms debounce
-    connect(sliderDebounceTimer, &QTimer::timeout, this, &MainWindow::onSliderDebounceTimeout);
-    
-    // Initialize drag pause timer for visual feedback during long drags
-    dragPauseTimer = new QTimer(this);
-    dragPauseTimer->setSingleShot(true);
-    dragPauseTimer->setInterval(150); // 150ms pause before updating during drag
-    connect(dragPauseTimer, &QTimer::timeout, this, &MainWindow::onDragPauseTimeout);
+    // Initialize playback timer
+    playbackTimer = new QTimer(this);
+    playbackTimer->setSingleShot(true);
+    playbackTimer->setTimerType(Qt::PreciseTimer);
+    connect(playbackTimer, &QTimer::timeout, this, &MainWindow::stepPlayback);
     
     // Initialize resize timer for delayed frame resizing
     resizeTimer = new QTimer(this);
     resizeTimer->setSingleShot(true);
     resizeTimer->setInterval(100); // 100ms delay for resize calculations
     connect(resizeTimer, &QTimer::timeout, this, &MainWindow::resizeFrameToWindow);
-    
-    sliderDragging = false;
     
     // Initialize chroma seek mode tracking
     chromaSeekMode = false;
@@ -369,9 +363,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
             ui->videoPushButton->setText(tr("Source"));
         }
     });
-    
     // Button press/release signals for chroma seek mode are auto-connected by Qt's auto-connection mechanism
-    pendingSliderValue = -1;
 
     // Set the GUI to unloaded
     updateGuiUnloaded();
@@ -516,6 +508,7 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->nextPushButton->setEnabled(enabled);
     ui->startPushButton->setEnabled(enabled);
     ui->endPushButton->setEnabled(enabled);
+    ui->playPushButton->setEnabled(enabled);
     ui->posHorizontalSlider->setEnabled(enabled);
     ui->mediaControl_frame->setEnabled(enabled);
 
@@ -557,6 +550,7 @@ TbcSource& MainWindow::getTbcSource()
 
 void MainWindow::resetGui()
 {
+    setPlaybackRunning(false);
     ui->posNumberSpinBox->setMinimum(1);
     ui->posHorizontalSlider->setMinimum(1);
 
@@ -619,6 +613,7 @@ void MainWindow::updateGuiLoaded()
 {
     // Enable the GUI controls
     setGuiEnabled(true);
+    setPlaybackRunning(false);
     const bool metadataOnly = tbcSource.getIsMetadataOnly();
 
     if (metadataOnly) {
@@ -668,6 +663,7 @@ void MainWindow::updateGuiLoaded()
 // Method to update the GUI when a file is unloaded
 void MainWindow::updateGuiUnloaded()
 {
+    setPlaybackRunning(false);
     // Disable the GUI controls
     setGuiEnabled(false);
 
@@ -1121,6 +1117,7 @@ void MainWindow::hideImage()
 // Load a TBC file based on the passed file name
 void MainWindow::loadTbcFile(QString inputFileName, bool forceMetadataOnly)
 {
+    setPlaybackRunning(false);
     // Update the GUI
     updateGuiUnloaded();
 
@@ -1346,6 +1343,117 @@ void MainWindow::updatePositionEditorValue(qint32 currentNumber)
         const QSignalBlocker blocker(ui->posTimecodeLineEdit);
         ui->posTimecodeLineEdit->setText(frameToTimecode(currentNumber));
     }
+}
+
+bool MainWindow::playbackUseFastMode() const
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        return false;
+    }
+
+    if (!tbcSource.getChromaDecoder()) {
+        return true;
+    }
+
+    return tbcSource.getSourceMode() == TbcSource::LUMA_SOURCE;
+}
+
+QString MainWindow::playbackStartToolTip() const
+{
+    const bool isPalSystem = (tbcSource.getIsSourceLoaded() && tbcSource.getSystem() == PAL);
+    if (playbackUseFastMode()) {
+        const QString fastFpsText = isPalSystem ? QStringLiteral("50.00") : QStringLiteral("59.94");
+        return tr("Play at %1 fps (luma/source mode)").arg(fastFpsText);
+    }
+
+    const QString fpsText = isPalSystem ? QStringLiteral("25.00") : QStringLiteral("29.97");
+    return tr("Play at %1 fps").arg(fpsText);
+}
+
+double MainWindow::playbackFrameIntervalMs() const
+{
+    if (tbcSource.getIsSourceLoaded() && tbcSource.getSystem() == PAL) {
+        return 1000.0 / 25.0;
+    }
+    return 1000.0 * 1001.0 / 30000.0;
+}
+
+void MainWindow::scheduleNextPlaybackTick()
+{
+    if (!playbackRunning || !playbackTimer) {
+        return;
+    }
+    double intervalMs = playbackFrameIntervalMs();
+    if (playbackUseFastMode()) {
+        intervalMs *= 0.5;
+    }
+    playbackTickCarryMs += intervalMs;
+    const int timerIntervalMs = qMax(1, static_cast<int>(qFloor(playbackTickCarryMs)));
+    playbackTickCarryMs -= static_cast<double>(timerIntervalMs);
+    playbackTimer->start(timerIntervalMs);
+}
+
+void MainWindow::setPlaybackRunning(bool running)
+{
+    playbackRunning = running && tbcSource.getIsSourceLoaded();
+    if (playbackTimer && !playbackRunning) {
+        playbackTimer->stop();
+    }
+
+    if (!ui || !ui->playPushButton) {
+        return;
+    }
+
+    {
+        const QSignalBlocker blocker(ui->playPushButton);
+        ui->playPushButton->setChecked(playbackRunning);
+    }
+
+    if (playbackRunning) {
+        playbackTickCarryMs = 0.0;
+        ensureSvgButtonIcon(ui->playPushButton, QStringLiteral(":/icons/Graphics/stop-playback.svg"));
+        ui->playPushButton->setToolTip(tr("Stop playback"));
+        scheduleNextPlaybackTick();
+        return;
+    }
+
+    ensureSvgButtonIcon(ui->playPushButton, QStringLiteral(":/icons/Graphics/start-playback.svg"));
+    ui->playPushButton->setToolTip(playbackStartToolTip());
+}
+
+void MainWindow::stepPlayback()
+{
+    if (!playbackRunning || !tbcSource.getIsSourceLoaded()) {
+        setPlaybackRunning(false);
+        return;
+    }
+
+    qint32 currentNumber = currentFrameNumber;
+    if (tbcSource.getFieldViewEnabled()) {
+        const qint32 nextField = currentFieldNumber + 2;
+        if (nextField > tbcSource.getNumberOfFields()) {
+            setPlaybackRunning(false);
+            return;
+        }
+        setCurrentField(nextField);
+        currentNumber = currentFieldNumber;
+    } else {
+        const qint32 nextFrame = currentFrameNumber + 1;
+        if (nextFrame > tbcSource.getNumberOfFrames()) {
+            setPlaybackRunning(false);
+            return;
+        }
+        setCurrentFrame(nextFrame);
+        currentNumber = currentFrameNumber;
+    }
+
+    updatePositionEditorValue(currentNumber);
+    if (ui->posHorizontalSlider) {
+        const QSignalBlocker blocker(ui->posHorizontalSlider);
+        ui->posHorizontalSlider->setValue(currentNumber);
+    }
+
+    scheduleNextPlaybackTick();
 }
 
 void MainWindow::updateBottomStatusReadout()
@@ -1812,6 +1920,7 @@ void MainWindow::on_actionToggleChromaDuringSeek_triggered()
 // Previous field/frame button has been clicked
 void MainWindow::on_previousPushButton_clicked()
 {
+    setPlaybackRunning(false);
     // Enter chroma seek mode if appropriate
     enterChromaSeekMode(ui->previousPushButton);
     
@@ -1832,6 +1941,7 @@ void MainWindow::on_previousPushButton_clicked()
 // Next field/frame button has been clicked
 void MainWindow::on_nextPushButton_clicked()
 {
+    setPlaybackRunning(false);
     // Enter chroma seek mode if appropriate
     enterChromaSeekMode(ui->nextPushButton);
     
@@ -1888,6 +1998,7 @@ void MainWindow::on_nextPushButton_released()
 // Skip to the next chapter (note: this button was repurposed from 'end frame')
 void MainWindow::on_endPushButton_clicked()
 {
+    setPlaybackRunning(false);
     setCurrentFrame(tbcSource.startOfNextChapter(currentFrameNumber));
     auto uiNumber = currentFrameNumber;
 
@@ -1902,6 +2013,7 @@ void MainWindow::on_endPushButton_clicked()
 // Skip to the start of chapter (note: this button was repurposed from 'start frame')
 void MainWindow::on_startPushButton_clicked()
 {
+    setPlaybackRunning(false);
     setCurrentFrame(tbcSource.startOfChapter(currentFrameNumber));
     auto uiNumber = currentFrameNumber;
 
@@ -1916,6 +2028,7 @@ void MainWindow::on_startPushButton_clicked()
 // Field/Frame number spin box editing has finished
 void MainWindow::on_posNumberSpinBox_editingFinished()
 {
+    setPlaybackRunning(false);
     if (!tbcSource.getIsSourceLoaded() || !tbcSource.getFieldViewEnabled()) {
         return;
     }
@@ -1936,6 +2049,7 @@ void MainWindow::on_posNumberSpinBox_editingFinished()
 
 void MainWindow::on_posTimecodeLineEdit_editingFinished()
 {
+    setPlaybackRunning(false);
     if (!tbcSource.getIsSourceLoaded() || tbcSource.getFieldViewEnabled() || !ui->posTimecodeLineEdit) {
         return;
     }
@@ -1956,55 +2070,42 @@ void MainWindow::on_posTimecodeLineEdit_editingFinished()
     ui->posTimecodeLineEdit->setText(frameToTimecode(currentFrameNumber));
 }
 
+void MainWindow::on_playPushButton_toggled(bool checked)
+{
+    setPlaybackRunning(checked);
+}
+
 // Field/frame slider value has changed
 void MainWindow::on_posHorizontalSlider_valueChanged(int value)
 {
-    if (!tbcSource.getIsSourceLoaded()) return;
-    
-    // Update the active position editor immediately for visual feedback
-    if (ui->posNumberSpinBox->isEnabled()) {
-        if (tbcSource.getFieldViewEnabled()) {
-            ui->posNumberSpinBox->setValue(value);
-        } else if (ui->posTimecodeLineEdit && ui->posTimecodeLineEdit->isEnabled()) {
-            ui->posTimecodeLineEdit->setText(frameToTimecode(value));
-        }
-    }
-    
-    // Store the pending value
-    pendingSliderValue = value;
-    
-    // If user is actively dragging, start/restart the drag pause timer
-    if (sliderDragging) {
-        dragPauseTimer->start(); // This will update frame if user pauses during drag
+    if (!tbcSource.getIsSourceLoaded()) {
         return;
     }
-    
-    // For non-dragging updates (keyboard, clicks), use debounced updates
-    sliderDebounceTimer->start(); // Restart the debounce timer
+    setPlaybackRunning(false);
+
+    if (tbcSource.getFieldViewEnabled()) {
+        setCurrentField(value);
+        updatePositionEditorValue(currentFieldNumber);
+    } else {
+        setCurrentFrame(value);
+        updatePositionEditorValue(currentFrameNumber);
+    }
 }
 
 // User started dragging the slider
 void MainWindow::on_posHorizontalSlider_sliderPressed()
 {
-    sliderDragging = true;
-    dragPauseTimer->stop(); // Stop any existing timer
+    setPlaybackRunning(false);
 }
 
 // User finished dragging the slider - now update
 void MainWindow::on_posHorizontalSlider_sliderReleased()
 {
-    sliderDragging = false;
-    dragPauseTimer->stop(); // Stop the pause timer
-    
-    if (pendingSliderValue != -1) {
-        // Update immediately when drag ends
-        if (tbcSource.getFieldViewEnabled()) {
-            setCurrentField(pendingSliderValue);
-        } else {
-            setCurrentFrame(pendingSliderValue);
-        }
-        pendingSliderValue = -1;
+    if (!tbcSource.getIsSourceLoaded()) {
+        return;
     }
+    const qint32 currentNumber = tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
+    updatePositionEditorValue(currentNumber);
 }
 
 void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint &pos)
@@ -2051,31 +2152,6 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
     }
 }
 
-// Debounced update for non-dragging slider changes
-void MainWindow::onSliderDebounceTimeout()
-{
-    if (!sliderDragging && pendingSliderValue != -1) {
-        if (tbcSource.getFieldViewEnabled()) {
-            setCurrentField(pendingSliderValue);
-        } else {
-            setCurrentFrame(pendingSliderValue);
-        }
-        pendingSliderValue = -1;
-    }
-}
-
-// Update frame when user pauses during drag (for visual hunting)
-void MainWindow::onDragPauseTimeout()
-{
-    if (sliderDragging && pendingSliderValue != -1) {
-        if (tbcSource.getFieldViewEnabled()) {
-            setCurrentField(pendingSliderValue);
-        } else {
-            setCurrentFrame(pendingSliderValue);
-        }
-        // Don't clear pendingSliderValue - we still need it for final release
-    }
-}
 
 // Source/Chroma select button clicked
 void MainWindow::on_videoPushButton_clicked()
@@ -2092,6 +2168,12 @@ void MainWindow::on_videoPushButton_clicked()
 
     // Show the current image
     showImage();
+
+    if (playbackRunning) {
+        scheduleNextPlaybackTick();
+    } else if (ui && ui->playPushButton) {
+        ui->playPushButton->setToolTip(playbackStartToolTip());
+    }
 }
 
 // Aspect ratio button clicked
@@ -2254,6 +2336,12 @@ void MainWindow::on_sourcesPushButton_clicked()
 
     // Show the current image
     showImage();
+
+    if (playbackRunning) {
+        scheduleNextPlaybackTick();
+    } else if (ui && ui->playPushButton) {
+        ui->playPushButton->setToolTip(playbackStartToolTip());
+    }
 }
 
 // Frame/Field view button clicked
@@ -2603,6 +2691,7 @@ void MainWindow::chromaDecoderConfigChangedSignalHandler()
 // Signal handler for busy signal from TbcSource class
 void MainWindow::on_busy(QString infoMessage)
 {
+    setPlaybackRunning(false);
     tbcDebugStream() << "MainWindow::on_busy(): Got signal with message" << infoMessage;
     // Set the busy message and centre the dialog in the parent window
     busyDialog->setMessage(infoMessage);
@@ -2621,6 +2710,7 @@ void MainWindow::on_busy(QString infoMessage)
 void MainWindow::on_finishedLoading(bool success)
 {
     tbcDebugStream() << "MainWindow::on_finishedLoading(): Called";
+    setPlaybackRunning(false);
 
     // Hide the busy dialogue
     busyDialog->hide();

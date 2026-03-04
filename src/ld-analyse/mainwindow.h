@@ -92,6 +92,7 @@ private slots:
     void on_nextPushButton_released();
     void on_endPushButton_clicked();
     void on_startPushButton_clicked();
+    void on_playPushButton_toggled(bool checked);
     void on_posNumberSpinBox_editingFinished();
     void on_posTimecodeLineEdit_editingFinished();
     void on_posHorizontalSlider_valueChanged(int value);
@@ -115,8 +116,6 @@ private slots:
     // Miscellaneous handlers
     void scopeCoordsChangedSignalHandler(qint32 xCoord, qint32 yCoord);
     void vectorscopeChangedSignalHandler();
-    void onSliderDebounceTimeout();
-    void onDragPauseTimeout();
     void mousePressEvent(QMouseEvent *event);
     void mouseMoveEvent(QMouseEvent *event);
     void videoParametersChangedSignalHandler(const LdDecodeMetaData::VideoParameters &videoParameters);
@@ -174,13 +173,10 @@ private:
     bool metadataJsonLoaded = false;
     QString metadataJsonFilename;
     QString metadataTempSqliteFilename;
-    
-    // Slider debouncing
-    QTimer* sliderDebounceTimer;
-    QTimer* dragPauseTimer;
-    QTimer* resizeTimer;
-    qint32 pendingSliderValue;
-    bool sliderDragging;
+    QTimer* playbackTimer = nullptr;
+    QTimer* resizeTimer = nullptr;
+    double playbackTickCarryMs = 0.0;
+    bool playbackRunning = false;
     
     // Chroma toggle during seek
     bool chromaSeekMode;
@@ -202,6 +198,12 @@ private:
     QString framesToDurationTimecode(qint32 frameCount) const;
     qint32 timecodeToFrame(const QString &timecodeText, bool *ok = nullptr) const;
     void updatePositionEditorValue(qint32 currentNumber);
+    bool playbackUseFastMode() const;
+    QString playbackStartToolTip() const;
+    double playbackFrameIntervalMs() const;
+    void scheduleNextPlaybackTick();
+    void setPlaybackRunning(bool running);
+    void stepPlayback();
     void setCurrentFrame(qint32 frame);
     void setCurrentField(qint32 field);
     void sanitizeCurrentPosition();

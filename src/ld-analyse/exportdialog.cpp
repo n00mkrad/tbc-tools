@@ -16,6 +16,7 @@
 #include <QJsonParseError>
 #include <QMessageBox>
 #include <QLineEdit>
+#include <QComboBox>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QSignalBlocker>
@@ -179,6 +180,78 @@ double frameRateForSystem(int system)
     default:
         return 30000.0 / 1001.0;
     }
+}
+
+bool isFfv1ProfileName(const QString &profileName)
+{
+    return profileName.trimmed().compare(QStringLiteral("ffv1"), Qt::CaseInsensitive) == 0;
+}
+
+const QList<int> &supportedFfv1SlicesValues()
+{
+    static const QList<int> values = {4, 6, 8, 9, 12, 15, 16, 18, 20, 24, 25, 28, 30, 32};
+    return values;
+}
+
+bool isSupportedFfv1SlicesValue(int slices)
+{
+    return supportedFfv1SlicesValues().contains(slices);
+}
+
+QString supportedFfv1SlicesValuesText()
+{
+    QStringList valuesText;
+    const QList<int> values = supportedFfv1SlicesValues();
+    valuesText.reserve(values.size());
+    for (const int value : values) {
+        valuesText << QString::number(value);
+    }
+    return valuesText.join(QStringLiteral(", "));
+}
+
+QStringList profileVideoProfileNames(const QJsonObject &profileObject)
+{
+    QStringList names;
+    const QJsonValue videoProfileValue = profileObject.value(QStringLiteral("video_profile"));
+    if (videoProfileValue.isString()) {
+        const QString name = videoProfileValue.toString().trimmed();
+        if (!name.isEmpty()) {
+            names << name;
+        }
+    } else if (videoProfileValue.isArray()) {
+        const QJsonArray values = videoProfileValue.toArray();
+        for (const QJsonValue &value : values) {
+            if (!value.isString()) {
+                continue;
+            }
+            const QString name = value.toString().trimmed();
+            if (!name.isEmpty() && !names.contains(name)) {
+                names << name;
+            }
+        }
+    }
+    return names;
+}
+
+void setOrAppendNumericOption(QJsonObject *videoProfileObject, const QString &optionName, int optionValue)
+{
+    if (!videoProfileObject) {
+        return;
+    }
+
+    QJsonArray opts = videoProfileObject->value(QStringLiteral("opts")).toArray();
+    for (int i = 0; i + 1 < opts.size(); ++i) {
+        if (!opts.at(i).isString() || opts.at(i).toString() != optionName) {
+            continue;
+        }
+        opts.replace(i + 1, optionValue);
+        videoProfileObject->insert(QStringLiteral("opts"), opts);
+        return;
+    }
+
+    opts.append(optionName);
+    opts.append(optionValue);
+    videoProfileObject->insert(QStringLiteral("opts"), opts);
 }
 
 
@@ -393,6 +466,17 @@ ExportDialog::ExportDialog(QWidget *parent) :
         const int pcm24Index = ui->audioProfileComboBox->findData(QStringLiteral("pcm_24"));
         ui->audioProfileComboBox->setCurrentIndex(pcm24Index >= 0 ? pcm24Index : 0);
     }
+    if (ui->ffv1SlicesSpinBox) {
+        ui->ffv1SlicesSpinBox->setMinimum(1);
+        ui->ffv1SlicesSpinBox->setMaximum(32);
+        ui->ffv1SlicesSpinBox->setValue(4);
+        const QString tooltipText =
+            tr("Supported FFV1 slice counts: %1").arg(supportedFfv1SlicesValuesText());
+        ui->ffv1SlicesSpinBox->setToolTip(tooltipText);
+        if (ui->ffv1SlicesLabel) {
+            ui->ffv1SlicesLabel->setToolTip(tooltipText);
+        }
+    }
     if (ui->inPointTimecodeLineEdit) {
         ui->inPointTimecodeLineEdit->setPlaceholderText(tr("HH:MM:SS:FF"));
         ui->inPointTimecodeLineEdit->setMaxLength(15);
@@ -541,6 +625,10 @@ ExportDialog::ExportDialog(QWidget *parent) :
     connect(ui->outputLineEdit, &QLineEdit::textEdited, this, [this]() {
         outputAutoSet = false;
     });
+    if (ui->profileComboBox) {
+        connect(ui->profileComboBox, &QComboBox::currentTextChanged, this,
+                [this](const QString &) { updateProfileDependentControls(); });
+    }
 
     exportProcess = new QProcess(this);
     connect(exportProcess, &QProcess::finished, this, &ExportDialog::handleProcessFinished);
@@ -550,6 +638,7 @@ ExportDialog::ExportDialog(QWidget *parent) :
     connect(exportProcess, &QProcess::started, this, [this]() {
         appendLog(tr("tbc-video-export started (PID %1).").arg(exportProcess->processId()));
     });
+    updateProfileDependentControls();
 
     appendStatus(tr("Ready."));
     appendLog(tr("Ready."));
@@ -566,6 +655,7 @@ void ExportDialog::setSource(TbcSource *source)
     tbcSource = source;
     updateFromSource();
     refreshProfiles();
+    updateProfileDependentControls();
 }
 
 void ExportDialog::setInPoint(int frameNumber)
@@ -828,6 +918,7 @@ void ExportDialog::refreshProfiles()
     if (exportPath.isEmpty()) {
         appendStatus(tr("tbc-video-export not found."));
         appendLog(tr("tbc-video-export not found."));
+        updateProfileDependentControls();
         return;
     }
 
@@ -837,12 +928,14 @@ void ExportDialog::refreshProfiles()
     if (!listProcess.waitForStarted(3000)) {
         appendStatus(tr("Failed to start profile listing."));
         appendLog(tr("Failed to start profile listing."));
+        updateProfileDependentControls();
         return;
     }
     if (!listProcess.waitForFinished(10000)) {
         listProcess.kill();
         appendStatus(tr("Profile list timed out."));
         appendLog(tr("Profile list timed out."));
+        updateProfileDependentControls();
         return;
     }
     profileOutput = QString::fromLocal8Bit(listProcess.readAllStandardOutput());
@@ -854,6 +947,7 @@ void ExportDialog::refreshProfiles()
         }
         appendStatus(errorMessage);
         appendLog(errorMessage);
+        updateProfileDependentControls();
         return;
     }
     const QString currentText = ui->profileComboBox->currentText().trimmed();
@@ -862,6 +956,7 @@ void ExportDialog::refreshProfiles()
     if (profiles.isEmpty()) {
         appendStatus(tr("No profiles found."));
         appendLog(tr("No profiles found."));
+        updateProfileDependentControls();
         return;
     }
 
@@ -874,6 +969,24 @@ void ExportDialog::refreshProfiles()
         ui->profileComboBox->setCurrentText(defaultProfile);
     } else {
         ui->profileComboBox->setCurrentIndex(0);
+    }
+    updateProfileDependentControls();
+}
+
+void ExportDialog::updateProfileDependentControls()
+{
+    const bool ffv1Selected = ui && ui->profileComboBox
+                              && isFfv1ProfileName(ui->profileComboBox->currentText());
+    if (ui->ffv1SlicesLabel) {
+        ui->ffv1SlicesLabel->setVisible(ffv1Selected);
+    }
+    if (ui->ffv1SlicesSpinBox) {
+        ui->ffv1SlicesSpinBox->setVisible(ffv1Selected);
+        const bool canEdit = ffv1Selected
+                             && exportAvailable
+                             && exportProcess
+                             && exportProcess->state() == QProcess::NotRunning;
+        ui->ffv1SlicesSpinBox->setEnabled(canEdit);
     }
 }
 
@@ -1008,6 +1121,20 @@ void ExportDialog::on_exportButton_clicked()
     const QString selectedProfile = ui->profileComboBox ? ui->profileComboBox->currentText().trimmed() : QString();
     const QString selectedAudioProfile =
         ui->audioProfileComboBox ? ui->audioProfileComboBox->currentData().toString() : QString();
+    if (isFfv1ProfileName(selectedProfile) && ui->ffv1SlicesSpinBox) {
+        const int ffv1Slices = ui->ffv1SlicesSpinBox->value();
+        if (!isSupportedFfv1SlicesValue(ffv1Slices)) {
+            const QString supportedValuesText = supportedFfv1SlicesValuesText();
+            const QString errorToShow = tr("Unsupported FFV1 slices value %1. Supported values: %2.")
+                                            .arg(ffv1Slices)
+                                            .arg(supportedValuesText);
+            cleanupTemporaryMetadataSnapshot();
+            appendStatus(errorToShow);
+            appendLog(errorToShow);
+            QMessageBox::warning(this, tr("Error"), errorToShow);
+            return;
+        }
+    }
     const QString configOverridePath = createTemporaryExportConfig(&configErrorMessage,
                                                                    selectedProfile,
                                                                    selectedAudioProfile);
@@ -1034,13 +1161,14 @@ void ExportDialog::on_exportButton_clicked()
         QMessageBox::warning(this, tr("Error"), errorToShow);
         return;
     }
-    const int zeroBasedStart = qMax(0, inPoint - 1);
+    const int startFrameOneBased = inPoint;
+    const int zeroBasedStartForAudioTrim = qMax(0, startFrameOneBased - 1);
     const int rangeLength = outPoint - inPoint + 1;
 
     QStringList exportAudioTracks = collectAudioTracks();
-    if (!exportAudioTracks.isEmpty() && (zeroBasedStart > 0 || rangeLength < totalFrames)) {
+    if (!exportAudioTracks.isEmpty() && (zeroBasedStartForAudioTrim > 0 || rangeLength < totalFrames)) {
         QString trimAudioErrorMessage;
-        if (!prepareTrimmedAudioTracks(zeroBasedStart, rangeLength, &exportAudioTracks, &trimAudioErrorMessage)) {
+        if (!prepareTrimmedAudioTracks(zeroBasedStartForAudioTrim, rangeLength, &exportAudioTracks, &trimAudioErrorMessage)) {
             cleanupTemporaryMetadataSnapshot();
             const QString errorToShow = trimAudioErrorMessage.isEmpty()
                                             ? tr("Could not prepare audio track range.")
@@ -1059,7 +1187,7 @@ void ExportDialog::on_exportButton_clicked()
                                                  overwriteExisting,
                                                  configOverridePath,
                                                  exportAudioTracks,
-                                                 zeroBasedStart,
+                                                 startFrameOneBased,
                                                  rangeLength);
     if (arguments.isEmpty()) {
         cleanupTemporaryMetadataSnapshot();
@@ -1458,6 +1586,18 @@ void ExportDialog::setBusy(bool busy)
     if (ui->logProcessOutputCheckBox) {
         ui->logProcessOutputCheckBox->setEnabled(enabled);
     }
+    if (ui->disableDropoutCompensationCheckBox) {
+        ui->disableDropoutCompensationCheckBox->setEnabled(enabled);
+    }
+    if (ui->disableMetadataEmbeddingCheckBox) {
+        ui->disableMetadataEmbeddingCheckBox->setEnabled(enabled);
+    }
+    if (ui->ffv1SlicesLabel) {
+        ui->ffv1SlicesLabel->setEnabled(enabled);
+    }
+    if (ui->ffv1SlicesSpinBox) {
+        ui->ffv1SlicesSpinBox->setEnabled(enabled);
+    }
     ui->outputLineEdit->setEnabled(enabled);
     ui->audio1LineEdit->setEnabled(enabled);
     ui->audio2LineEdit->setEnabled(enabled);
@@ -1475,6 +1615,7 @@ void ExportDialog::setBusy(bool busy)
     if (ui->outPointTimecodeLineEdit) {
         ui->outPointTimecodeLineEdit->setEnabled(enabled);
     }
+    updateProfileDependentControls();
 }
 
 QString ExportDialog::resolveVideoExportPath() const
@@ -1816,7 +1957,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
                                          bool overwriteExisting,
                                          const QString &configFileOverride,
                                          const QStringList &audioTracks,
-                                         int startFrameOverride,
+                                         int startFrameOneBasedOverride,
                                          int lengthOverride) const
 {
     QStringList args;
@@ -1843,9 +1984,9 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         return args;
     }
     const int totalFrames = qMax(1, tbcSource->getNumberOfFrames());
-    int zeroBasedStart = startFrameOverride;
+    int startFrameOneBased = startFrameOneBasedOverride;
     int rangeLength = lengthOverride;
-    if (zeroBasedStart < 0 || rangeLength <= 0) {
+    if (startFrameOneBased <= 0 || rangeLength <= 0) {
         int inPoint = ui->inPointSpinBox ? ui->inPointSpinBox->value() : 1;
         int outPoint = ui->outPointSpinBox ? ui->outPointSpinBox->value() : totalFrames;
         inPoint = qBound(1, inPoint, totalFrames);
@@ -1856,19 +1997,18 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
             }
             return args;
         }
-        zeroBasedStart = qMax(0, inPoint - 1);
+        startFrameOneBased = inPoint;
         rangeLength = outPoint - inPoint + 1;
     }
-    zeroBasedStart = qBound(0, zeroBasedStart, qMax(0, totalFrames - 1));
-    rangeLength = qMin(rangeLength, totalFrames - zeroBasedStart);
+    startFrameOneBased = qBound(1, startFrameOneBased, totalFrames);
+    rangeLength = qMin(rangeLength, totalFrames - startFrameOneBased + 1);
     if (rangeLength <= 0) {
         if (errorMessage) {
             *errorMessage = tr("Invalid export range.");
         }
         return args;
     }
-
-    args << QStringLiteral("--start") << QString::number(zeroBasedStart);
+    args << QStringLiteral("--start") << QString::number(startFrameOneBased);
     args << QStringLiteral("--length") << QString::number(rangeLength);
 
     const QString profile = ui->profileComboBox->currentText().trimmed();
@@ -1877,6 +2017,12 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     }
     if (!profile.isEmpty()) {
         args << QStringLiteral("--profile") << profile;
+    }
+    if (ui->disableDropoutCompensationCheckBox && ui->disableDropoutCompensationCheckBox->isChecked()) {
+        args << QStringLiteral("--no-dropout-correct");
+    }
+    if (ui->disableMetadataEmbeddingCheckBox && ui->disableMetadataEmbeddingCheckBox->isChecked()) {
+        args << QStringLiteral("--no-attach-json");
     }
 
     const QStringList tracksToUse = audioTracks.isEmpty() ? collectAudioTracks() : audioTracks;
@@ -2107,6 +2253,7 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
 
     QJsonArray profiles = root.value(QStringLiteral("profiles")).toArray();
     bool profileFound = false;
+    QJsonObject selectedProfileObject;
     for (int i = 0; i < profiles.size(); ++i) {
         const QJsonValue currentValue = profiles.at(i);
         if (!currentValue.isObject()) {
@@ -2117,6 +2264,7 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
             continue;
         }
         profileObject.insert(QStringLiteral("audio_profile"), selectedAudioProfile);
+        selectedProfileObject = profileObject;
         profiles.replace(i, profileObject);
         profileFound = true;
         break;
@@ -2129,6 +2277,34 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
         return QString();
     }
     root.insert(QStringLiteral("profiles"), profiles);
+    if (isFfv1ProfileName(selectedProfile) && ui->ffv1SlicesSpinBox) {
+        const int ffv1Slices = qBound(1, ui->ffv1SlicesSpinBox->value(), 32);
+        const QStringList selectedVideoProfiles = profileVideoProfileNames(selectedProfileObject);
+        QJsonArray videoProfiles = root.value(QStringLiteral("video_profiles")).toArray();
+        bool changedVideoProfiles = false;
+        for (int i = 0; i < videoProfiles.size(); ++i) {
+            if (!videoProfiles.at(i).isObject()) {
+                continue;
+            }
+            QJsonObject videoProfileObject = videoProfiles.at(i).toObject();
+            const QString videoProfileName = videoProfileObject.value(QStringLiteral("name")).toString();
+            if (!selectedVideoProfiles.isEmpty() && !selectedVideoProfiles.contains(videoProfileName)) {
+                continue;
+            }
+            const QString codec = videoProfileObject.value(QStringLiteral("codec")).toString();
+            const bool isFfv1VideoProfile = codec.compare(QStringLiteral("ffv1"), Qt::CaseInsensitive) == 0
+                                            || videoProfileName.contains(QStringLiteral("ffv1"), Qt::CaseInsensitive);
+            if (!isFfv1VideoProfile) {
+                continue;
+            }
+            setOrAppendNumericOption(&videoProfileObject, QStringLiteral("-slices"), ffv1Slices);
+            videoProfiles.replace(i, videoProfileObject);
+            changedVideoProfiles = true;
+        }
+        if (changedVideoProfiles) {
+            root.insert(QStringLiteral("video_profiles"), videoProfiles);
+        }
+    }
 
     const QString configPath = QDir::temp().filePath(
         QStringLiteral("ld-analyse-export-config-%1.json")

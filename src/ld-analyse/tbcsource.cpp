@@ -28,6 +28,7 @@ TbcSource::TbcSource(QObject *parent) : QObject(parent)
     ntscConfiguration = ntscColour.getConfiguration();
     outputConfiguration.pixelFormat = OutputWriter::PixelFormat::RGB48;
     outputConfiguration.paddingAmount = 1;
+    outputConfiguration.trimToActiveRegion = false;
 }
 
 // Public methods -----------------------------------------------------------------------------------------------------
@@ -1077,11 +1078,11 @@ QImage TbcSource::generateQImage()
                              << loadedFrameNumber << "(" << videoParameters.fieldWidth << "x" << frameHeight << ")";
         }
 
-        inputHeight = videoParameters.lastActiveFrameLine - videoParameters.firstActiveFrameLine;
-        inputWidth = videoParameters.activeVideoEnd - videoParameters.activeVideoStart;
-        fieldHeight = inputHeight / 2;
-        inputOffset = videoParameters.firstActiveFrameLine;
-        outputOffset = videoParameters.activeVideoStart;
+        inputHeight = frameHeight;
+        inputWidth = frameWidth;
+        fieldHeight = videoParameters.fieldHeight;
+        inputOffset = 0;
+        outputOffset = 0;
 
         // Chroma decode the current frame
         decodeFrame();

@@ -67,17 +67,17 @@ void MonoDecoder::decodeFrames(const QVector<SourceField>& inputFields,
 {
 	const LdDecodeMetaData::VideoParameters &videoParameters = monoConfig.videoParameters;
 	bool ignoreUV = false;
-	
-	
+
+	const qint32 frameHeight = (videoParameters.fieldHeight * 2) - 1;
 	for (qint32 fieldIndex = startIndex, frameIndex = 0; fieldIndex < endIndex; fieldIndex += 2, frameIndex++) {
 		componentFrames[frameIndex].init(videoParameters, ignoreUV);
-		for (qint32 y = videoParameters.firstActiveFrameLine; y < videoParameters.lastActiveFrameLine; y++) {
+		for (qint32 y = 0; y < frameHeight; y++) {
 			const SourceVideo::Data &inputFieldData = (y % 2) == 0 ? inputFields[fieldIndex].data :inputFields[fieldIndex+1].data;
 			const quint16 *inputLine = inputFieldData.data() + ((y / 2) * videoParameters.fieldWidth);
-
+			// Copy the whole composite signal to Y (leaving U and V blank/zero)
 			// Copy the whole composite signal to Y (leaving U and V blank)
 			double *outY = componentFrames[frameIndex].y(y);
-			for (qint32 x = videoParameters.activeVideoStart; x < videoParameters.activeVideoEnd; x++) {
+			for (qint32 x = 0; x < videoParameters.fieldWidth; x++) {
 				outY[x] = inputLine[x];
 			}
 		}

@@ -130,6 +130,36 @@ QStringList parseProfiles(const QString &rawOutput, QString *defaultProfile)
     return profiles;
 }
 
+bool toolSupportsOption(const QString &program, const QString &option)
+{
+    if (program.isEmpty() || option.isEmpty()) {
+        return false;
+    }
+
+    static QHash<QString, bool> supportCache;
+    const QString cacheKey = program + QLatin1Char('|') + option;
+    if (supportCache.contains(cacheKey)) {
+        return supportCache.value(cacheKey);
+    }
+
+    QProcess helpProcess;
+    helpProcess.setProcessChannelMode(QProcess::MergedChannels);
+    helpProcess.start(program, QStringList() << QStringLiteral("--help"));
+    bool supported = false;
+    if (helpProcess.waitForStarted(3000)) {
+        if (helpProcess.waitForFinished(10000)
+            && helpProcess.exitStatus() == QProcess::NormalExit) {
+            const QString helpOutput = QString::fromLocal8Bit(helpProcess.readAllStandardOutput());
+            supported = helpOutput.contains(option);
+        } else {
+            helpProcess.kill();
+        }
+    }
+
+    supportCache.insert(cacheKey, supported);
+    return supported;
+}
+
 struct ActiveAreaFrameDefaults {
     int ffll = 0;
     int lfll = 0;
@@ -453,6 +483,7 @@ ExportDialog::ExportDialog(QWidget *parent) :
         ui->resolutionModeComboBox->clear();
         ui->resolutionModeComboBox->addItem(tr("Active Area"), QStringLiteral("active_area"));
         ui->resolutionModeComboBox->addItem(tr("Active + VBI"), QStringLiteral("active_vbi"));
+        ui->resolutionModeComboBox->addItem(tr("Full-Frame 4fsc"), QStringLiteral("full_frame_4fsc"));
         ui->resolutionModeComboBox->addItem(tr("User Defined"), QStringLiteral("user_defined"));
         const int activeAreaIndex = ui->resolutionModeComboBox->findData(QStringLiteral("active_area"));
         ui->resolutionModeComboBox->setCurrentIndex(activeAreaIndex >= 0 ? activeAreaIndex : 0);
@@ -2077,7 +2108,16 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
                                        ? ui->resolutionModeComboBox->currentData().toString()
                                        : QStringLiteral("active_area");
     const bool prioritizeUserDefinedFraming = usesCustomVerticalFraming(videoParameters);
-    if (resolutionMode == QStringLiteral("active_vbi")) {
+    if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+        const QString exportPath = resolveVideoExportPath();
+        if (!exportPath.isEmpty() && !toolSupportsOption(exportPath, QStringLiteral("--full-frame"))) {
+            if (errorMessage) {
+                *errorMessage = tr("Selected export mode requires a tbc-video-export build with --full-frame support.");
+            }
+            return QStringList();
+        }
+        args << QStringLiteral("--full-frame");
+    } else if (resolutionMode == QStringLiteral("active_vbi")) {
         args << QStringLiteral("--vbi");
     } else if (resolutionMode == QStringLiteral("user_defined") || prioritizeUserDefinedFraming) {
         if (videoParameters.firstActiveFieldLine > 0) {

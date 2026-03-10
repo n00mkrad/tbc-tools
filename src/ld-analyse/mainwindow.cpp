@@ -31,6 +31,9 @@
 #include <QStringList>
 #include <QTextStream>
 #include <QDateTime>
+#include <QFileOpenEvent>
+#include <QMimeData>
+#include <QUrl>
 #include <QtMath>
 #include <QUuid>
 
@@ -195,6 +198,49 @@ QString resolveSourceFilenameForMetadata(const QString &metadataFilename)
 
     return QString();
 }
+
+bool isSupportedInputSuffix(const QString &suffix)
+{
+    const QString lowerSuffix = suffix.toLower();
+    return lowerSuffix == QStringLiteral("tbc")
+           || lowerSuffix == QStringLiteral("ytbc")
+           || lowerSuffix == QStringLiteral("ctbc")
+           || lowerSuffix == QStringLiteral("tbcy")
+           || lowerSuffix == QStringLiteral("tbcc")
+           || lowerSuffix == QStringLiteral("db")
+           || lowerSuffix == QStringLiteral("json");
+}
+
+bool isSupportedInputPath(const QString &path)
+{
+    const QFileInfo info(path);
+    if (!info.exists() || !info.isFile()) {
+        return false;
+    }
+
+    return isSupportedInputSuffix(info.suffix());
+}
+
+QString firstSupportedDroppedFile(const QMimeData *mimeData)
+{
+    if (!mimeData || !mimeData->hasUrls()) {
+        return QString();
+    }
+
+    const QList<QUrl> urls = mimeData->urls();
+    for (const QUrl &url : urls) {
+        if (!url.isLocalFile()) {
+            continue;
+        }
+
+        const QString localPath = url.toLocalFile();
+        if (isSupportedInputPath(localPath)) {
+            return localPath;
+        }
+    }
+
+    return QString();
+}
 } // namespace
 
 MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidget *parent) :
@@ -202,6 +248,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    setAcceptDrops(true);
     if (ui->mainTabWidget && ui->viewerTab) {
         ui->mainTabWidget->setCurrentWidget(ui->viewerTab);
     }
@@ -294,7 +341,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     connect(videoParametersDialog, &VideoParametersDialog::exportBoundaryToggled, this, &MainWindow::exportBoundaryToggledSignalHandler);
     connect(videoParametersDialog, &VideoParametersDialog::exportBoundaryThicknessChanged, this, &MainWindow::exportBoundaryThicknessChangedSignalHandler);
 
-    showExportBoundary = configuration.getShowExportBoundary();
+    showExportBoundary = true;
     videoParametersDialog->setShowExportBoundary(showExportBoundary);
     exportBoundaryThickness = configuration.getExportBoundaryThickness();
     videoParametersDialog->setExportBoundaryThickness(exportBoundaryThickness);
@@ -2516,6 +2563,64 @@ void MainWindow::vectorscopeChangedSignalHandler()
         // Update the vectorscope
         updateVectorscopeDialogue();
     }
+}
+
+bool MainWindow::event(QEvent *event)
+{
+    if (event && event->type() == QEvent::FileOpen) {
+        const auto *fileOpenEvent = static_cast<QFileOpenEvent *>(event);
+        QString filePath = fileOpenEvent->file();
+        if (filePath.isEmpty() && fileOpenEvent->url().isLocalFile()) {
+            filePath = fileOpenEvent->url().toLocalFile();
+        }
+
+        if (isSupportedInputPath(filePath)) {
+            loadTbcFile(filePath);
+            return true;
+        }
+    }
+
+    return QMainWindow::event(event);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (!event || !isEnabled()) {
+        return;
+    }
+
+    const QString droppedFile = firstSupportedDroppedFile(event->mimeData());
+    if (!droppedFile.isEmpty()) {
+        event->acceptProposedAction();
+    }
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent *event)
+{
+    if (!event || !isEnabled()) {
+        return;
+    }
+
+    const QString droppedFile = firstSupportedDroppedFile(event->mimeData());
+    if (!droppedFile.isEmpty()) {
+        event->acceptProposedAction();
+    }
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    if (!event || !isEnabled()) {
+        return;
+    }
+
+    const QString droppedFile = firstSupportedDroppedFile(event->mimeData());
+    if (droppedFile.isEmpty()) {
+        return;
+    }
+
+    lastFilename = droppedFile;
+    loadTbcFile(droppedFile);
+    event->acceptProposedAction();
 }
 
 // Mouse press event handler

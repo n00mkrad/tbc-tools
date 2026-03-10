@@ -285,6 +285,15 @@ void PalColour::decodeField(const SourceField &inputField, const double *chromaD
 {
     // Pointer to the composite signal data
     const quint16 *compPtr = inputField.data.data();
+    // Seed full-field luma from the composite signal so non-active regions remain accessible.
+    for (qint32 fieldLine = 0; fieldLine < videoParameters.fieldHeight; fieldLine++) {
+        const qint32 frameLine = (fieldLine * 2) + inputField.getOffset();
+        const quint16 *inputLine = compPtr + (fieldLine * videoParameters.fieldWidth);
+        double *outY = componentFrame.y(frameLine);
+        for (qint32 x = 0; x < videoParameters.fieldWidth; x++) {
+            outY[x] = inputLine[x];
+        }
+    }
 
     const qint32 firstLine = inputField.getFirstActiveLine(videoParameters);
     const qint32 lastLine = inputField.getLastActiveLine(videoParameters);

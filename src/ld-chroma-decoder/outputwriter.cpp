@@ -57,12 +57,21 @@ void OutputWriter::updateConfiguration(LdDecodeMetaData::VideoParameters &_video
     videoParameters = _videoParameters;
     topPadLines = 0;
     bottomPadLines = 0;
+    inputStartX = 0;
+    inputStartLine = 0;
 
-    activeWidth = videoParameters.activeVideoEnd - videoParameters.activeVideoStart;
-    activeHeight = videoParameters.lastActiveFrameLine - videoParameters.firstActiveFrameLine;
+    if (config.trimToActiveRegion) {
+        inputStartX = videoParameters.activeVideoStart;
+        inputStartLine = videoParameters.firstActiveFrameLine;
+        activeWidth = videoParameters.activeVideoEnd - videoParameters.activeVideoStart;
+        activeHeight = videoParameters.lastActiveFrameLine - videoParameters.firstActiveFrameLine;
+    } else {
+        activeWidth = videoParameters.fieldWidth;
+        activeHeight = (videoParameters.fieldHeight * 2) - 1;
+    }
     outputHeight = activeHeight;
 
-    if (config.paddingAmount > 1) {
+    if (config.trimToActiveRegion && config.paddingAmount > 1) {
         // Some video codecs require the width and height of a video to be divisible by
         // a given number of samples on each axis.
         
@@ -99,6 +108,12 @@ void OutputWriter::updateConfiguration(LdDecodeMetaData::VideoParameters &_video
         // Update the caller's copy, now we've adjusted the active area
         _videoParameters = videoParameters;
     }
+
+    if (config.trimToActiveRegion) {
+        // Ensure convertLine reads from the padded/adjusted active origin.
+        inputStartX = videoParameters.activeVideoStart;
+        inputStartLine = videoParameters.firstActiveFrameLine;
+    }
 }
 
 const char *OutputWriter::getPixelName() const
@@ -119,9 +134,15 @@ void OutputWriter::printOutputInfo() const
 {
     // Show output information to the user
     const qint32 frameHeight = (videoParameters.fieldHeight * 2) - 1;
-    qInfo() << "Input video of" << videoParameters.fieldWidth << "x" << frameHeight
-            << "will be colourised and trimmed to" << activeWidth << "x" << outputHeight
-            << getPixelName() << "frames";
+    if (config.trimToActiveRegion) {
+        qInfo() << "Input video of" << videoParameters.fieldWidth << "x" << frameHeight
+                << "will be colourised and trimmed to" << activeWidth << "x" << outputHeight
+                << getPixelName() << "frames";
+    } else {
+        qInfo() << "Input video of" << videoParameters.fieldWidth << "x" << frameHeight
+                << "will be colourised to full-frame" << activeWidth << "x" << outputHeight
+                << getPixelName() << "frames";
+    }
 }
 
 QByteArray OutputWriter::getStreamHeader() const
@@ -264,20 +285,28 @@ void OutputWriter::clearPadLines(qint32 firstLine, qint32 numLines, OutputFrame 
 
 void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componentFrame, OutputFrame &outputFrame) const
 {
-    // Get pointers to the component data for the active region
-    const qint32 inputLine = videoParameters.firstActiveFrameLine + lineNumber;
-    const double *inY = componentFrame.y(inputLine) + videoParameters.activeVideoStart;
+    // Get pointers to the component data for the configured region
+    const qint32 inputLine = inputStartLine + lineNumber;
+    const double *inY = componentFrame.y(inputLine) + inputStartX;
     // Not used if output is GRAY16
     const double *inU = (config.pixelFormat != GRAY16) ?
-                            componentFrame.u(inputLine) + videoParameters.activeVideoStart : nullptr;
+                            componentFrame.u(inputLine) + inputStartX : nullptr;
     const double *inV = (config.pixelFormat != GRAY16) ?
-                            componentFrame.v(inputLine) + videoParameters.activeVideoStart : nullptr;
+                            componentFrame.v(inputLine) + inputStartX : nullptr;
 
     const qint32 outputLine = topPadLines + lineNumber;
 
-    const double yOffset = videoParameters.black16bIre;
-    double yRange = videoParameters.white16bIre - videoParameters.black16bIre;
-    const double uvRange = yRange;
+    const bool preserveFullSignalRange = !config.trimToActiveRegion;
+    const double yOffset = preserveFullSignalRange ? 0.0 : static_cast<double>(videoParameters.black16bIre);
+    double yRange = preserveFullSignalRange ? 65535.0
+                                            : static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
+    double uvRange = static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
+    if (yRange <= 0.0) {
+        yRange = 1.0;
+    }
+    if (uvRange <= 0.0) {
+        uvRange = 1.0;
+    }
 
     switch (config.pixelFormat) {
         case RGB48: {

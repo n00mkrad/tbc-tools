@@ -260,6 +260,12 @@ void ChromaDecoderConfigDialog::updateDialog()
 {
     const bool isSourcePal = system == PAL || system == PAL_M;
     const bool isSourceNtsc = system == NTSC;
+
+    if (ui->decodeModeComboBox) {
+        const QSignalBlocker decodeModeBlocker(ui->decodeModeComboBox);
+        ui->decodeModeComboBox->setCurrentIndex(
+            outputConfiguration.trimToActiveRegion ? decodeModeActiveOnlyIndex : decodeModeHybridIndex);
+    }
 	
 	if(!isInit)
 	{
@@ -428,6 +434,12 @@ void ChromaDecoderConfigDialog::updateDialog()
     ui->cNRValueLabel->setText(QString::number(ntscConfiguration.cNRLevel, 'f', 1) + tr(" IRE"));
 
     updateLevelLabels();
+}
+
+void ChromaDecoderConfigDialog::on_decodeModeComboBox_currentIndexChanged(int index)
+{
+    outputConfiguration.trimToActiveRegion = (index == decodeModeActiveOnlyIndex);
+    emit chromaDecoderConfigChanged();
 }
 
 // Methods to handle changes to the dialogue

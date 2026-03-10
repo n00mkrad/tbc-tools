@@ -18,6 +18,9 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QLabel>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QMouseEvent>
 #include <QRect>
 #include <QTimer>
@@ -116,6 +119,10 @@ private slots:
     // Miscellaneous handlers
     void scopeCoordsChangedSignalHandler(qint32 xCoord, qint32 yCoord);
     void vectorscopeChangedSignalHandler();
+    bool event(QEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
     void mousePressEvent(QMouseEvent *event);
     void mouseMoveEvent(QMouseEvent *event);
     void videoParametersChangedSignalHandler(const LdDecodeMetaData::VideoParameters &videoParameters);

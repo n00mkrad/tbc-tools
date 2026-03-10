@@ -91,6 +91,7 @@ private:
         FrameBuffer(const LdDecodeMetaData::VideoParameters &videoParameters_, const Configuration &configuration_);
 
         void loadFields(const SourceField &firstField, const SourceField &secondField);
+        void copyRawToLuma();
 
         void split1D();
         void split2D();

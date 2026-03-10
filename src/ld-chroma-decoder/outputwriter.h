@@ -53,6 +53,7 @@ public:
         qint32 paddingAmount = 8;
         PixelFormat pixelFormat = RGB48;
         bool outputY4m = false;
+        bool trimToActiveRegion = true;
     };
 
     // Set the output configuration, and adjust the VideoParameters to suit.
@@ -83,6 +84,9 @@ private:
     // Number of blank lines to add at the top and bottom of the output
     qint32 topPadLines;
     qint32 bottomPadLines;
+    // Region to convert from the component frame
+    qint32 inputStartX;
+    qint32 inputStartLine;
 
     // Output size
     qint32 activeWidth;

@@ -52,6 +52,7 @@ public slots:
     void levelSelected(qint32 level);
 
 private slots:
+    void on_decodeModeComboBox_currentIndexChanged(int index);
     void on_blackLevelHorizontalSlider_valueChanged(int value);
     void on_whiteLevelHorizontalSlider_valueChanged(int value);
     void on_blackLevelSpinBox_valueChanged(int value);
@@ -78,6 +79,8 @@ private slots:
     void on_yNRHorizontalSlider_valueChanged(int value);
 
 private:
+    static constexpr int decodeModeActiveOnlyIndex = 0;
+    static constexpr int decodeModeHybridIndex = 1;
     Ui::ChromaDecoderConfigDialog *ui;
     VideoSystem system;
     PalColour::Configuration palConfiguration;

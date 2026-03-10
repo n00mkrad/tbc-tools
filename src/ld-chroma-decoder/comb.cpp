@@ -188,6 +188,7 @@ void Comb::decodeFrames(const QVector<SourceField> &inputFields, qint32 startInd
         // Initialise and clear the component frame
         componentFrames[frameIndex].init(videoParameters);
         currentFrameBuffer->setComponentFrame(componentFrames[frameIndex]);
+        currentFrameBuffer->copyRawToLuma();
 
         // Demodulate chroma giving I/Q
         if (configuration.phaseCompensation) {
@@ -285,6 +286,23 @@ void Comb::FrameBuffer::loadFields(const SourceField &firstField, const SourceFi
 
     // No component frame yet
     componentFrame = nullptr;
+}
+
+void Comb::FrameBuffer::copyRawToLuma()
+{
+    if (componentFrame == nullptr) {
+        return;
+    }
+
+    const qint32 width = videoParameters.fieldWidth;
+    for (qint32 lineNumber = 0; lineNumber < frameHeight; lineNumber++) {
+        const quint16 *inLine = rawbuffer.data() + (lineNumber * width);
+        double *outLine = componentFrame->y(lineNumber);
+
+        for (qint32 h = 0; h < width; h++) {
+            outLine[h] = inLine[h];
+        }
+    }
 }
 
 // Extract chroma into clpbuffer[0] using a 1D bandpass filter.

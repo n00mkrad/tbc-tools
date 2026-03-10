@@ -67,6 +67,13 @@ public:
 
     void setHighlightDropouts(bool _state);
     void setChromaDecoder(bool _state);
+    enum ChromaDecodeMode {
+        ACTIVE_ONLY_CHROMA_MODE,
+        HYBRID_CHROMA_MODE,
+        FULL_FRAME_CHROMA_MODE
+    };
+    void setChromaDecodeMode(ChromaDecodeMode mode);
+    ChromaDecodeMode getChromaDecodeMode() const;
     void setFieldView(bool _state);
     void setFieldOrder(bool _state);
 	void setCombine(bool _state);
@@ -221,6 +228,7 @@ private:
     Comb::Configuration ntscConfiguration;
 	MonoDecoder::MonoConfiguration monoConfiguration;
     OutputWriter::Configuration outputConfiguration;
+    ChromaDecodeMode chromaDecodeMode = HYBRID_CHROMA_MODE;
 	bool combine = false;
 
     // Chapter map

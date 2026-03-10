@@ -81,6 +81,7 @@ private slots:
 private:
     static constexpr int decodeModeActiveOnlyIndex = 0;
     static constexpr int decodeModeHybridIndex = 1;
+    static constexpr int decodeModeFullFrameChromaIndex = 2;
     Ui::ChromaDecoderConfigDialog *ui;
     VideoSystem system;
     PalColour::Configuration palConfiguration;

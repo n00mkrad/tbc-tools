@@ -263,8 +263,13 @@ void ChromaDecoderConfigDialog::updateDialog()
 
     if (ui->decodeModeComboBox) {
         const QSignalBlocker decodeModeBlocker(ui->decodeModeComboBox);
-        ui->decodeModeComboBox->setCurrentIndex(
-            outputConfiguration.trimToActiveRegion ? decodeModeActiveOnlyIndex : decodeModeHybridIndex);
+        if (outputConfiguration.trimToActiveRegion) {
+            ui->decodeModeComboBox->setCurrentIndex(decodeModeActiveOnlyIndex);
+        } else if (outputConfiguration.fullFrameDecode) {
+            ui->decodeModeComboBox->setCurrentIndex(decodeModeFullFrameChromaIndex);
+        } else {
+            ui->decodeModeComboBox->setCurrentIndex(decodeModeHybridIndex);
+        }
     }
 	
 	if(!isInit)
@@ -439,6 +444,7 @@ void ChromaDecoderConfigDialog::updateDialog()
 void ChromaDecoderConfigDialog::on_decodeModeComboBox_currentIndexChanged(int index)
 {
     outputConfiguration.trimToActiveRegion = (index == decodeModeActiveOnlyIndex);
+    outputConfiguration.fullFrameDecode = (index == decodeModeFullFrameChromaIndex);
     emit chromaDecoderConfigChanged();
 }
 

@@ -644,6 +644,7 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(fullFrameOption)) {
         outputConfig.trimToActiveRegion = false;
+        outputConfig.fullFrameDecode = true;
     }
     
     // Perform the processing

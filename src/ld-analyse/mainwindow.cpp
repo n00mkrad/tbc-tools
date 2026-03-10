@@ -620,7 +620,7 @@ void MainWindow::resetGui()
     ui->nextPushButton->setAutoRepeatInterval(1);
 
     // Set option button states
-    ui->videoPushButton->setText(tr("Source"));
+    updateVideoPushButton();
     displayAspectRatio = true;
     updateAspectPushButton();
     updateSourcesPushButton();
@@ -764,6 +764,31 @@ void MainWindow::updateGuiUnloaded()
     updateMetadataStatusPanel();
     if (exportDialog) {
         exportDialog->setSource(&tbcSource);
+    }
+}
+
+void MainWindow::updateVideoPushButton()
+{
+    if (!ui || !ui->videoPushButton) {
+        return;
+    }
+
+    const bool compactLabels = (this->width() < 930);
+    if (!tbcSource.getChromaDecoder()) {
+        ui->videoPushButton->setText(tr("Source"));
+        return;
+    }
+
+    switch (tbcSource.getChromaDecodeMode()) {
+    case TbcSource::ACTIVE_ONLY_CHROMA_MODE:
+        ui->videoPushButton->setText(tr("Active"));
+        break;
+    case TbcSource::HYBRID_CHROMA_MODE:
+        ui->videoPushButton->setText(tr("Hybrid"));
+        break;
+    case TbcSource::FULL_FRAME_CHROMA_MODE:
+        ui->videoPushButton->setText(tr("Chroma"));
+        break;
     }
 }
 
@@ -2203,15 +2228,15 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
 // Source/Chroma select button clicked
 void MainWindow::on_videoPushButton_clicked()
 {
-    if (tbcSource.getChromaDecoder()) {
-        // Chroma decoder off
-        tbcSource.setChromaDecoder(false);
-        ui->videoPushButton->setText(tr("Source"));
-    } else {
-        // Chroma decoder on
+    if (!tbcSource.getChromaDecoder()) {
+        tbcSource.setChromaDecodeMode(TbcSource::HYBRID_CHROMA_MODE);
         tbcSource.setChromaDecoder(true);
-        ui->videoPushButton->setText(tr("Chroma"));
+    } else if (tbcSource.getChromaDecodeMode() == TbcSource::FULL_FRAME_CHROMA_MODE) {
+        tbcSource.setChromaDecoder(false);
+    } else {
+        tbcSource.setChromaDecodeMode(TbcSource::FULL_FRAME_CHROMA_MODE);
     }
+    updateVideoPushButton();
 
     // Show the current image
     showImage();
@@ -2308,7 +2333,7 @@ void MainWindow::enterChromaSeekMode(QPushButton* button)
         chromaSeekMode = true;
         originalChromaState = true;
         tbcSource.setChromaDecoder(false);
-        ui->videoPushButton->setText(tr("Source"));
+        updateVideoPushButton();
     }
 }
 
@@ -2322,7 +2347,7 @@ void MainWindow::exitChromaSeekMode(QPushButton* button)
                 // Exit seek mode and restore chroma
                 chromaSeekMode = false;
                 tbcSource.setChromaDecoder(originalChromaState);
-                ui->videoPushButton->setText(tr("Chroma"));
+                updateVideoPushButton();
                 updateImage(); // Fast refresh without reloading - frame data already loaded
             }
         });
@@ -2726,6 +2751,7 @@ void MainWindow::videoParametersChangedSignalHandler(const LdDecodeMetaData::Vid
 
     // Update the image viewer
     updateImage();
+    updateVideoPushButton();
 
     updateMetadataStatusPanel();
 }
@@ -2910,7 +2936,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     };
 
     if (width > 1000) {
-        setButtonMaxWidth(ui->videoPushButton, 80);
+        setButtonMaxWidth(ui->videoPushButton, 92);
         setButtonMaxWidth(ui->aspectPushButton, 70);
         setButtonMaxWidth(ui->dropoutsPushButton, 115);
         setButtonMaxWidth(ui->sourcesPushButton, 110);
@@ -2923,7 +2949,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
             ui->horizontalSpacer_2->changeSize(12, 20, QSizePolicy::Maximum, QSizePolicy::Minimum);
         }
     } else if (width >= 930) {
-        setButtonMaxWidth(ui->videoPushButton, 72);
+        setButtonMaxWidth(ui->videoPushButton, 84);
         setButtonMaxWidth(ui->aspectPushButton, 64);
         setButtonMaxWidth(ui->dropoutsPushButton, 102);
         setButtonMaxWidth(ui->sourcesPushButton, 98);
@@ -2936,7 +2962,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
             ui->horizontalSpacer_2->changeSize(8, 20, QSizePolicy::Maximum, QSizePolicy::Minimum);
         }
     } else {
-        setButtonMaxWidth(ui->videoPushButton, 58);
+        setButtonMaxWidth(ui->videoPushButton, 72);
         setButtonMaxWidth(ui->aspectPushButton, 52);
         setButtonMaxWidth(ui->dropoutsPushButton, 74);
         setButtonMaxWidth(ui->sourcesPushButton, 70);
@@ -2974,6 +3000,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 	}
 
 	//source label depending on size
+	updateVideoPushButton();
 	updateSourcesPushButton();
 
 	//dropout label

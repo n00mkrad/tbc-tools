@@ -195,6 +195,7 @@ private:
     void resetGui();
     void updateGuiLoaded();
     void updateGuiUnloaded();
+    void updateVideoPushButton();
     void updateAspectPushButton();
     void updateSourcesPushButton();
     void updateMetadataStatusPanel();

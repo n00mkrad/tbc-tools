@@ -199,6 +199,11 @@
          <string>Hybrid</string>
         </property>
        </item>
+       <item>
+        <property name="text">
+         <string>Chroma (Full Frame)</string>
+        </property>
+       </item>
       </widget>
      </item>
     </layout>

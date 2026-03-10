@@ -18,6 +18,28 @@
 
 #include "sourcefield.h"
 
+namespace {
+void applyFullFrameDecodeBounds(LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    const qint32 frameHeight = (videoParameters.fieldHeight * 2) - 1;
+    constexpr qint32 horizontalMargin = 16;
+
+    qint32 decodeStart = horizontalMargin;
+    qint32 decodeEnd = videoParameters.fieldWidth - horizontalMargin;
+    if (decodeEnd <= decodeStart) {
+        decodeStart = 0;
+        decodeEnd = videoParameters.fieldWidth;
+    }
+
+    videoParameters.activeVideoStart = decodeStart;
+    videoParameters.activeVideoEnd = decodeEnd;
+    videoParameters.firstActiveFieldLine = 0;
+    videoParameters.lastActiveFieldLine = videoParameters.fieldHeight;
+    videoParameters.firstActiveFrameLine = 0;
+    videoParameters.lastActiveFrameLine = frameHeight;
+}
+}
+
 TbcSource::TbcSource(QObject *parent) : QObject(parent)
 {
     resetState();
@@ -29,6 +51,8 @@ TbcSource::TbcSource(QObject *parent) : QObject(parent)
     outputConfiguration.pixelFormat = OutputWriter::PixelFormat::RGB48;
     outputConfiguration.paddingAmount = 1;
     outputConfiguration.trimToActiveRegion = false;
+    outputConfiguration.fullFrameDecode = false;
+    chromaDecodeMode = HYBRID_CHROMA_MODE;
 }
 
 // Public methods -----------------------------------------------------------------------------------------------------
@@ -174,6 +198,39 @@ void TbcSource::setChromaDecoder(bool _state)
 {
     invalidateImageCache();
     chromaOn = _state;
+}
+
+void TbcSource::setChromaDecodeMode(TbcSource::ChromaDecodeMode mode)
+{
+    if (chromaDecodeMode == mode) {
+        return;
+    }
+
+    chromaDecodeMode = mode;
+    switch (chromaDecodeMode) {
+    case ACTIVE_ONLY_CHROMA_MODE:
+        outputConfiguration.trimToActiveRegion = true;
+        outputConfiguration.fullFrameDecode = false;
+        break;
+    case HYBRID_CHROMA_MODE:
+        outputConfiguration.trimToActiveRegion = false;
+        outputConfiguration.fullFrameDecode = false;
+        break;
+    case FULL_FRAME_CHROMA_MODE:
+        outputConfiguration.trimToActiveRegion = false;
+        outputConfiguration.fullFrameDecode = true;
+        break;
+    }
+
+    invalidateImageCache();
+    if (sourceReady) {
+        configureChromaDecoder();
+    }
+}
+
+TbcSource::ChromaDecodeMode TbcSource::getChromaDecodeMode() const
+{
+    return chromaDecodeMode;
 }
 
 // Method to set the view mode
@@ -747,6 +804,13 @@ void TbcSource::setChromaConfiguration(const PalColour::Configuration &_palConfi
     palConfiguration = _palConfiguration;
     ntscConfiguration = _ntscConfiguration;
     outputConfiguration = _outputConfiguration;
+    if (outputConfiguration.trimToActiveRegion) {
+        chromaDecodeMode = ACTIVE_ONLY_CHROMA_MODE;
+    } else if (outputConfiguration.fullFrameDecode) {
+        chromaDecodeMode = FULL_FRAME_CHROMA_MODE;
+    } else {
+        chromaDecodeMode = HYBRID_CHROMA_MODE;
+    }
 
     configureChromaDecoder();
 }
@@ -853,16 +917,20 @@ void TbcSource::invalidateImageCache()
 void TbcSource::configureChromaDecoder()
 {
     // Configure the chroma decoder
-    LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters(); 
+    LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    LdDecodeMetaData::VideoParameters decodeVideoParameters = videoParameters;
+    if (outputConfiguration.fullFrameDecode) {
+        applyFullFrameDecodeBounds(decodeVideoParameters);
+    }
 	
     if (videoParameters.system == PAL || videoParameters.system == PAL_M) {
 		monoConfiguration.yNRLevel = palConfiguration.yNRLevel;
-        palColour.updateConfiguration(videoParameters, palConfiguration);
+        palColour.updateConfiguration(decodeVideoParameters, palConfiguration);
     } else {
 		monoConfiguration.yNRLevel = ntscConfiguration.yNRLevel;
-        ntscColour.updateConfiguration(videoParameters, ntscConfiguration);
+        ntscColour.updateConfiguration(decodeVideoParameters, ntscConfiguration);
     }
-	monoDecoder.updateConfiguration(videoParameters, monoConfiguration);
+	monoDecoder.updateConfiguration(decodeVideoParameters, monoConfiguration);
 
     // Configure the OutputWriter.
     // Because we have padding disabled, this won't change the VideoParameters.

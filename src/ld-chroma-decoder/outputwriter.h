@@ -54,6 +54,7 @@ public:
         PixelFormat pixelFormat = RGB48;
         bool outputY4m = false;
         bool trimToActiveRegion = true;
+        bool fullFrameDecode = false;
     };
 
     // Set the output configuration, and adjust the VideoParameters to suit.

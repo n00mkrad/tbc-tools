@@ -26,6 +26,28 @@
 
 #include "decoderpool.h"
 
+namespace {
+void applyFullFrameDecodeBounds(LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    const qint32 frameHeight = (videoParameters.fieldHeight * 2) - 1;
+    constexpr qint32 horizontalMargin = 16;
+
+    qint32 decodeStart = horizontalMargin;
+    qint32 decodeEnd = videoParameters.fieldWidth - horizontalMargin;
+    if (decodeEnd <= decodeStart) {
+        decodeStart = 0;
+        decodeEnd = videoParameters.fieldWidth;
+    }
+
+    videoParameters.activeVideoStart = decodeStart;
+    videoParameters.activeVideoEnd = decodeEnd;
+    videoParameters.firstActiveFieldLine = 0;
+    videoParameters.lastActiveFieldLine = videoParameters.fieldHeight;
+    videoParameters.firstActiveFrameLine = 0;
+    videoParameters.lastActiveFrameLine = frameHeight;
+}
+}
+
 DecoderPool::DecoderPool(Decoder &_decoder, QString _inputFileName,
                          LdDecodeMetaData &_ldDecodeMetaData,
                          OutputWriter::Configuration &_outputConfig, QString _outputFileName,
@@ -42,6 +64,9 @@ Decoder& DecoderPool::getDecoder() { return decoder; }
 bool DecoderPool::process()
 {
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    if (outputConfig.fullFrameDecode) {
+        applyFullFrameDecodeBounds(videoParameters);
+    }
 
     // Configure the OutputWriter, adjusting videoParameters
     outputWriter.updateConfiguration(videoParameters, outputConfig);

@@ -13,6 +13,8 @@
 
 #include <QAbstractButton>
 #include <QDialog>
+#include <QEvent>
+#include <QSlider>
 
 #include "comb.h"
 #include "outputwriter.h"
@@ -52,7 +54,6 @@ public slots:
     void levelSelected(qint32 level);
 
 private slots:
-    void on_decodeModeComboBox_currentIndexChanged(int index);
     void on_blackLevelHorizontalSlider_valueChanged(int value);
     void on_whiteLevelHorizontalSlider_valueChanged(int value);
     void on_blackLevelSpinBox_valueChanged(int value);
@@ -61,7 +62,6 @@ private slots:
     void on_whiteLevelResetComboBox_activated(int index);
     void on_chromaGainHorizontalSlider_valueChanged(int value);
     void on_chromaPhaseHorizontalSlider_valueChanged(int value);
-	void on_enableYNRCheckBox_clicked();
 	void on_enableYCCombineCheckBox_clicked();
 
     void on_palFilterButtonGroup_buttonClicked(QAbstractButton *button);
@@ -79,9 +79,8 @@ private slots:
     void on_yNRHorizontalSlider_valueChanged(int value);
 
 private:
-    static constexpr int decodeModeActiveOnlyIndex = 0;
-    static constexpr int decodeModeHybridIndex = 1;
-    static constexpr int decodeModeFullFrameChromaIndex = 2;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void resetSliderToDefault(QSlider *slider);
     Ui::ChromaDecoderConfigDialog *ui;
     VideoSystem system;
     PalColour::Configuration palConfiguration;
@@ -90,10 +89,8 @@ private:
     OutputWriter::Configuration outputConfiguration;
 	TbcSource* tbcSource = nullptr;
 	TbcSource::SourceMode sourceMode;
-	double ynrLevel = 0;
 	bool isInit = true;
 	bool combine = false;
-	bool yNREnabled = true;
     qint32 blackLevel = -1;
     qint32 whiteLevel = -1;
     qint32 startingBlackLevel = -1;

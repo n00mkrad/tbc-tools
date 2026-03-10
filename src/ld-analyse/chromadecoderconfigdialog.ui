@@ -176,39 +176,6 @@
     </widget>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="decodeModeRowLayout">
-     <property name="spacing">
-      <number>8</number>
-     </property>
-     <item>
-      <widget class="QLabel" name="decodeModeLabel">
-       <property name="text">
-        <string>Decode mode:</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="decodeModeComboBox">
-       <item>
-        <property name="text">
-         <string>Active Only</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Hybrid</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Chroma (Full Frame)</string>
-        </property>
-       </item>
-      </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
     <widget class="QLabel" name="chromaGainLabel">
      <property name="text">
       <string>Chroma gain:</string>
@@ -348,13 +315,6 @@
       </widget>
      </item>
     </layout>
-   </item>
-   <item>
-    <widget class="QCheckBox" name="enableYNRCheckBox">
-     <property name="text">
-      <string>Enable luma noise reduction</string>
-     </property>
-    </widget>
    </item>
    <item>
     <widget class="QCheckBox" name="enableYCCombineCheckBox">

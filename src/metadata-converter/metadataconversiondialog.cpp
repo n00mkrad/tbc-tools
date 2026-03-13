@@ -24,11 +24,8 @@ MetadataConversionDialog::MetadataConversionDialog(QWidget *parent) :
     ui(new Ui::MetadataConversionDialog)
 {
     ui->setupUi(this);
-    if (ui->directionLabel) {
-        ui->directionLabel->hide();
-    }
-    if (ui->directionComboBox) {
-        ui->directionComboBox->hide();
+    if (ui->directionValueLabel) {
+        ui->directionValueLabel->setText(tr("Auto (select .json or .db input)"));
     }
     if (ui->inputLineEdit) {
         connect(ui->inputLineEdit, &QLineEdit::textChanged, this, [this]() {
@@ -164,6 +161,17 @@ void MetadataConversionDialog::updateDirectionFromInput(bool forceOutputUpdate)
 
     const MetadataConverterUtil::MetadataConversionDirection direction =
         MetadataConverterUtil::inferMetadataConversionDirection(normalizedInput);
+    if (ui->directionValueLabel) {
+        if (normalizedInput.isEmpty()) {
+            ui->directionValueLabel->setText(tr("Auto (select .json or .db input)"));
+        } else if (direction == MetadataConverterUtil::MetadataConversionDirection::JsonToSqlite) {
+            ui->directionValueLabel->setText(tr("JSON → SQLite (auto)"));
+        } else if (direction == MetadataConverterUtil::MetadataConversionDirection::SqliteToJson) {
+            ui->directionValueLabel->setText(tr("SQLite → JSON (auto)"));
+        } else {
+            ui->directionValueLabel->setText(tr("Unknown (requires .json or .db input)"));
+        }
+    }
     const QString suggestedOutput = MetadataConverterUtil::defaultMetadataOutputPath(normalizedInput, direction);
     if ((forceOutputUpdate || ui->outputLineEdit->text().trimmed().isEmpty()) && !suggestedOutput.isEmpty()) {
         const QSignalBlocker blocker(ui->outputLineEdit);

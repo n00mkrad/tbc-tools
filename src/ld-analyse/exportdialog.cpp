@@ -764,6 +764,38 @@ ExportDialog::ExportDialog(QWidget *parent) :
         const int pcm24Index = ui->audioProfileComboBox->findData(QStringLiteral("pcm_24"));
         ui->audioProfileComboBox->setCurrentIndex(pcm24Index >= 0 ? pcm24Index : 0);
     }
+    if (ui->dropoutModeComboBox) {
+        ui->dropoutModeComboBox->clear();
+        ui->dropoutModeComboBox->addItem(tr("Basic"), QStringLiteral("basic"));
+        ui->dropoutModeComboBox->addItem(tr("Heavy"), QStringLiteral("heavy"));
+        ui->dropoutModeComboBox->addItem(tr("Disabled"), QStringLiteral("disabled"));
+        const int basicModeIndex = ui->dropoutModeComboBox->findData(QStringLiteral("basic"));
+        ui->dropoutModeComboBox->setCurrentIndex(basicModeIndex >= 0 ? basicModeIndex : 0);
+    }
+    if (ui->dropoutFieldModeComboBox) {
+        ui->dropoutFieldModeComboBox->clear();
+        ui->dropoutFieldModeComboBox->addItem(tr("Intra"), QStringLiteral("intra"));
+        ui->dropoutFieldModeComboBox->addItem(tr("Innerfield"), QStringLiteral("innerfield"));
+        const int intraFieldModeIndex = ui->dropoutFieldModeComboBox->findData(QStringLiteral("intra"));
+        ui->dropoutFieldModeComboBox->setCurrentIndex(intraFieldModeIndex >= 0 ? intraFieldModeIndex : 0);
+    }
+    const auto updateDropoutFieldModeControls = [this]() {
+        const bool dropoutCorrectionEnabled = !ui->dropoutModeComboBox
+                                              || ui->dropoutModeComboBox->currentData().toString() != QStringLiteral("disabled");
+        if (ui->dropoutFieldModeLabel) {
+            ui->dropoutFieldModeLabel->setEnabled(dropoutCorrectionEnabled);
+        }
+        if (ui->dropoutFieldModeComboBox) {
+            ui->dropoutFieldModeComboBox->setEnabled(dropoutCorrectionEnabled);
+        }
+    };
+    if (ui->dropoutModeComboBox) {
+        connect(ui->dropoutModeComboBox,
+                static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+                this,
+                [updateDropoutFieldModeControls](int) { updateDropoutFieldModeControls(); });
+    }
+    updateDropoutFieldModeControls();
     if (ui->ffv1SlicesSpinBox) {
         ui->ffv1SlicesSpinBox->setMinimum(1);
         ui->ffv1SlicesSpinBox->setMaximum(32);
@@ -1454,6 +1486,30 @@ void ExportDialog::on_exportButton_clicked()
         ui->audioProfileComboBox ? ui->audioProfileComboBox->currentData().toString() : QString();
     const int videoSystem = tbcSource ? tbcSource->getVideoParameters().system : NTSC;
     const QString resolutionMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
+    {
+        const QString exportPath = resolveVideoExportPath();
+        const QString dropoutMode = ui->dropoutModeComboBox
+                                        ? ui->dropoutModeComboBox->currentData().toString()
+                                        : QStringLiteral("basic");
+        const QString correctionMode = ui->dropoutFieldModeComboBox
+                                           ? ui->dropoutFieldModeComboBox->currentData().toString()
+                                           : QStringLiteral("intra");
+        if (dropoutMode == QStringLiteral("heavy")
+            && !executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
+            appendLog(tr("Dropout mode 'Heavy' selected, but --overcorrect is not supported by the detected tbc-video-export. Falling back to basic dropout correction."));
+        }
+        if (dropoutMode != QStringLiteral("disabled")
+            && correctionMode == QStringLiteral("intra")
+            && !executableSupportsOption(exportPath, QStringLiteral("--intra"))) {
+            appendLog(tr("Dropout field mode 'Intra' selected, but --intra is not supported by the detected tbc-video-export. Falling back to tool default correction mode."));
+        }
+        if (dropoutMode != QStringLiteral("disabled")
+            && correctionMode == QStringLiteral("innerfield")
+            && !executableSupportsOption(exportPath, QStringLiteral("--innerfield"))
+            && !executableSupportsOption(exportPath, QStringLiteral("--interfield"))) {
+            appendLog(tr("Dropout field mode 'Innerfield' selected, but no explicit inner/inter-field option is supported by the detected tbc-video-export. Using tool default correction mode."));
+        }
+    }
     if (isFfv1ProfileName(selectedProfile) && ui->ffv1SlicesSpinBox) {
         int ffv1Slices = ui->ffv1SlicesSpinBox->value();
         if (!isSupportedFfv1SlicesValue(ffv1Slices)) {
@@ -1938,8 +1994,19 @@ void ExportDialog::setBusy(bool busy)
     if (ui->logProcessOutputCheckBox) {
         ui->logProcessOutputCheckBox->setEnabled(enabled);
     }
-    if (ui->disableDropoutCompensationCheckBox) {
-        ui->disableDropoutCompensationCheckBox->setEnabled(enabled);
+    if (ui->dropoutModeLabel) {
+        ui->dropoutModeLabel->setEnabled(enabled);
+    }
+    if (ui->dropoutModeComboBox) {
+        ui->dropoutModeComboBox->setEnabled(enabled);
+    }
+    const bool dropoutCorrectionEnabled = !ui->dropoutModeComboBox
+                                          || ui->dropoutModeComboBox->currentData().toString() != QStringLiteral("disabled");
+    if (ui->dropoutFieldModeLabel) {
+        ui->dropoutFieldModeLabel->setEnabled(enabled && dropoutCorrectionEnabled);
+    }
+    if (ui->dropoutFieldModeComboBox) {
+        ui->dropoutFieldModeComboBox->setEnabled(enabled && dropoutCorrectionEnabled);
     }
     if (ui->disableMetadataEmbeddingCheckBox) {
         ui->disableMetadataEmbeddingCheckBox->setEnabled(enabled);
@@ -2362,8 +2429,31 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     if (!profile.isEmpty()) {
         args << QStringLiteral("--profile") << profile;
     }
-    if (ui->disableDropoutCompensationCheckBox && ui->disableDropoutCompensationCheckBox->isChecked()) {
+    const QString exportPath = resolveVideoExportPath();
+    const QString dropoutMode = ui->dropoutModeComboBox
+                                    ? ui->dropoutModeComboBox->currentData().toString()
+                                    : QStringLiteral("basic");
+    const QString correctionMode = ui->dropoutFieldModeComboBox
+                                       ? ui->dropoutFieldModeComboBox->currentData().toString()
+                                       : QStringLiteral("intra");
+    if (dropoutMode == QStringLiteral("disabled")) {
         args << QStringLiteral("--no-dropout-correct");
+    } else {
+        if (dropoutMode == QStringLiteral("heavy")
+            && executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
+            args << QStringLiteral("--overcorrect");
+        }
+        if (correctionMode == QStringLiteral("intra")) {
+            if (executableSupportsOption(exportPath, QStringLiteral("--intra"))) {
+                args << QStringLiteral("--intra");
+            }
+        } else if (correctionMode == QStringLiteral("innerfield")) {
+            if (executableSupportsOption(exportPath, QStringLiteral("--innerfield"))) {
+                args << QStringLiteral("--innerfield");
+            } else if (executableSupportsOption(exportPath, QStringLiteral("--interfield"))) {
+                args << QStringLiteral("--interfield");
+            }
+        }
     }
     if (ui->disableMetadataEmbeddingCheckBox && ui->disableMetadataEmbeddingCheckBox->isChecked()) {
         args << QStringLiteral("--no-attach-json");

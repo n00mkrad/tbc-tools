@@ -88,6 +88,14 @@ ld-analyse capture.tbc
 - Export from the in-app Export tab uses current in-memory parameter values, including unsaved adjustments.
 - ld-analyse creates a temporary metadata snapshot and passes it to `tbc-video-export`, so exporting does not require running `Save Metadata` first.
 
+### Export tab dropout controls
+- The Export tab includes a `Dropout` selector with `Basic`, `Heavy`, and `Disabled`.
+  - `Basic` uses normal dropout correction.
+  - `Heavy` requests stronger correction mode (`--overcorrect`) when supported by the detected export toolchain.
+  - `Disabled` exports with dropout correction disabled.
+- The Export tab also includes a `Field` selector with `Intra` and `Innerfield` (default is `Intra`).
+  - If an explicit selected mode is not supported by the detected `tbc-video-export`/toolchain version, export falls back to tool defaults and logs a notice in the Export log.
+
 ## Troubleshooting
 
 ### Performance Issues

@@ -179,6 +179,18 @@ When exporting from inside ld-analyse, the current in-memory settings are used e
 
 ld-analyse creates a temporary metadata snapshot and passes it to `tbc-video-export`, so export reflects current adjusted values without modifying the on-disk metadata first.
 
+### Export tab dropout and field selection
+
+The Export tab includes two selectors for dropout-correction behavior:
+
+* `Dropout`: `Basic`, `Heavy`, or `Disabled`
+  * `Basic` uses normal dropout correction.
+  * `Heavy` requests stronger correction (`--overcorrect`) when supported by the detected toolchain.
+  * `Disabled` uses `--no-dropout-correct`.
+* `Field`: `Intra` or `Innerfield` (`Intra` is the default)
+
+If the selected mode is not supported by the detected `tbc-video-export`/tool versions, ld-analyse falls back to tool defaults and reports this in the Export log.
+
 ## Save frame as PNG
 
 This option saves the currently selected frame as a PNG image.  The image saved contains both the visible and non-visible frame image.  The option saves the currently displayed image (however, drop-out highlighting is not included).

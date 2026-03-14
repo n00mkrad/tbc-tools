@@ -169,9 +169,36 @@
         <number>4</number>
        </property>
        <item>
-        <widget class="QCheckBox" name="disableDropoutCompensationCheckBox">
+        <widget class="QLabel" name="dropoutModeLabel">
          <property name="text">
-          <string>Disable dropout compensation</string>
+          <string>Dropout</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="dropoutModeComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>96</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="dropoutFieldModeLabel">
+         <property name="text">
+          <string>Field</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="dropoutFieldModeComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>108</width>
+           <height>0</height>
+          </size>
          </property>
         </widget>
        </item>

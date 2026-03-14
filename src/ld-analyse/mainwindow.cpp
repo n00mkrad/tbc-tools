@@ -37,6 +37,12 @@
 #include <QtMath>
 #include <QUrl>
 #include <QUuid>
+#include <QClipboard>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
+#include <QAbstractSpinBox>
+#include <QKeySequence>
 
 #include "metadataconverterutil.h"
 #include "../ld-process-vits/processingpool.h"
@@ -76,6 +82,17 @@ QString chromaDecoderNameFromConfig(VideoSystem system,
     }
 
     return QString();
+}
+
+QString sanitizedFileToken(const QString &value)
+{
+    QString token = value.trimmed().toLower();
+    token.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("_"));
+    token.remove(QRegularExpression(QStringLiteral("^_+|_+$")));
+    if (token.isEmpty()) {
+        token = QStringLiteral("state");
+    }
+    return token;
 }
 
 void ensureSvgButtonIcon(QAbstractButton *button, const QString &resourcePath)
@@ -379,6 +396,23 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    copyCurrentDisplayAction = new QAction(tr("Copy current display"), this);
+    copyCurrentDisplayAction->setShortcut(QKeySequence::Copy);
+    copyCurrentDisplayAction->setShortcutContext(Qt::WindowShortcut);
+    connect(copyCurrentDisplayAction, &QAction::triggered,
+            this, &MainWindow::on_actionCopy_current_display_to_clipboard_triggered);
+    addAction(copyCurrentDisplayAction);
+
+    saveAllModesPngAction = new QAction(tr("Save all mode views as PNGs..."), this);
+    connect(saveAllModesPngAction, &QAction::triggered,
+            this, &MainWindow::on_actionSave_all_modes_as_PNGs_triggered);
+    if (ui->menuFile) {
+        if (ui->actionExit) {
+            ui->menuFile->insertAction(ui->actionExit, saveAllModesPngAction);
+        } else {
+            ui->menuFile->addAction(saveAllModesPngAction);
+        }
+    }
     setAcceptDrops(true);
     if (centralWidget()) {
         centralWidget()->setAcceptDrops(true);
@@ -720,6 +754,12 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->actionSNR_analysis->setEnabled(enabled); // Black SNR
     ui->actionWhite_SNR_analysis->setEnabled(enabled);
     ui->actionSave_frame_as_PNG->setEnabled(enabled);
+    if (saveAllModesPngAction) {
+        saveAllModesPngAction->setEnabled(enabled);
+    }
+    if (copyCurrentDisplayAction) {
+        copyCurrentDisplayAction->setEnabled(enabled);
+    }
     ui->actionClosed_Captions->setEnabled(enabled);
     ui->actionVideo_parameters->setEnabled(enabled);
     ui->actionChroma_decoder_configuration->setEnabled(enabled);
@@ -1212,7 +1252,7 @@ void MainWindow::updateImage()
 }
 
 // Return the width adjustment for the current aspect mode
-qint32 MainWindow::getAspectAdjustment() {
+qint32 MainWindow::getAspectAdjustment() const {
     // Using source aspect ratio? No adjustment
     if (!displayAspectRatio) return 0;
 
@@ -1225,6 +1265,67 @@ qint32 MainWindow::getAspectAdjustment() {
         if (tbcSource.getIsWidescreen()) return 122; // 16:9
         else return -150; // 4:3
     }
+}
+
+bool MainWindow::isViewerTabActive() const
+{
+    if (!ui || !ui->mainTabWidget || !ui->viewerTab) {
+        return true;
+    }
+    return ui->mainTabWidget->currentWidget() == ui->viewerTab;
+}
+
+QImage MainWindow::renderedCurrentImageForExport()
+{
+    QImage imageToSave = tbcSource.getImage();
+    if (imageToSave.isNull()) {
+        return imageToSave;
+    }
+
+    const qint32 adjustment = getAspectAdjustment();
+    if (adjustment != 0) {
+        imageToSave = imageToSave.scaled((imageToSave.size().width() + adjustment),
+                                         imageToSave.size().height(),
+                                         Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    return imageToSave;
+}
+
+QString MainWindow::outputRootDirectoryForCurrentSource()
+{
+    QString directoryPath;
+    const QString currentSourceFilename = tbcSource.getCurrentSourceFilename();
+    if (!currentSourceFilename.isEmpty()) {
+        const QFileInfo sourceInfo(currentSourceFilename);
+        directoryPath = sourceInfo.absolutePath();
+    }
+    if (directoryPath.isEmpty() && !lastFilename.isEmpty()) {
+        const QFileInfo sourceInfo(lastFilename);
+        directoryPath = sourceInfo.absolutePath();
+    }
+    if (directoryPath.isEmpty()) {
+        directoryPath = configuration.getSourceDirectory();
+    }
+    if (directoryPath.isEmpty()) {
+        directoryPath = QDir::currentPath();
+    }
+    return directoryPath;
+}
+
+QString MainWindow::outputBaseNameForCurrentSource()
+{
+    QString baseName;
+    const QString currentSourceFilename = tbcSource.getCurrentSourceFilename();
+    if (!currentSourceFilename.isEmpty()) {
+        baseName = QFileInfo(currentSourceFilename).completeBaseName();
+    }
+    if (baseName.isEmpty() && !lastFilename.isEmpty()) {
+        baseName = QFileInfo(lastFilename).completeBaseName();
+    }
+    if (baseName.isEmpty()) {
+        baseName = QStringLiteral("tbc_capture");
+    }
+    return sanitizedFileToken(baseName);
 }
 
 // Redraw the viewer (for example, when scaleFactor has been changed)
@@ -2300,15 +2401,7 @@ void MainWindow::on_actionSave_frame_as_PNG_triggered()
         tbcDebugStream() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Saving current frame as" << pngFilename;
 
         // Generate QImage for the current frame
-        QImage imageToSave = tbcSource.getImage();
-
-        // Get the aspect ratio adjustment, and scale the image if needed
-        qint32 adjustment = getAspectAdjustment();
-        if (adjustment != 0) {
-            imageToSave = imageToSave.scaled((imageToSave.size().width() + adjustment),
-                                             (imageToSave.size().height()),
-                                             Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-        }
+        QImage imageToSave = renderedCurrentImageForExport();
 
         // Save the QImage as PNG
         if (!imageToSave.save(pngFilename)) {
@@ -2324,6 +2417,221 @@ void MainWindow::on_actionSave_frame_as_PNG_triggered()
         tbcDebugStream() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Setting PNG directory to:" << pngFileInfo.absolutePath();
         configuration.writeConfiguration();
     }
+}
+
+void MainWindow::on_actionCopy_current_display_to_clipboard_triggered()
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        statusBar()->showMessage(tr("No source loaded to copy."), 3000);
+        return;
+    }
+
+    if (!isViewerTabActive()) {
+        QWidget *focus = QApplication::focusWidget();
+        if (focus && (qobject_cast<QLineEdit *>(focus)
+                      || qobject_cast<QTextEdit *>(focus)
+                      || qobject_cast<QPlainTextEdit *>(focus)
+                      || qobject_cast<QAbstractSpinBox *>(focus))) {
+            QMetaObject::invokeMethod(focus, "copy");
+            return;
+        }
+
+        statusBar()->showMessage(tr("Switch to the Viewer tab to copy the current display."), 3000);
+        return;
+    }
+
+    const QImage imageToCopy = renderedCurrentImageForExport();
+    if (imageToCopy.isNull()) {
+        statusBar()->showMessage(tr("No display image available to copy."), 3000);
+        return;
+    }
+
+    QClipboard *clipboard = QApplication::clipboard();
+    if (!clipboard) {
+        statusBar()->showMessage(tr("Clipboard is unavailable."), 3000);
+        return;
+    }
+
+    clipboard->setImage(imageToCopy);
+    statusBar()->showMessage(tr("Copied current display to clipboard."), 3000);
+}
+
+void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        QMessageBox::warning(this, tr("Warning"), tr("No source file loaded."));
+        return;
+    }
+
+    const QString outputRoot = outputRootDirectoryForCurrentSource();
+    if (outputRoot.isEmpty()) {
+        QMessageBox::warning(this, tr("Warning"), tr("Could not determine output directory."));
+        return;
+    }
+
+    const QString baseName = outputBaseNameForCurrentSource();
+    const QString frameToken = tbcSource.getFieldViewEnabled()
+                                   ? QStringLiteral("field_%1").arg(currentFieldNumber, 6, 10, QChar('0'))
+                                   : QStringLiteral("frame_%1").arg(currentFrameNumber, 6, 10, QChar('0'));
+    const QString outputFolderName = QStringLiteral("%1_%2_all_modes_pngs")
+                                         .arg(baseName, frameToken);
+    const QString outputFolderPath = QDir(outputRoot).filePath(outputFolderName);
+    if (!QDir().mkpath(outputFolderPath)) {
+        QMessageBox::warning(this, tr("Warning"),
+                             tr("Could not create output folder:\n%1").arg(outputFolderPath));
+        return;
+    }
+
+    const bool originalPlaybackRunning = playbackRunning;
+    const bool originalDisplayAspectRatio = displayAspectRatio;
+    const bool originalMouseMode = (ui && ui->mouseModePushButton) ? ui->mouseModePushButton->isChecked() : false;
+    const TbcSource::SourceMode originalSourceMode = tbcSource.getSourceMode();
+    const bool originalChromaEnabled = tbcSource.getChromaDecoder();
+    const TbcSource::ChromaDecodeMode originalChromaMode = tbcSource.getChromaDecodeMode();
+    const TbcSource::ViewMode originalViewMode = tbcSource.getViewMode();
+    const bool originalStretchField = tbcSource.getStretchField();
+    const qint32 originalFrameNumber = currentFrameNumber;
+    const qint32 originalFieldNumber = currentFieldNumber;
+
+    auto restoreState = [&]() {
+        tbcSource.setSourceMode(originalSourceMode);
+        tbcSource.setChromaDecodeMode(originalChromaMode);
+        tbcSource.setChromaDecoder(originalChromaEnabled);
+        tbcSource.setViewMode(originalViewMode);
+        tbcSource.setStretchField(originalStretchField);
+        displayAspectRatio = originalDisplayAspectRatio;
+        if (originalViewMode == TbcSource::ViewMode::FIELD_VIEW) {
+            setCurrentField(originalFieldNumber);
+        } else {
+            setCurrentFrame(originalFrameNumber);
+        }
+        if (ui && ui->mouseModePushButton) {
+            ui->mouseModePushButton->setChecked(originalMouseMode);
+        }
+        updateVideoPushButton();
+        updateSourcesPushButton();
+        updateAspectPushButton();
+        setViewValues();
+        showImage();
+        setPlaybackRunning(originalPlaybackRunning);
+    };
+
+    setPlaybackRunning(false);
+    if (ui && ui->mainTabWidget && ui->viewerTab) {
+        ui->mainTabWidget->setCurrentWidget(ui->viewerTab);
+    }
+    if (ui && ui->mouseModePushButton && ui->mouseModePushButton->isChecked()) {
+        ui->mouseModePushButton->setChecked(false);
+    }
+
+    struct VideoModeSnapshot {
+        QString token;
+        bool chromaEnabled;
+        TbcSource::ChromaDecodeMode chromaMode;
+    };
+    const QVector<VideoModeSnapshot> videoModes = {
+        {QStringLiteral("source"), false, originalChromaMode},
+        {QStringLiteral("hybrid"), true, TbcSource::HYBRID_CHROMA_MODE},
+        {QStringLiteral("chroma"), true, TbcSource::FULL_FRAME_CHROMA_MODE}
+    };
+
+    struct SourceModeSnapshot {
+        QString token;
+        TbcSource::SourceMode sourceMode;
+    };
+    QVector<SourceModeSnapshot> sourceModes;
+    if (originalSourceMode == TbcSource::ONE_SOURCE) {
+        sourceModes.append({QStringLiteral("single"), TbcSource::ONE_SOURCE});
+    } else {
+        sourceModes.append({QStringLiteral("y"), TbcSource::LUMA_SOURCE});
+        sourceModes.append({QStringLiteral("c"), TbcSource::CHROMA_SOURCE});
+        sourceModes.append({QStringLiteral("yc"), TbcSource::BOTH_SOURCES});
+    }
+
+    struct ViewModeSnapshot {
+        QString token;
+        TbcSource::ViewMode viewMode;
+        bool stretchField;
+    };
+    const QVector<ViewModeSnapshot> viewModes = {
+        {QStringLiteral("frame"), TbcSource::ViewMode::FRAME_VIEW, false},
+        {QStringLiteral("split"), TbcSource::ViewMode::SPLIT_VIEW, false},
+        {QStringLiteral("field_1x"), TbcSource::ViewMode::FIELD_VIEW, false},
+        {QStringLiteral("field_2x"), TbcSource::ViewMode::FIELD_VIEW, true}
+    };
+
+    int savedCount = 0;
+    QStringList failedFiles;
+    const QString systemToken = (tbcSource.getSystem() == PAL)
+                                    ? QStringLiteral("pal")
+                                    : ((tbcSource.getSystem() == PAL_M)
+                                           ? QStringLiteral("palm")
+                                           : QStringLiteral("ntsc"));
+
+    for (const SourceModeSnapshot &sourceModeSnapshot : sourceModes) {
+        tbcSource.setSourceMode(sourceModeSnapshot.sourceMode);
+
+        for (const VideoModeSnapshot &videoModeSnapshot : videoModes) {
+            if (videoModeSnapshot.chromaEnabled) {
+                tbcSource.setChromaDecodeMode(videoModeSnapshot.chromaMode);
+                tbcSource.setChromaDecoder(true);
+            } else {
+                tbcSource.setChromaDecoder(false);
+            }
+
+            for (const ViewModeSnapshot &viewModeSnapshot : viewModes) {
+                tbcSource.setViewMode(viewModeSnapshot.viewMode);
+                tbcSource.setStretchField(viewModeSnapshot.stretchField);
+
+                if (viewModeSnapshot.viewMode == TbcSource::ViewMode::FIELD_VIEW) {
+                    setCurrentField(originalFieldNumber);
+                } else {
+                    setCurrentFrame(originalFrameNumber);
+                }
+
+                updateVideoPushButton();
+                updateSourcesPushButton();
+                updateAspectPushButton();
+                setViewValues();
+                showImage();
+
+                const QImage imageToSave = renderedCurrentImageForExport();
+                const QString outputStem = QStringLiteral("%1_%2_%3_%4_%5")
+                                               .arg(baseName,
+                                                    systemToken,
+                                                    videoModeSnapshot.token,
+                                                    sourceModeSnapshot.token,
+                                                    viewModeSnapshot.token);
+                const QString outputFilePath = QDir(outputFolderPath)
+                                                   .filePath(sanitizedFileToken(outputStem) + QStringLiteral(".png"));
+
+                if (imageToSave.isNull() || !imageToSave.save(outputFilePath)) {
+                    failedFiles << outputFilePath;
+                } else {
+                    savedCount++;
+                }
+            }
+        }
+    }
+
+    restoreState();
+
+    configuration.setPngDirectory(outputFolderPath);
+    configuration.writeConfiguration();
+
+    if (failedFiles.isEmpty()) {
+        QMessageBox::information(this, tr("Save complete"),
+                                 tr("Saved %1 PNG files to:\n%2")
+                                     .arg(savedCount)
+                                     .arg(outputFolderPath));
+        return;
+    }
+
+    QMessageBox::warning(this, tr("Save partially complete"),
+                         tr("Saved %1 PNG files to:\n%2\n\nFailed to save %3 file(s).")
+                             .arg(savedCount)
+                             .arg(outputFolderPath)
+                             .arg(failedFiles.size()));
 }
 
 // Zoom in menu option
@@ -2962,17 +3270,18 @@ void MainWindow::on_mouseModePushButton_clicked()
 void MainWindow::scopeCoordsChangedSignalHandler(qint32 xCoord, qint32 yCoord)
 {
     tbcDebugStream() << "MainWindow::scanLineChangedSignalHandler(): Called with xCoord =" << xCoord << "and yCoord =" << yCoord;
-
-    if (tbcSource.getIsSourceLoaded()) {
-        // Show the oscilloscope dialogue for the selected scan-line
-        lastScopeDot = xCoord;
-        lastScopeLine = yCoord + 1;
-        updateOscilloscopeDialogue();
-        oscilloscopeDialog->show();
-
-        // Update the image viewer
-        updateImageViewer();
+    if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) {
+        return;
     }
+
+    // Show the oscilloscope dialogue for the selected scan-line
+    lastScopeDot = xCoord;
+    lastScopeLine = yCoord + 1;
+    updateOscilloscopeDialogue();
+    oscilloscopeDialog->show();
+
+    // Update the image viewer
+    updateImageViewer();
 }
 
 // Handler called when vectorscope settings are changed
@@ -2989,7 +3298,7 @@ void MainWindow::vectorscopeChangedSignalHandler()
 // Mouse press event handler
 void MainWindow::mousePressEvent(QMouseEvent *event)
 {
-    if (!tbcSource.getIsSourceLoaded()) return;
+    if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) return;
 
     // Get the mouse position relative to our scene
     QPoint origin = ui->imageViewerLabel->mapFromGlobal(QCursor::pos());
@@ -3011,7 +3320,7 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
 // Mouse move event
 void MainWindow::mouseMoveEvent(QMouseEvent *event)
 {
-    if (!tbcSource.getIsSourceLoaded()) return;
+    if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) return;
 
     // Get the mouse position relative to our scene
     QPoint origin = ui->imageViewerLabel->mapFromGlobal(QCursor::pos());
@@ -3033,6 +3342,9 @@ void MainWindow::mouseMoveEvent(QMouseEvent *event)
 // Perform mouse based scan line selection
 void MainWindow::mouseScanLineSelect(qint32 oX, qint32 oY)
 {
+    if (!isViewerTabActive()) {
+        return;
+    }
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QPixmap imageViewerPixmap = ui->imageViewerLabel->pixmap();
 #elif QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)

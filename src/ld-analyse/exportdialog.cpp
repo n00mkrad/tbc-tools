@@ -430,6 +430,56 @@ QString supportedFfv1SlicesValuesText()
     return valuesText.join(QStringLiteral(", "));
 }
 
+const QList<int> &supportedPalFullFrameFfv1SlicesValues()
+{
+    static const QList<int> values = {6, 9, 15, 20, 25, 28};
+    return values;
+}
+
+QString supportedPalFullFrameFfv1SlicesValuesText()
+{
+    QStringList valuesText;
+    const QList<int> values = supportedPalFullFrameFfv1SlicesValues();
+    valuesText.reserve(values.size());
+    for (const int value : values) {
+        valuesText << QString::number(value);
+    }
+    return valuesText.join(QStringLiteral(", "));
+}
+
+QString effectiveResolutionMode(const TbcSource *source, const QComboBox *resolutionModeComboBox)
+{
+    QString resolutionMode = resolutionModeComboBox
+                                 ? resolutionModeComboBox->currentData().toString()
+                                 : QStringLiteral("active_area");
+    if (source
+        && (resolutionMode == QStringLiteral("active_area")
+            || resolutionMode == QStringLiteral("user_defined"))
+        && source->getOutputConfiguration().fullFrameDecode) {
+        resolutionMode = QStringLiteral("full_frame_4fsc");
+    }
+    return resolutionMode;
+}
+
+bool isFfv1SlicesCompatibleWithResolutionMode(int slices, int system, const QString &resolutionMode)
+{
+    if (!isSupportedFfv1SlicesValue(slices)) {
+        return false;
+    }
+    if (resolutionMode == QStringLiteral("full_frame_4fsc") && isPalFamilySystem(system)) {
+        return supportedPalFullFrameFfv1SlicesValues().contains(slices);
+    }
+    return true;
+}
+
+int recommendedFfv1SlicesForResolutionMode(int system, const QString &resolutionMode)
+{
+    if (resolutionMode == QStringLiteral("full_frame_4fsc") && isPalFamilySystem(system)) {
+        return 20;
+    }
+    return 4;
+}
+
 QStringList profileVideoProfileNames(const QJsonObject &profileObject)
 {
     QStringList names;
@@ -1402,8 +1452,10 @@ void ExportDialog::on_exportButton_clicked()
     const QString selectedProfile = ui->profileComboBox ? ui->profileComboBox->currentText().trimmed() : QString();
     const QString selectedAudioProfile =
         ui->audioProfileComboBox ? ui->audioProfileComboBox->currentData().toString() : QString();
+    const int videoSystem = tbcSource ? tbcSource->getVideoParameters().system : NTSC;
+    const QString resolutionMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
     if (isFfv1ProfileName(selectedProfile) && ui->ffv1SlicesSpinBox) {
-        const int ffv1Slices = ui->ffv1SlicesSpinBox->value();
+        int ffv1Slices = ui->ffv1SlicesSpinBox->value();
         if (!isSupportedFfv1SlicesValue(ffv1Slices)) {
             const QString supportedValuesText = supportedFfv1SlicesValuesText();
             const QString errorToShow = tr("Unsupported FFV1 slices value %1. Supported values: %2.")
@@ -1414,6 +1466,33 @@ void ExportDialog::on_exportButton_clicked()
             appendLog(errorToShow);
             QMessageBox::warning(this, tr("Error"), errorToShow);
             return;
+        }
+        if (!isFfv1SlicesCompatibleWithResolutionMode(ffv1Slices, videoSystem, resolutionMode)) {
+            const int adjustedSlices = recommendedFfv1SlicesForResolutionMode(videoSystem, resolutionMode);
+            if (!isSupportedFfv1SlicesValue(adjustedSlices)
+                || !isFfv1SlicesCompatibleWithResolutionMode(adjustedSlices, videoSystem, resolutionMode)) {
+                const QString errorToShow = tr("FFV1 slices value %1 is not compatible with Full-Frame 4fsc for PAL/PAL-M. Supported values: %2.")
+                                                .arg(ffv1Slices)
+                                                .arg(supportedPalFullFrameFfv1SlicesValuesText());
+                cleanupTemporaryMetadataSnapshot();
+                appendStatus(errorToShow);
+                appendLog(errorToShow);
+                QMessageBox::warning(this, tr("Error"), errorToShow);
+                return;
+            }
+
+            const int originalSlices = ffv1Slices;
+            {
+                const QSignalBlocker blocker(ui->ffv1SlicesSpinBox);
+                ui->ffv1SlicesSpinBox->setValue(adjustedSlices);
+            }
+            ffv1Slices = adjustedSlices;
+
+            const QString adjustMessage = tr("Adjusted FFV1 slices from %1 to %2 for Full-Frame 4fsc (PAL/PAL-M compatibility).")
+                                              .arg(originalSlices)
+                                              .arg(ffv1Slices);
+            appendStatus(adjustMessage);
+            appendLog(adjustMessage);
         }
     }
     const QString configOverridePath = createTemporaryExportConfig(&configErrorMessage,
@@ -2327,14 +2406,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     if (!isSplitSource && videoParameters.lumaNR >= 0.0) {
         args << QStringLiteral("--luma-nr") << QString::number(videoParameters.lumaNR, 'f', 3);
     }
-    QString resolutionMode = ui->resolutionModeComboBox
-                                 ? ui->resolutionModeComboBox->currentData().toString()
-                                 : QStringLiteral("active_area");
-    if ((resolutionMode == QStringLiteral("active_area")
-         || resolutionMode == QStringLiteral("user_defined"))
-        && tbcSource->getOutputConfiguration().fullFrameDecode) {
-        resolutionMode = QStringLiteral("full_frame_4fsc");
-    }
+    const QString resolutionMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
 
     auto appendFramingArgs = [&args](int ffll, int lfll, int ffrl, int lfrl) {
         if (ffll > 0) {

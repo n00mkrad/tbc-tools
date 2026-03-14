@@ -78,6 +78,8 @@ private slots:
     void on_actionSNR_analysis_triggered();
     void on_actionWhite_SNR_analysis_triggered();
     void on_actionSave_frame_as_PNG_triggered();
+    void on_actionSave_all_modes_as_PNGs_triggered();
+    void on_actionCopy_current_display_to_clipboard_triggered();
     void on_actionZoom_In_triggered();
     void on_actionZoom_Out_triggered();
     void on_actionZoom_1x_triggered();
@@ -227,7 +229,11 @@ private:
 	// Image display methods
     void showImage();
     void updateImage();
-    qint32 getAspectAdjustment();
+    qint32 getAspectAdjustment() const;
+    QImage renderedCurrentImageForExport();
+    bool isViewerTabActive() const;
+    QString outputRootDirectoryForCurrentSource();
+    QString outputBaseNameForCurrentSource();
     void updateImageViewer();
     QVector<QRect> getActiveVideoRects() const;
     void hideImage();
@@ -245,6 +251,8 @@ private:
     void mouseScanLineSelect(qint32 oX, qint32 oY);
 	void resizeEvent(QResizeEvent *event);
     QActionGroup *themesActionGroup = nullptr;
+    QAction *saveAllModesPngAction = nullptr;
+    QAction *copyCurrentDisplayAction = nullptr;
 };
 
 #endif // MAINWINDOW_H

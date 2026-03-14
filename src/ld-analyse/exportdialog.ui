@@ -106,7 +106,7 @@
        <item>
         <widget class="QLabel" name="resolutionLabel">
          <property name="text">
-          <string>Resolution</string>
+          <string>Framing</string>
          </property>
         </widget>
        </item>
@@ -115,6 +115,23 @@
          <property name="minimumSize">
           <size>
            <width>110</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="outputResolutionModeLabel">
+         <property name="text">
+          <string>Output</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="outputResolutionModeComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>128</width>
            <height>0</height>
           </size>
          </property>

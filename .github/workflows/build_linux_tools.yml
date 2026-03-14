@@ -30,7 +30,7 @@ jobs:
     steps:
       - name: Set up DNF download cache
         id: dnf-cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /var/cache/dnf
           key: dnfcache

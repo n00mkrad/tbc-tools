@@ -8,6 +8,9 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   build-tbc-tools:
@@ -429,9 +432,10 @@ jobs:
       - name: Upload app bundle artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tbc-tools_macos_${{ matrix.arch }}_app
+          name: internal_tbc-tools_macos_${{ matrix.arch }}_app
           path: tbc-tools_${{ matrix.arch }}.app.tgz
           if-no-files-found: error
+          retention-days: 1
 
       - name: Create DMG
         run: |
@@ -463,13 +467,13 @@ jobs:
       - name: Download arm64 app artifact
         uses: actions/download-artifact@v4
         with:
-          name: tbc-tools_macos_arm64_app
+          name: internal_tbc-tools_macos_arm64_app
           path: universal/arm64-artifact
 
       - name: Download x86_64 app artifact
         uses: actions/download-artifact@v4
         with:
-          name: tbc-tools_macos_x86_64_app
+          name: internal_tbc-tools_macos_x86_64_app
           path: universal/x86_64-artifact
 
       - name: Extract app bundles
@@ -554,16 +558,6 @@ jobs:
             "tbc-tools_universal.dmg" \
             "universal/tbc-tools.app"
 
-      - name: Archive universal app bundle
-        run: |
-          tar -C universal -czf "tbc-tools_universal.app.tgz" tbc-tools.app
-
-      - name: Upload universal app artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tbc-tools_macos_universal_app
-          path: tbc-tools_universal.app.tgz
-          if-no-files-found: error
 
       - name: Upload universal DMG artifact
         uses: actions/upload-artifact@v4
@@ -571,3 +565,28 @@ jobs:
           name: tbc-tools_macos_universal
           path: tbc-tools_universal.dmg
           if-no-files-found: error
+
+      - name: Remove internal app transfer artifacts
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          API="https://api.github.com/repos/${{ github.repository }}"
+          IDS="$(
+            curl -fsSL \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "$API/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
+            | jq -r '.artifacts[] | select(.name | test("^internal_tbc-tools_macos_(arm64|x86_64)_app$")) | .id'
+          )"
+          if [ -z "$IDS" ]; then
+            echo "No internal artifacts found to remove."
+            exit 0
+          fi
+          for id in $IDS; do
+            curl -fsSL -X DELETE \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "$API/actions/artifacts/$id" >/dev/null
+            echo "Deleted internal app transfer artifact id=$id"
+          done

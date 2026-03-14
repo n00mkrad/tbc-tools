@@ -32,8 +32,8 @@
 #include <QStringList>
 #include <QTextStream>
 #include <QDateTime>
+#include <QFileOpenEvent>
 #include <QMimeData>
-#include <QProcess>
 #include <QtMath>
 #include <QUrl>
 #include <QUuid>
@@ -733,6 +733,25 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->zoomInPushButton->setEnabled(enabled);
     ui->zoomOutPushButton->setEnabled(enabled);
     ui->originalSizePushButton->setEnabled(enabled);
+}
+
+bool MainWindow::event(QEvent *event)
+{
+    if (event && event->type() == QEvent::FileOpen) {
+        const auto *fileOpenEvent = static_cast<QFileOpenEvent *>(event);
+        QString filePath = fileOpenEvent->file();
+        if (filePath.isEmpty() && fileOpenEvent->url().isLocalFile()) {
+            filePath = fileOpenEvent->url().toLocalFile();
+        }
+
+        if (!filePath.isEmpty() && isSupportedInputExtension(filePath)) {
+            lastFilename = filePath;
+            loadTbcFile(filePath);
+            return true;
+        }
+    }
+
+    return QMainWindow::event(event);
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)

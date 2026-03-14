@@ -18,6 +18,9 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QLabel>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QMouseEvent>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
@@ -138,6 +141,7 @@ private slots:
 	// UI handler
 	void resize_on_aspect();
 protected:
+    bool event(QEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -198,6 +202,7 @@ private:
     void resetGui();
     void updateGuiLoaded();
     void updateGuiUnloaded();
+    void updateVideoPushButton();
     void updateAspectPushButton();
     void updateSourcesPushButton();
     void updateMetadataStatusPanel();

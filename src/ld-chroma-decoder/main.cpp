@@ -188,6 +188,11 @@ int main(int argc, char *argv[])
                                        QCoreApplication::translate("main", "number"));
     parser.addOption(outputPaddingOption);
 
+    // Option to output full-frame 4fSC without trimming to active video
+    QCommandLineOption fullFrameOption(QStringList() << "4fsc" << "full-frame",
+                                       QCoreApplication::translate("main", "Output full-frame 4fSC dimensions without active-area trimming"));
+    parser.addOption(fullFrameOption);
+
     // Option to select which decoder to use (-f)
     QCommandLineOption decoderOption(QStringList() << "f" << "decoder",
                                      QCoreApplication::translate("main", "Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, mono; default automatic)"),
@@ -635,6 +640,11 @@ int main(int argc, char *argv[])
             qInfo() << "Invalid value" << outputConfig.paddingAmount << "specified for padding amount, defaulting to 8.";
             outputConfig.paddingAmount = 8;
         }
+    }
+
+    if (parser.isSet(fullFrameOption)) {
+        outputConfig.trimToActiveRegion = false;
+        outputConfig.fullFrameDecode = true;
     }
     
     // Perform the processing

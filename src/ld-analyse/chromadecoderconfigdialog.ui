@@ -317,13 +317,6 @@
     </layout>
    </item>
    <item>
-    <widget class="QCheckBox" name="enableYNRCheckBox">
-     <property name="text">
-      <string>Enable luma noise reduction</string>
-     </property>
-    </widget>
-   </item>
-   <item>
     <widget class="QCheckBox" name="enableYCCombineCheckBox">
      <property name="text">
       <string>Combine Y/C -> CVBS</string>

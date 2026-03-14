@@ -12,6 +12,8 @@
 #include "chromadecoderconfigdialog.h"
 #include "ui_chromadecoderconfigdialog.h"
 #include "mainwindow.h"
+#include <QEvent>
+#include <QList>
 #include <QSignalBlocker>
 
 #include <cmath>
@@ -97,6 +99,23 @@ ChromaDecoderConfigDialog::ChromaDecoderConfigDialog(QWidget *parent) :
 
     ui->yNRHorizontalSlider->setMinimum(0);
     ui->yNRHorizontalSlider->setMaximum(100);
+
+    const QList<QSlider *> resettableSliders = {
+        ui->blackLevelHorizontalSlider,
+        ui->whiteLevelHorizontalSlider,
+        ui->chromaGainHorizontalSlider,
+        ui->chromaPhaseHorizontalSlider,
+        ui->yNRHorizontalSlider,
+        ui->thresholdHorizontalSlider,
+        ui->adaptThresholdHorizontalSlider,
+        ui->chromaWeightHorizontalSlider,
+        ui->cNRHorizontalSlider
+    };
+    for (QSlider *slider : resettableSliders) {
+        if (slider) {
+            slider->installEventFilter(this);
+        }
+    }
     
 	//get tbcSource instance from mainWindow
 	if (auto mw = qobject_cast<MainWindow*>(parent)) {
@@ -119,7 +138,7 @@ void ChromaDecoderConfigDialog::setConfiguration(VideoSystem _system, const PalC
 												 const bool _isInit,
                                                  const OutputWriter::Configuration &_outputConfiguration)
 {
-    double yNRLevel = _system == NTSC ? ntscConfiguration.yNRLevel : palConfiguration.yNRLevel;
+    const double configuredYNRLevel = _system == NTSC ? _ntscConfiguration.yNRLevel : _palConfiguration.yNRLevel;
     system = _system;
     palConfiguration = _palConfiguration;
     ntscConfiguration = _ntscConfiguration;
@@ -130,9 +149,10 @@ void ChromaDecoderConfigDialog::setConfiguration(VideoSystem _system, const PalC
     palConfiguration.chromaGain = qBound(0.0, palConfiguration.chromaGain, 2.0);
     palConfiguration.chromaPhase = qBound(-180.0, palConfiguration.chromaPhase, 180.0);
     palConfiguration.transformThreshold = qBound(0.0, palConfiguration.transformThreshold, 1.0);
-    palConfiguration.yNRLevel = qBound(0.0, yNRLevel, 10.0);
+    palConfiguration.yNRLevel = qBound(0.0, configuredYNRLevel, 10.0);
     ntscConfiguration.cNRLevel = qBound(0.0, ntscConfiguration.cNRLevel, 10.0);
-    ntscConfiguration.yNRLevel = qBound(0.0, yNRLevel, 10.0);
+    ntscConfiguration.yNRLevel = qBound(0.0, configuredYNRLevel, 10.0);
+    monoConfiguration.yNRLevel = qBound(0.0, configuredYNRLevel, 10.0);
 
     ntscConfiguration.adaptThreshold = qBound(0.1, ntscConfiguration.adaptThreshold, 2.0);
     ntscConfiguration.chromaWeight = qBound(0.0, ntscConfiguration.chromaWeight, 2.0);    
@@ -283,7 +303,6 @@ void ChromaDecoderConfigDialog::updateDialog()
         } else {
             ntscConfiguration.phaseCompensation = true;
         }
-		ui->enableYNRCheckBox->setChecked(yNREnabled);
 		ui->enableYCCombineCheckBox->setChecked(combine);
 		
 		isInit = true;
@@ -301,8 +320,9 @@ void ChromaDecoderConfigDialog::updateDialog()
     ui->chromaPhaseValueLabel->setEnabled(true);
     ui->chromaPhaseValueLabel->setText(QString::number(palConfiguration.chromaPhase, 'f', 1) + QChar(0xB0));
     
-    ui->yNRHorizontalSlider->setValue(static_cast<qint32>(ynrLevel * 10));
-    ui->yNRValueLabel->setText(QString::number(ynrLevel, 'f', 1) + tr(" IRE"));
+    const double currentYNRLevel = (system == NTSC) ? ntscConfiguration.yNRLevel : palConfiguration.yNRLevel;
+    ui->yNRHorizontalSlider->setValue(static_cast<qint32>(currentYNRLevel * 10));
+    ui->yNRValueLabel->setText(QString::number(currentYNRLevel, 'f', 1) + tr(" IRE"));
 	
 	if(sourceMode == TbcSource::BOTH_SOURCES)
 	{
@@ -429,6 +449,43 @@ void ChromaDecoderConfigDialog::updateDialog()
 
     updateLevelLabels();
 }
+bool ChromaDecoderConfigDialog::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event && event->type() == QEvent::MouseButtonDblClick) {
+        if (QSlider *slider = qobject_cast<QSlider *>(watched)) {
+            resetSliderToDefault(slider);
+            return true;
+        }
+    }
+    return QDialog::eventFilter(watched, event);
+}
+
+void ChromaDecoderConfigDialog::resetSliderToDefault(QSlider *slider)
+{
+    if (!slider) {
+        return;
+    }
+
+    if (slider == ui->blackLevelHorizontalSlider) {
+        slider->setValue(levelForResetIndex(0, false));
+    } else if (slider == ui->whiteLevelHorizontalSlider) {
+        slider->setValue(whiteLevelToSlider(levelForResetIndex(0, true)));
+    } else if (slider == ui->chromaGainHorizontalSlider) {
+        slider->setValue(100);
+    } else if (slider == ui->chromaPhaseHorizontalSlider) {
+        slider->setValue(static_cast<int>(degreesToSliderPos(0.0)));
+    } else if (slider == ui->yNRHorizontalSlider) {
+        slider->setValue(0);
+    } else if (slider == ui->thresholdHorizontalSlider) {
+        slider->setValue(40);
+    } else if (slider == ui->adaptThresholdHorizontalSlider) {
+        slider->setValue(100);
+    } else if (slider == ui->chromaWeightHorizontalSlider) {
+        slider->setValue(100);
+    } else if (slider == ui->cNRHorizontalSlider) {
+        slider->setValue(0);
+    }
+}
 
 // Methods to handle changes to the dialogue
 void ChromaDecoderConfigDialog::on_blackLevelHorizontalSlider_valueChanged(int value)
@@ -502,27 +559,6 @@ void ChromaDecoderConfigDialog::on_chromaPhaseHorizontalSlider_valueChanged(int 
     emit chromaDecoderConfigChanged();
 }
 
-void ChromaDecoderConfigDialog::on_enableYNRCheckBox_clicked()
-{
-	yNREnabled = ui->enableYNRCheckBox->isChecked();
-	ui->yNRHorizontalSlider->setEnabled(yNREnabled);
-	
-	if(ui->enableYNRCheckBox->isChecked())
-	{
-		palConfiguration.yNRLevel = ynrLevel;
-		ntscConfiguration.yNRLevel = ynrLevel;
-		monoConfiguration.yNRLevel = ynrLevel;
-	}
-	else
-	{
-		ynrLevel = monoConfiguration.yNRLevel;
-		
-		palConfiguration.yNRLevel = static_cast<double>(0);
-		ntscConfiguration.yNRLevel = static_cast<double>(0);
-		monoConfiguration.yNRLevel = static_cast<double>(0);
-	}
-    emit chromaDecoderConfigChanged();
-}
 
 void ChromaDecoderConfigDialog::on_palFilterButtonGroup_buttonClicked(QAbstractButton *button)
 {
@@ -614,11 +650,11 @@ void ChromaDecoderConfigDialog::on_cNRHorizontalSlider_valueChanged(int value)
 
 void ChromaDecoderConfigDialog::on_yNRHorizontalSlider_valueChanged(int value)
 {
-    palConfiguration.yNRLevel = static_cast<double>(value) / 10;
-    ntscConfiguration.yNRLevel = static_cast<double>(value) / 10;
-	monoConfiguration.yNRLevel = static_cast<double>(value) / 10;
-	ynrLevel = static_cast<double>(value) / 10;
-    ui->yNRValueLabel->setText(QString::number(ntscConfiguration.yNRLevel, 'f', 1) + tr(" IRE"));
+    const double ynrLevel = static_cast<double>(value) / 10;
+    palConfiguration.yNRLevel = ynrLevel;
+    ntscConfiguration.yNRLevel = ynrLevel;
+	monoConfiguration.yNRLevel = ynrLevel;
+    ui->yNRValueLabel->setText(QString::number(ynrLevel, 'f', 1) + tr(" IRE"));
     emit chromaDecoderConfigChanged();
 }
 void ChromaDecoderConfigDialog::levelSelected(qint32 level)

@@ -57,12 +57,21 @@ void OutputWriter::updateConfiguration(LdDecodeMetaData::VideoParameters &_video
     videoParameters = _videoParameters;
     topPadLines = 0;
     bottomPadLines = 0;
+    inputStartX = 0;
+    inputStartLine = 0;
 
-    activeWidth = videoParameters.activeVideoEnd - videoParameters.activeVideoStart;
-    activeHeight = videoParameters.lastActiveFrameLine - videoParameters.firstActiveFrameLine;
+    if (config.trimToActiveRegion) {
+        inputStartX = videoParameters.activeVideoStart;
+        inputStartLine = videoParameters.firstActiveFrameLine;
+        activeWidth = videoParameters.activeVideoEnd - videoParameters.activeVideoStart;
+        activeHeight = videoParameters.lastActiveFrameLine - videoParameters.firstActiveFrameLine;
+    } else {
+        activeWidth = videoParameters.fieldWidth;
+        activeHeight = (videoParameters.fieldHeight * 2) - 1;
+    }
     outputHeight = activeHeight;
 
-    if (config.paddingAmount > 1) {
+    if (config.trimToActiveRegion && config.paddingAmount > 1) {
         // Some video codecs require the width and height of a video to be divisible by
         // a given number of samples on each axis.
         
@@ -99,6 +108,12 @@ void OutputWriter::updateConfiguration(LdDecodeMetaData::VideoParameters &_video
         // Update the caller's copy, now we've adjusted the active area
         _videoParameters = videoParameters;
     }
+
+    if (config.trimToActiveRegion) {
+        // Ensure convertLine reads from the padded/adjusted active origin.
+        inputStartX = videoParameters.activeVideoStart;
+        inputStartLine = videoParameters.firstActiveFrameLine;
+    }
 }
 
 const char *OutputWriter::getPixelName() const
@@ -119,9 +134,15 @@ void OutputWriter::printOutputInfo() const
 {
     // Show output information to the user
     const qint32 frameHeight = (videoParameters.fieldHeight * 2) - 1;
-    qInfo() << "Input video of" << videoParameters.fieldWidth << "x" << frameHeight
-            << "will be colourised and trimmed to" << activeWidth << "x" << outputHeight
-            << getPixelName() << "frames";
+    if (config.trimToActiveRegion) {
+        qInfo() << "Input video of" << videoParameters.fieldWidth << "x" << frameHeight
+                << "will be colourised and trimmed to" << activeWidth << "x" << outputHeight
+                << getPixelName() << "frames";
+    } else {
+        qInfo() << "Input video of" << videoParameters.fieldWidth << "x" << frameHeight
+                << "will be colourised to full-frame" << activeWidth << "x" << outputHeight
+                << getPixelName() << "frames";
+    }
 }
 
 QByteArray OutputWriter::getStreamHeader() const
@@ -264,30 +285,55 @@ void OutputWriter::clearPadLines(qint32 firstLine, qint32 numLines, OutputFrame 
 
 void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componentFrame, OutputFrame &outputFrame) const
 {
-    // Get pointers to the component data for the active region
-    const qint32 inputLine = videoParameters.firstActiveFrameLine + lineNumber;
-    const double *inY = componentFrame.y(inputLine) + videoParameters.activeVideoStart;
+    // Get pointers to the component data for the configured region
+    const qint32 inputLine = inputStartLine + lineNumber;
+    const double *inY = componentFrame.y(inputLine) + inputStartX;
     // Not used if output is GRAY16
     const double *inU = (config.pixelFormat != GRAY16) ?
-                            componentFrame.u(inputLine) + videoParameters.activeVideoStart : nullptr;
+                            componentFrame.u(inputLine) + inputStartX : nullptr;
     const double *inV = (config.pixelFormat != GRAY16) ?
-                            componentFrame.v(inputLine) + videoParameters.activeVideoStart : nullptr;
+                            componentFrame.v(inputLine) + inputStartX : nullptr;
 
     const qint32 outputLine = topPadLines + lineNumber;
 
-    const double yOffset = videoParameters.black16bIre;
-    double yRange = videoParameters.white16bIre - videoParameters.black16bIre;
-    const double uvRange = yRange;
+    const bool hybridLevelWindowMode = !config.trimToActiveRegion && !config.fullFrameDecode;
+    const bool lineInActiveRegion = inputLine >= videoParameters.firstActiveFrameLine
+                                    && inputLine < videoParameters.lastActiveFrameLine;
+
+    auto useLeveledRangeAtX = [&](qint32 x) -> bool {
+        if (!hybridLevelWindowMode) {
+            return true;
+        }
+        if (!lineInActiveRegion) {
+            return false;
+        }
+        const qint32 inputX = inputStartX + x;
+        return inputX >= videoParameters.activeVideoStart
+               && inputX < videoParameters.activeVideoEnd;
+    };
+
+    const double leveledYOffset = static_cast<double>(videoParameters.black16bIre);
+    double yRange = static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
+    double uvRange = yRange;
+    if (yRange <= 0.0) {
+        yRange = 1.0;
+    }
+    if (uvRange <= 0.0) {
+        uvRange = 1.0;
+    }
 
     switch (config.pixelFormat) {
         case RGB48: {
             // Convert Y'UV to full-range R'G'B' [Poynton eq 28.6 p337]
             quint16 *out = outputFrame.data() + (activeWidth * outputLine * 3);
-
+            const double leveledYScale = 65535.0 / yRange;
             const double yScale = 65535.0 / yRange;
             const double uvScale = 65535.0 / uvRange;
 
             for (qint32 x = 0; x < activeWidth; x++) {
+                const bool leveledRange = useLeveledRangeAtX(x);
+                const double yOffset = leveledRange ? leveledYOffset : 0.0;
+                const double yScale = leveledRange ? leveledYScale : 1.0;
                 // Scale Y'UV to 0-65535
                 const double rY = qBound(0.0, (inY[x] - yOffset) * yScale, 65535.0);
                 const double rU = inU[x] * uvScale;
@@ -307,12 +353,16 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
             quint16 *outY  = outputFrame.data() + (activeWidth * outputLine);
             quint16 *outCB = outY + (activeWidth * outputHeight);
             quint16 *outCR = outCB + (activeWidth * outputHeight);
-
+            const double leveledYScale = Y_SCALE / yRange;
+            const double fullSignalYScale = Y_SCALE / 65535.0;
             const double yScale = Y_SCALE / yRange;
             const double cbScale = (C_SCALE / (ONE_MINUS_Kb * kB)) / uvRange;
             const double crScale = (C_SCALE / (ONE_MINUS_Kr * kR)) / uvRange;
 
             for (qint32 x = 0; x < activeWidth; x++) {
+                const bool leveledRange = useLeveledRangeAtX(x);
+                const double yOffset = leveledRange ? leveledYOffset : 0.0;
+                const double yScale = leveledRange ? leveledYScale : fullSignalYScale;
                 outY[x]  = static_cast<quint16>(qBound(Y_MIN, ((inY[x] - yOffset) * yScale)  + Y_ZERO, Y_MAX));
                 outCB[x] = static_cast<quint16>(qBound(C_MIN, (inU[x]             * cbScale) + C_ZERO, C_MAX));
                 outCR[x] = static_cast<quint16>(qBound(C_MIN, (inV[x]             * crScale) + C_ZERO, C_MAX));
@@ -323,10 +373,14 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
         case GRAY16: {
             // Throw away UV and just convert Y' to the same scale as Y'CbCr
             quint16 *out = outputFrame.data() + (activeWidth * outputLine);
-
+            const double leveledYScale = Y_SCALE / yRange;
+            const double fullSignalYScale = Y_SCALE / 65535.0;
             const double yScale = Y_SCALE / yRange;
 
             for (qint32 x = 0; x < activeWidth; x++) {
+                const bool leveledRange = useLeveledRangeAtX(x);
+                const double yOffset = leveledRange ? leveledYOffset : 0.0;
+                const double yScale = leveledRange ? leveledYScale : fullSignalYScale;
                 out[x] = static_cast<quint16>(qBound(Y_MIN, ((inY[x] - yOffset) * yScale) + Y_ZERO, Y_MAX));
             }
 

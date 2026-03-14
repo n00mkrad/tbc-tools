@@ -115,7 +115,7 @@ void Configuration::readConfiguration(void)
     configuration->beginGroup("viewOptions");
     settings.viewOptions.toggleChromaDuringSeek = configuration->value("toggleChromaDuringSeek", false).toBool();
     settings.viewOptions.resizeFrameWithWindow = configuration->value("resizeFrameWithWindow", true).toBool();
-    settings.viewOptions.showExportBoundary = configuration->value("showExportBoundary", false).toBool();
+    settings.viewOptions.showExportBoundary = configuration->value("showExportBoundary", true).toBool();
     settings.viewOptions.exportBoundaryThickness = configuration->value("exportBoundaryThickness", 4).toInt();
     if (settings.viewOptions.exportBoundaryThickness < 1) settings.viewOptions.exportBoundaryThickness = 1;
     if (settings.viewOptions.exportBoundaryThickness > 8) settings.viewOptions.exportBoundaryThickness = 8;
@@ -148,7 +148,7 @@ void Configuration::setDefault(void)
     // View options
     settings.viewOptions.toggleChromaDuringSeek = false;
     settings.viewOptions.resizeFrameWithWindow = true;
-    settings.viewOptions.showExportBoundary = false;
+    settings.viewOptions.showExportBoundary = true;
     settings.viewOptions.exportBoundaryThickness = 4;
 
     // Write the configuration

@@ -31,6 +31,7 @@ public:
     void setSource(TbcSource *source);
     void setInPoint(int frameNumber);
     void setOutPoint(int frameNumber);
+    void refreshResolutionOptions();
 
 private slots:
     void on_outputBrowseButton_clicked();
@@ -47,6 +48,9 @@ private slots:
     void handleProcessStderr();
 
 private:
+    void syncResolutionModeSelectionFromSource();
+    void refreshOutputResolutionModeOptions();
+    void updateOutputResolutionModeControlsEnabledState(bool enabled);
     void updateFromSource();
     void refreshProfiles();
     void updateProfileDependentControls();

@@ -490,6 +490,78 @@ int activeVbiOutputHeightForSystem(int system)
     return system == PAL ? 608 : 512;
 }
 
+struct VbiFrameLineRange {
+    int firstFrameLine = 0;
+    int lastFrameLine = 0;
+};
+
+VbiFrameLineRange vbiFrameLinesForSystem(int system)
+{
+    switch (system) {
+    case PAL:
+        return {12, 620};
+    case PAL_M:
+        return {17, 525};
+    case NTSC:
+    default:
+        return {16, 525};
+    }
+}
+
+int vbiNativeOutputHeightForSystem(int system)
+{
+    const VbiFrameLineRange lines = vbiFrameLinesForSystem(system);
+    return qMax(1, lines.lastFrameLine - lines.firstFrameLine);
+}
+
+int nativeActiveWidthForVideoParameters(const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    if (!videoParameters.isValid) {
+        return 0;
+    }
+    const int width = videoParameters.activeVideoEnd - videoParameters.activeVideoStart;
+    if (width > 0) {
+        return width;
+    }
+    return qMax(0, videoParameters.fieldWidth);
+}
+
+int nativeActiveHeightForVideoParameters(const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    if (!videoParameters.isValid) {
+        return 0;
+    }
+    const int height = videoParameters.lastActiveFrameLine - videoParameters.firstActiveFrameLine;
+    if (height > 0) {
+        return height;
+    }
+    return qMax(0, (videoParameters.fieldHeight * 2) - 1);
+}
+
+int fullFrameWidthForSystemFallback(int system)
+{
+    switch (system) {
+    case PAL:
+        return 1135;
+    case PAL_M:
+        return 909;
+    case NTSC:
+    default:
+        return 910;
+    }
+}
+
+int fullFrameHeightForSystemFallback(int system)
+{
+    return system == PAL ? 625 : 525;
+}
+
+QString bt601ParTextForSystem(int system)
+{
+    return system == PAL ? QStringLiteral("128:117")
+                         : QStringLiteral("12:13");
+}
+
 struct OutputResamplePlan {
     bool enabled = false;
     int width = 0;
@@ -526,6 +598,9 @@ OutputResamplePlan outputResamplePlanForModes(int system,
         plan.sampleAspectRatio = bt601NonSquareSarForSystem(system);
     } else if (outputResolutionMode == QStringLiteral("bt601_702")) {
         plan.width = 702;
+        plan.sampleAspectRatio = bt601NonSquareSarForSystem(system);
+    } else if (outputResolutionMode == QStringLiteral("bt601_704")) {
+        plan.width = 704;
         plan.sampleAspectRatio = bt601NonSquareSarForSystem(system);
     } else if (outputResolutionMode == QStringLiteral("square_768")) {
         plan.width = 768;
@@ -847,14 +922,6 @@ ExportDialog::ExportDialog(QWidget *parent) :
     }
     if (ui->outputResolutionModeComboBox) {
         ui->outputResolutionModeComboBox->clear();
-        ui->outputResolutionModeComboBox->addItem(tr("Default (D1)"), QStringLiteral("default_safe"));
-        ui->outputResolutionModeComboBox->addItem(tr("Decode Native"), QStringLiteral("tool_native"));
-        ui->outputResolutionModeComboBox->addItem(tr("BT.601 702 (PAR 128:117)"), QStringLiteral("bt601_702"));
-        ui->outputResolutionModeComboBox->addItem(tr("BT.601 720 (PAR 128:117)"), QStringLiteral("bt601_720"));
-        ui->outputResolutionModeComboBox->addItem(tr("Square 768 (PAR 1:1)"), QStringLiteral("square_768"));
-        ui->outputResolutionModeComboBox->addItem(tr("Square 786 (PAR 1:1)"), QStringLiteral("square_786"));
-        const int defaultSafeIndex = ui->outputResolutionModeComboBox->findData(QStringLiteral("default_safe"));
-        ui->outputResolutionModeComboBox->setCurrentIndex(defaultSafeIndex >= 0 ? defaultSafeIndex : 0);
     }
     if (ui->audioProfileComboBox) {
         ui->audioProfileComboBox->clear();
@@ -897,23 +964,16 @@ ExportDialog::ExportDialog(QWidget *parent) :
                 [updateDropoutFieldModeControls](int) { updateDropoutFieldModeControls(); });
     }
     updateDropoutFieldModeControls();
-    const auto updateOutputResolutionControls = [this]() {
-        const QString framingMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
-        const bool outputModeRelevant = supportsOutputResolutionResample(framingMode);
-        if (ui->outputResolutionModeLabel) {
-            ui->outputResolutionModeLabel->setEnabled(outputModeRelevant);
-        }
-        if (ui->outputResolutionModeComboBox) {
-            ui->outputResolutionModeComboBox->setEnabled(outputModeRelevant);
-        }
-    };
     if (ui->resolutionModeComboBox) {
         connect(ui->resolutionModeComboBox,
                 static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
                 this,
-                [updateOutputResolutionControls](int) { updateOutputResolutionControls(); });
+                [this](int) {
+                    refreshOutputResolutionModeOptions();
+                    updateProfileDependentControls();
+                });
     }
-    updateOutputResolutionControls();
+    refreshOutputResolutionModeOptions();
     if (ui->ffv1SlicesSpinBox) {
         ui->ffv1SlicesSpinBox->setMinimum(1);
         ui->ffv1SlicesSpinBox->setMaximum(32);
@@ -1102,6 +1162,7 @@ void ExportDialog::setSource(TbcSource *source)
 {
     tbcSource = source;
     updateFromSource();
+    refreshResolutionOptions();
     refreshProfiles();
     updateProfileDependentControls();
 }
@@ -1132,6 +1193,161 @@ void ExportDialog::setOutPoint(int frameNumber)
     }
     updateRangeLengthLabel();
     syncRangeTimecodeEditors();
+}
+
+void ExportDialog::refreshResolutionOptions()
+{
+    syncResolutionModeSelectionFromSource();
+    refreshOutputResolutionModeOptions();
+}
+
+void ExportDialog::syncResolutionModeSelectionFromSource()
+{
+    if (!ui || !ui->resolutionModeComboBox) {
+        return;
+    }
+
+    QString targetMode = ui->resolutionModeComboBox->currentData().toString();
+    if (targetMode.isEmpty()) {
+        targetMode = QStringLiteral("active_area");
+    }
+
+    if (tbcSource && tbcSource->getIsSourceLoaded() && !tbcSource->getIsMetadataOnly()) {
+        const LdDecodeMetaData::VideoParameters &videoParameters = tbcSource->getVideoParameters();
+        if (usesCustomVerticalFraming(videoParameters)) {
+            targetMode = QStringLiteral("user_defined");
+        } else if (targetMode == QStringLiteral("user_defined")) {
+            targetMode = QStringLiteral("active_area");
+        }
+    } else if (targetMode == QStringLiteral("user_defined")) {
+        targetMode = QStringLiteral("active_area");
+    }
+
+    const int modeIndex = ui->resolutionModeComboBox->findData(targetMode);
+    if (modeIndex >= 0 && modeIndex != ui->resolutionModeComboBox->currentIndex()) {
+        const QSignalBlocker blocker(ui->resolutionModeComboBox);
+        ui->resolutionModeComboBox->setCurrentIndex(modeIndex);
+    }
+}
+
+void ExportDialog::refreshOutputResolutionModeOptions()
+{
+    if (!ui || !ui->outputResolutionModeComboBox) {
+        return;
+    }
+
+    const QString previousMode = effectiveOutputResolutionMode(ui->outputResolutionModeComboBox);
+    const QString resolutionMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
+
+    int system = NTSC;
+    LdDecodeMetaData::VideoParameters videoParameters;
+    const bool hasVideoParameters = tbcSource && tbcSource->getIsSourceLoaded();
+    if (hasVideoParameters) {
+        videoParameters = tbcSource->getVideoParameters();
+        system = videoParameters.system;
+    }
+
+    int activeNativeWidth = nativeActiveWidthForVideoParameters(videoParameters);
+    int activeNativeHeight = nativeActiveHeightForVideoParameters(videoParameters);
+    if (activeNativeWidth < 1) {
+        activeNativeWidth = 720;
+    }
+    if (activeNativeHeight < 1) {
+        activeNativeHeight = activeAreaOutputHeightForSystem(system);
+    }
+
+    const int standardHeight = activeAreaOutputHeightForSystem(system);
+    const QString bt601Par = bt601ParTextForSystem(system);
+    const int imxHeight = activeVbiOutputHeightForSystem(system);
+    const int vbiNativeHeight = vbiNativeOutputHeightForSystem(system);
+
+    int fullFrameWidth = videoParameters.isValid ? qMax(1, videoParameters.fieldWidth) : 0;
+    int fullFrameHeight = videoParameters.isValid ? qMax(1, (videoParameters.fieldHeight * 2) - 1) : 0;
+    if (fullFrameWidth < 1) {
+        fullFrameWidth = fullFrameWidthForSystemFallback(system);
+    }
+    if (fullFrameHeight < 1) {
+        fullFrameHeight = fullFrameHeightForSystemFallback(system);
+    }
+
+    const QSignalBlocker blocker(ui->outputResolutionModeComboBox);
+    ui->outputResolutionModeComboBox->clear();
+
+    if (resolutionMode == QStringLiteral("active_vbi")) {
+        ui->outputResolutionModeComboBox->addItem(tr("D10/IMX 720x%1").arg(imxHeight), QStringLiteral("default_safe"));
+        ui->outputResolutionModeComboBox->addItem(tr("Decode Native %1x%2")
+                                                      .arg(activeNativeWidth)
+                                                      .arg(vbiNativeHeight),
+                                                  QStringLiteral("tool_native"));
+    } else if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+        ui->outputResolutionModeComboBox->addItem(tr("Decode Native %1x%2 (Full-Frame 4fsc)")
+                                                      .arg(fullFrameWidth)
+                                                      .arg(fullFrameHeight),
+                                                  QStringLiteral("tool_native"));
+    } else if (resolutionMode == QStringLiteral("user_defined")) {
+        ui->outputResolutionModeComboBox->addItem(tr("Decode Native %1x%2")
+                                                      .arg(activeNativeWidth)
+                                                      .arg(activeNativeHeight),
+                                                  QStringLiteral("tool_native"));
+    } else {
+        ui->outputResolutionModeComboBox->addItem(tr("Standard 720x%1").arg(standardHeight), QStringLiteral("default_safe"));
+        ui->outputResolutionModeComboBox->addItem(tr("Decode Native %1x%2")
+                                                      .arg(activeNativeWidth)
+                                                      .arg(activeNativeHeight),
+                                                  QStringLiteral("tool_native"));
+        ui->outputResolutionModeComboBox->addItem(tr("BT.601 702x%1 (PAR %2)")
+                                                      .arg(standardHeight)
+                                                      .arg(bt601Par),
+                                                  QStringLiteral("bt601_702"));
+        ui->outputResolutionModeComboBox->addItem(tr("BT.601 704x%1 (PAR %2)")
+                                                      .arg(standardHeight)
+                                                      .arg(bt601Par),
+                                                  QStringLiteral("bt601_704"));
+        ui->outputResolutionModeComboBox->addItem(tr("BT.601 720x%1 (PAR %2)")
+                                                      .arg(standardHeight)
+                                                      .arg(bt601Par),
+                                                  QStringLiteral("bt601_720"));
+        ui->outputResolutionModeComboBox->addItem(tr("Square 768x%1 (PAR 1:1)")
+                                                      .arg(standardHeight),
+                                                  QStringLiteral("square_768"));
+        ui->outputResolutionModeComboBox->addItem(tr("Square 786x%1 (PAR 1:1)")
+                                                      .arg(standardHeight),
+                                                  QStringLiteral("square_786"));
+    }
+
+    int targetIndex = ui->outputResolutionModeComboBox->findData(previousMode);
+    if (targetIndex < 0) {
+        const QString fallbackMode = supportsOutputResolutionResample(resolutionMode)
+                                         ? QStringLiteral("default_safe")
+                                         : QStringLiteral("tool_native");
+        targetIndex = ui->outputResolutionModeComboBox->findData(fallbackMode);
+    }
+    if (targetIndex < 0 && ui->outputResolutionModeComboBox->count() > 0) {
+        targetIndex = 0;
+    }
+    if (targetIndex >= 0) {
+        ui->outputResolutionModeComboBox->setCurrentIndex(targetIndex);
+    }
+
+    const bool controlsEnabled = exportAvailable
+                                 && exportProcess
+                                 && exportProcess->state() == QProcess::NotRunning;
+    updateOutputResolutionModeControlsEnabledState(controlsEnabled);
+}
+
+void ExportDialog::updateOutputResolutionModeControlsEnabledState(bool enabled)
+{
+    if (!ui) {
+        return;
+    }
+    const QString framingMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
+    const bool outputModeRelevant = supportsOutputResolutionResample(framingMode);
+    if (ui->outputResolutionModeLabel) {
+        ui->outputResolutionModeLabel->setEnabled(enabled && outputModeRelevant);
+    }
+    if (ui->outputResolutionModeComboBox) {
+        ui->outputResolutionModeComboBox->setEnabled(enabled && outputModeRelevant);
+    }
 }
 
 void ExportDialog::updateRangeControlsForSource(bool resetToFullRange)
@@ -1322,6 +1538,7 @@ void ExportDialog::updateFromSource()
     if (!hasSource) {
         ui->inputLineEdit->clear();
         updateRangeControlsForSource(true);
+        refreshResolutionOptions();
         appendStatus(tr("No source loaded."));
         setBusy(exportProcess->state() != QProcess::NotRunning);
         return;
@@ -1330,6 +1547,7 @@ void ExportDialog::updateFromSource()
     if (metadataOnly) {
         ui->inputLineEdit->clear();
         updateRangeControlsForSource(true);
+        refreshResolutionOptions();
         appendStatus(tr("Metadata-only mode (no TBC source)."));
         setBusy(exportProcess->state() != QProcess::NotRunning);
         return;
@@ -1346,20 +1564,10 @@ void ExportDialog::updateFromSource()
                 ui->outputLineEdit->setText(defaultOutputBaseName(inputFile));
                 outputAutoSet = true;
             }
-            if (ui->resolutionModeComboBox) {
-                const LdDecodeMetaData::VideoParameters &videoParameters = tbcSource->getVideoParameters();
-                QString modeData = QStringLiteral("active_area");
-                if (usesCustomVerticalFraming(videoParameters)) {
-                    modeData = QStringLiteral("user_defined");
-                }
-                const int modeIndex = ui->resolutionModeComboBox->findData(modeData);
-                if (modeIndex >= 0) {
-                    ui->resolutionModeComboBox->setCurrentIndex(modeIndex);
-                }
-            }
         }
     }
     updateRangeControlsForSource(sourceChanged);
+    refreshResolutionOptions();
 
     setBusy(exportProcess->state() != QProcess::NotRunning);
     if (exportAvailable && exportProcess->state() == QProcess::NotRunning) {
@@ -2129,14 +2337,7 @@ void ExportDialog::setBusy(bool busy)
     if (ui->resolutionModeComboBox) {
         ui->resolutionModeComboBox->setEnabled(enabled);
     }
-    const QString framingMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
-    const bool outputModeRelevant = supportsOutputResolutionResample(framingMode);
-    if (ui->outputResolutionModeLabel) {
-        ui->outputResolutionModeLabel->setEnabled(enabled && outputModeRelevant);
-    }
-    if (ui->outputResolutionModeComboBox) {
-        ui->outputResolutionModeComboBox->setEnabled(enabled && outputModeRelevant);
-    }
+    updateOutputResolutionModeControlsEnabledState(enabled);
     if (ui->audioProfileComboBox) {
         ui->audioProfileComboBox->setEnabled(enabled);
     }

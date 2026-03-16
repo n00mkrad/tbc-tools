@@ -3392,6 +3392,9 @@ void MainWindow::videoParametersChangedSignalHandler(const LdDecodeMetaData::Vid
 {
     // Update the VideoParameters in the source
     tbcSource.setVideoParameters(videoParameters);
+    if (exportDialog) {
+        exportDialog->refreshResolutionOptions();
+    }
 
     // Enable the "Save Metadata" action, since the metadata has been modified
     ui->actionSave_Metadata->setEnabled(true);

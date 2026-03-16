@@ -969,6 +969,8 @@ void TbcSource::applyChromaSettingsFromMetadata(const LdDecodeMetaData::VideoPar
 
     if (videoParameters.ntscPhaseCompensation != -1) {
         ntscConfiguration.phaseCompensation = (videoParameters.ntscPhaseCompensation == 1);
+    } else if (videoParameters.system == NTSC) {
+        ntscConfiguration.phaseCompensation = true;
     }
 
     if (videoParameters.palTransformThreshold >= 0.0) {
@@ -1585,8 +1587,9 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
     if (videoParameters.system == PAL || videoParameters.system == PAL_M) {
         palColour.updateConfiguration(videoParameters, palConfiguration);
     } else {
-        if (isChromaTbc || sourceMode != ONE_SOURCE) {
-            // Enable phase compensation by default, since this is probably a videotape source
+        if (videoParameters.ntscPhaseCompensation == -1) {
+            // No metadata override: default phase compensation on for NTSC,
+            // including single-source combined/CVBS inputs.
             ntscConfiguration.phaseCompensation = true;
         }
         ntscColour.updateConfiguration(videoParameters, ntscConfiguration);

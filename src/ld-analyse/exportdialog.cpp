@@ -1762,24 +1762,22 @@ void ExportDialog::updateProfileDependentControls()
 {
     const bool ffv1Selected = ui && ui->profileComboBox
                               && isFfv1ProfileName(ui->profileComboBox->currentText());
-    const bool canEdit = ffv1Selected
-                         && exportAvailable
+    const bool canEdit = exportAvailable
                          && exportProcess
                          && exportProcess->state() == QProcess::NotRunning;
-    const bool proxyRequested = ffv1Selected
-                                && ui
+    const bool proxyRequested = ui
                                 && ui->generateProxyCheckBox
                                 && ui->generateProxyCheckBox->isChecked();
     if (ui->ffv1SlicesLabel) {
         ui->ffv1SlicesLabel->setVisible(ffv1Selected);
-        ui->ffv1SlicesLabel->setEnabled(canEdit);
+        ui->ffv1SlicesLabel->setEnabled(canEdit && ffv1Selected);
     }
     if (ui->ffv1SlicesSpinBox) {
         ui->ffv1SlicesSpinBox->setVisible(ffv1Selected);
-        ui->ffv1SlicesSpinBox->setEnabled(canEdit);
+        ui->ffv1SlicesSpinBox->setEnabled(canEdit && ffv1Selected);
     }
     if (ui->generateProxyCheckBox) {
-        ui->generateProxyCheckBox->setVisible(ffv1Selected);
+        ui->generateProxyCheckBox->setVisible(true);
         ui->generateProxyCheckBox->setEnabled(canEdit);
     }
     if (ui->proxyCodecLabel) {
@@ -2788,11 +2786,7 @@ QStringList ExportDialog::collectAudioTracks() const
 
 bool ExportDialog::shouldGenerateProxyForSelection() const
 {
-    if (!ui || !ui->generateProxyCheckBox || !ui->generateProxyCheckBox->isChecked()) {
-        return false;
-    }
-    const QString selectedProfile = ui->profileComboBox ? ui->profileComboBox->currentText().trimmed() : QString();
-    return isFfv1ProfileName(selectedProfile);
+    return ui && ui->generateProxyCheckBox && ui->generateProxyCheckBox->isChecked();
 }
 
 QString ExportDialog::selectedProxyCodecId() const

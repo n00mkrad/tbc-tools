@@ -173,7 +173,7 @@ jobs:
             if ! "$PATCH_ELF_BIN" --print-rpath "$elf" >/dev/null 2>&1; then
               continue
             fi
-            "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf" || true
+            "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf"
           done
 
       - name: Download linuxdeploy and build AppImage
@@ -240,6 +240,23 @@ jobs:
                 fi
               done
             done
+          done
+          chmod -R u+w AppDir/usr/bin AppDir/usr/lib AppDir/usr/plugins
+          PATCH_ELF_BIN="$(command -v patchelf || true)"
+          if [ -z "$PATCH_ELF_BIN" ]; then
+            nix build nixpkgs#patchelf --out-link patchelf-result
+            PATCH_ELF_BIN="patchelf-result/bin/patchelf"
+          fi
+          if [ ! -x "$PATCH_ELF_BIN" ]; then
+            echo "Failed to locate patchelf for RPATH normalization"
+            exit 1
+          fi
+          for elf in AppDir/usr/bin/* AppDir/usr/lib/*.so* AppDir/usr/plugins/*/*.so; do
+            [ -f "$elf" ] || continue
+            if ! "$PATCH_ELF_BIN" --print-rpath "$elf" >/dev/null 2>&1; then
+              continue
+            fi
+            "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf"
           done
 
           # Some copied Nix store files are read-only; make bundle writable so linuxdeploy
@@ -453,6 +470,8 @@ jobs:
             done
           done
 
+          chmod -R u+w release/bin release/lib release/plugins
+
           PATCH_ELF_BIN="$(command -v patchelf || true)"
           if [ -z "$PATCH_ELF_BIN" ]; then
             nix build nixpkgs#patchelf --out-link patchelf-result
@@ -467,7 +486,7 @@ jobs:
             if ! "$PATCH_ELF_BIN" --print-rpath "$elf" >/dev/null 2>&1; then
               continue
             fi
-            "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf" || true
+            "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf"
           done
           cat > release/tbc-tools-run <<'EOF'
           #!/usr/bin/env bash

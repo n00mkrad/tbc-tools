@@ -116,8 +116,13 @@ jobs:
             echo "Failed to locate patchelf for interpreter normalization"
             exit 1
           fi
-          cp -a result/lib/. AppDir/usr/lib/ || true
-          cp -a result/share/. AppDir/usr/share/ || true
+          if [ -d result/lib ]; then
+            cp -a result/lib/. AppDir/usr/lib/
+          fi
+          if [ -d result/share ]; then
+            cp -a result/share/. AppDir/usr/share/
+          fi
+          chmod -R u+w AppDir/usr/lib
           LIBSTDCPP_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libstdc++.so.6" { print $3; exit }')"
           LIBGCC_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libgcc_s.so.1" { print $3; exit }')"
           [ -n "$LIBSTDCPP_PATH" ] && cp -L "$LIBSTDCPP_PATH" AppDir/usr/lib/libstdc++.so.6
@@ -128,19 +133,19 @@ jobs:
             local interp
             interp="$("$PATCH_ELF_BIN" --print-interpreter "$source_elf" 2>/dev/null || true)"
             if [ -n "$interp" ] && [ -f "$interp" ]; then
-              cp -L "$interp" "AppDir/usr/lib/$(basename "$interp")"
+              cp -Lf "$interp" "AppDir/usr/lib/$(basename "$interp")"
             fi
             for glibc_dep in $(ldd "$source_elf" 2>/dev/null | awk '/=> \/nix\/store/ { print $3 }' | grep -E '/(glibc|glibc-multi|gcc[^/]*)/' || true); do
               [ -f "$glibc_dep" ] || continue
               base="$(basename "$glibc_dep")"
-              cp -L "$glibc_dep" "AppDir/usr/lib/$base"
+              cp -Lf "$glibc_dep" "AppDir/usr/lib/$base"
             done
           }
           gather_loader_and_glibc_deps result/bin/.ld-analyse-wrapped
           gather_loader_and_glibc_deps AppDir/usr/bin/ld-analyse
           for glibc_name in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 libutil.so.1 libanl.so.1 libresolv.so.2; do
             glibc_src="$(find /nix/store -type f -name "$glibc_name" -path "*/lib/*" | sort | tail -n 1 || true)"
-            [ -n "$glibc_src" ] && cp -L "$glibc_src" "AppDir/usr/lib/$glibc_name"
+            [ -n "$glibc_src" ] && cp -Lf "$glibc_src" "AppDir/usr/lib/$glibc_name"
           done
           pending=1
           while [ "$pending" -eq 1 ]; do
@@ -393,8 +398,13 @@ jobs:
             echo "Failed to locate patchelf for interpreter normalization"
             exit 1
           fi
-          cp -a result/lib/. release/lib/ || true
-          cp -a result/share/. release/share/ || true
+          if [ -d result/lib ]; then
+            cp -a result/lib/. release/lib/
+          fi
+          if [ -d result/share ]; then
+            cp -a result/share/. release/share/
+          fi
+          chmod -R u+w release/lib
           LIBSTDCPP_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libstdc++.so.6" { print $3; exit }')"
           LIBGCC_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libgcc_s.so.1" { print $3; exit }')"
           [ -n "$LIBSTDCPP_PATH" ] && cp -L "$LIBSTDCPP_PATH" release/lib/libstdc++.so.6
@@ -405,19 +415,19 @@ jobs:
             local interp
             interp="$("$PATCH_ELF_BIN" --print-interpreter "$source_elf" 2>/dev/null || true)"
             if [ -n "$interp" ] && [ -f "$interp" ]; then
-              cp -L "$interp" "release/lib/$(basename "$interp")"
+              cp -Lf "$interp" "release/lib/$(basename "$interp")"
             fi
             for glibc_dep in $(ldd "$source_elf" 2>/dev/null | awk '/=> \/nix\/store/ { print $3 }' | grep -E '/(glibc|glibc-multi|gcc[^/]*)/' || true); do
               [ -f "$glibc_dep" ] || continue
               base="$(basename "$glibc_dep")"
-              cp -L "$glibc_dep" "release/lib/$base"
+              cp -Lf "$glibc_dep" "release/lib/$base"
             done
           }
           gather_loader_and_glibc_deps result/bin/.ld-analyse-wrapped
           gather_loader_and_glibc_deps release/bin/ld-analyse
           for glibc_name in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 libutil.so.1 libanl.so.1 libresolv.so.2; do
             glibc_src="$(find /nix/store -type f -name "$glibc_name" -path "*/lib/*" | sort | tail -n 1 || true)"
-            [ -n "$glibc_src" ] && cp -L "$glibc_src" "release/lib/$glibc_name"
+            [ -n "$glibc_src" ] && cp -Lf "$glibc_src" "release/lib/$glibc_name"
           done
           pending=1
           while [ "$pending" -eq 1 ]; do

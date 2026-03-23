@@ -281,6 +281,8 @@ jobs:
           # Some copied Nix store files are read-only; make bundle writable so linuxdeploy
           # can strip binaries/libs in non-root environments.
           chmod -R u+w AppDir/usr/bin AppDir/usr/lib AppDir/usr/plugins
+          # Keep loader/glibc binaries intact; stripping these can break startup.
+          export NO_STRIP=1
           cat > AppDir/AppRun <<'EOF'
           #!/usr/bin/env bash
           set -e

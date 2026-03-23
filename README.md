@@ -58,6 +58,62 @@ Please see the [releases page](https://github.com/harrypm/tbc-tools/releases/) f
 2. **Correction**: Apply `ld-dropout-correct` for dropout masking.
 3. **Export**: Convert to final formats using `tbc-video-export` to chroma-decode and encode via FFmpeg profile to a video file.
 
+## Linux Dependencies and Installation (Multi-Distro)
+
+### Recommended: Nix (reproducible)
+
+Use the Nix-based install/build instructions in `INSTALL.md` and `BUILD.md`:
+
+- Install to profile: `nix profile install .#`
+- Build locally: `nix develop -c cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && nix develop -c ninja -C build`
+
+### Native distro packages (manual build)
+
+Before building, ensure submodules are present (required for `ezpwd`):
+
+```bash
+git submodule update --init --recursive
+```
+
+Install dependencies for your distro family:
+
+Package names can vary slightly by distro release; if one package name differs, install the equivalent Qt6/FFTW/SQLite/FFmpeg development package for your release.
+
+#### Debian/Ubuntu (including Linux Mint)
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake ninja-build pkg-config qt6-base-dev qt6-tools-dev qt6-tools-dev-tools libqt6svg6-dev libfftw3-dev libsqlite3-dev ffmpeg libgl1-mesa-dev python3 python3-numpy
+```
+
+#### Fedora
+
+```bash
+sudo dnf install -y gcc-c++ cmake ninja-build pkgconf-pkg-config qt6-qtbase-devel qt6-qtsvg-devel fftw-devel sqlite-devel ffmpeg ffmpeg-devel mesa-libGL-devel python3 python3-numpy
+```
+
+#### Arch Linux / EndeavourOS / Manjaro
+
+```bash
+sudo pacman -S --needed base-devel cmake ninja pkgconf qt6-base qt6-svg fftw sqlite ffmpeg mesa python python-numpy
+```
+
+#### openSUSE Tumbleweed/Leap
+
+```bash
+sudo zypper install -y gcc-c++ cmake ninja pkgconf-pkg-config qt6-base-devel libqt6-qtsvg-devel fftw3-devel sqlite3-devel ffmpeg Mesa-libGL-devel python3 python3-numpy
+```
+
+Build and install:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"
+sudo cmake --install build
+```
+
+If you do not want to install system-wide, run tools directly from `build/bin/`.
+
 ## Important Notes
 
 - **Metadata Formats**: SQLite (`.tbc.db`) is the 2026-present metadata format, JSON metadata (2017-2026) being still supported by the tools and used by many older builds for the decode suite. 

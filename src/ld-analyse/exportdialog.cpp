@@ -3299,7 +3299,7 @@ QString ExportDialog::proxyOutputPath(const QString &outputBase, const QString &
     if (sanitizedBase.isEmpty()) {
         return QString();
     }
-    return QStringLiteral("%1.proxy.%2.mp4").arg(sanitizedBase, proxyCodecSuffix(proxyCodecId));
+    return QStringLiteral("%1_%2_Proxy.mp4").arg(sanitizedBase, proxyCodecSuffix(proxyCodecId));
 }
 
 QString ExportDialog::findProxySourceVideoPath(const QString &outputBase, QString *errorMessage) const
@@ -3319,7 +3319,9 @@ QString ExportDialog::findProxySourceVideoPath(const QString &outputBase, QStrin
         if (!isLikelyVideoContainerExtension(outputInfo.suffix())) {
             continue;
         }
-        if (outputInfo.completeBaseName().contains(QStringLiteral(".proxy"), Qt::CaseInsensitive)) {
+        const QString outputBaseName = outputInfo.completeBaseName();
+        if (outputBaseName.contains(QStringLiteral(".proxy"), Qt::CaseInsensitive)
+            || outputBaseName.contains(QStringLiteral("_proxy"), Qt::CaseInsensitive)) {
             continue;
         }
         videoCandidates.push_back(outputInfo);

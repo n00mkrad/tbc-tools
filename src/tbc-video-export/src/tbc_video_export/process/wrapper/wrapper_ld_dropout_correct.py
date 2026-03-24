@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
+from contextlib import suppress
 from functools import cached_property
+from pathlib import Path
+from tempfile import gettempdir
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from tbc_video_export.common.enums import PipeType, ProcessName, TBCType
 from tbc_video_export.common.utils import FlatList
@@ -19,11 +22,13 @@ class WrapperLDDropoutCorrect(Wrapper):
     """Wrapper for ld-dropout-correct."""
 
     def __init__(self, state: ProgramState, config: WrapperConfig[None, Pipe]) -> None:
-        super().__init__(state, config)
         self._config = config
+        self._output_metadata_file = self._create_output_metadata_file()
+        super().__init__(state, config)
 
     def post_fn(self) -> None:  # noqa: D102
-        pass
+        with suppress(FileNotFoundError, PermissionError):
+            Path.unlink(self._output_metadata_file)
 
     @property
     def command(self) -> FlatList:  # noqa: D102
@@ -36,9 +41,14 @@ class WrapperLDDropoutCorrect(Wrapper):
                 "--input-json",
                 self._state.file_helper.tbc_json.file_name,
                 "--output-json",
-                os.devnull,
+                self._output_metadata_file,
                 self._config.output_pipes.out_path,
             )
+        )
+
+    def _create_output_metadata_file(self) -> Path:
+        return Path(gettempdir()).joinpath(
+            f"tbc-video-export-{self._config.tbc_type}-{uuid4().hex}.dropout.db"
         )
 
     def _get_thread_opts(self) -> FlatList | None:

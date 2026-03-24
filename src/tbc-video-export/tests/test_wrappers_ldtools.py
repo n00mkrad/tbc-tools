@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -209,9 +208,10 @@ class TestWrappersDropoutCorrect:
             expected_opts=[
                 {"-i", f"{get_path('pal_svideo')}.tbc"},
                 {"--input-json", f"{get_path('pal_svideo')}.tbc.json"},
-                {"--output-json", os.devnull},
+                {"--output-json"},
                 {"PIPE_OUT"},
             ],
+            expected_str=[".dropout.db"],
             tbc_type=TBCType.LUMA,
         ),
         WrapperTestCase(
@@ -221,9 +221,10 @@ class TestWrappersDropoutCorrect:
             expected_opts=[
                 {"-i", f"{get_path('pal_svideo')}_chroma.tbc"},
                 {"--input-json", f"{get_path('pal_svideo')}.tbc.json"},
-                {"--output-json", os.devnull},
+                {"--output-json"},
                 {"PIPE_OUT"},
             ],
+            expected_str=[".dropout.db"],
             tbc_type=TBCType.CHROMA,
         ),
         WrapperTestCase(

@@ -125,6 +125,9 @@ class WrapperLDChromaDecoder(Wrapper):
         video_system_data = self._state.video_system_data
         opts = self._state.opts
 
+        if opts.full_frame:
+            return FlatList("--full-frame")
+
         # return user values if set
         if self._state.opts.contains_active_line_opts():
             return FlatList(

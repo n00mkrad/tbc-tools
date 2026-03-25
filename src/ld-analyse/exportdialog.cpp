@@ -372,6 +372,11 @@ bool isFfv1ProfileName(const QString &profileName)
 {
     return profileName.trimmed().compare(QStringLiteral("ffv1"), Qt::CaseInsensitive) == 0;
 }
+
+bool isFfv1CompressionProfileId(const QString &profileId)
+{
+    return profileId.trimmed().compare(QStringLiteral("ffv1_compression"), Qt::CaseInsensitive) == 0;
+}
 bool isWebProfileName(const QString &profileName)
 {
     const QString normalized = profileName.trimmed().toLower();
@@ -451,22 +456,42 @@ QString supportedFfv1SlicesValuesText()
     return valuesText.join(QStringLiteral(", "));
 }
 
-const QList<int> &supportedPalFullFrameFfv1SlicesValues()
-{
-    static const QList<int> values = {6, 9, 15, 20, 25, 28};
-    return values;
-}
+const QList<int> &supportedFullFrameFfv1SlicesValuesForSystem(int system);
 
-QString supportedPalFullFrameFfv1SlicesValuesText()
+QString supportedFullFrameFfv1SlicesValuesTextForSystem(int system)
 {
     QStringList valuesText;
-    const QList<int> values = supportedPalFullFrameFfv1SlicesValues();
+    const QList<int> values = supportedFullFrameFfv1SlicesValuesForSystem(system);
     valuesText.reserve(values.size());
     for (const int value : values) {
         valuesText << QString::number(value);
     }
     return valuesText.join(QStringLiteral(", "));
 }
+
+const QList<int> &supportedPalFullFrameFfv1SlicesValues()
+{
+    static const QList<int> values = {6, 9, 15, 20, 25, 28};
+    return values;
+}
+
+const QList<int> &supportedPalMFullFrameFfv1SlicesValues()
+{
+    static const QList<int> values = {4, 6, 9};
+    return values;
+}
+
+const QList<int> &supportedFullFrameFfv1SlicesValuesForSystem(int system)
+{
+    if (system == PAL) {
+        return supportedPalFullFrameFfv1SlicesValues();
+    }
+    if (system == PAL_M) {
+        return supportedPalMFullFrameFfv1SlicesValues();
+    }
+    return supportedFfv1SlicesValues();
+}
+
 
 QString effectiveResolutionMode(const TbcSource *source, const QComboBox *resolutionModeComboBox)
 {
@@ -639,16 +664,32 @@ bool isFfv1SlicesCompatibleWithResolutionMode(int slices, int system, const QStr
     if (!isSupportedFfv1SlicesValue(slices)) {
         return false;
     }
-    if (resolutionMode == QStringLiteral("full_frame_4fsc") && isPalFamilySystem(system)) {
-        return supportedPalFullFrameFfv1SlicesValues().contains(slices);
+    if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+        return supportedFullFrameFfv1SlicesValuesForSystem(system).contains(slices);
     }
     return true;
 }
 
 int recommendedFfv1SlicesForResolutionMode(int system, const QString &resolutionMode)
 {
-    if (resolutionMode == QStringLiteral("full_frame_4fsc") && isPalFamilySystem(system)) {
-        return 20;
+    if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+        if (system == PAL) {
+            return 20;
+        }
+        if (system == PAL_M) {
+            return 4;
+        }
+    }
+    return 4;
+}
+
+int recommendedCompressionFfv1SlicesForResolutionMode(int system, const QString &resolutionMode)
+{
+    if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+        const QList<int> compatibleValues = supportedFullFrameFfv1SlicesValuesForSystem(system);
+        if (!compatibleValues.isEmpty()) {
+            return compatibleValues.first();
+        }
     }
     return 4;
 }
@@ -907,6 +948,22 @@ bool executableSupportsOption(const QString &program, const QString &option)
 
     supportCache.insert(cacheKey, supportsOption);
     return supportsOption;
+}
+
+bool executableSupportsD1OutputSizing(const QString &program)
+{
+    return executableSupportsOption(program, QStringLiteral("--d1"))
+           || executableSupportsOption(program, QStringLiteral("--standard"));
+}
+
+bool shouldUseD1OutputSizing(const QString &resolutionMode, const QString &outputResolutionMode)
+{
+    if (resolutionMode != QStringLiteral("active_area")) {
+        return false;
+    }
+
+    return outputResolutionMode == QStringLiteral("default_safe")
+           || outputResolutionMode == QStringLiteral("bt601_720");
 }
 
 QString normalizedProxyCodecId(const QString &proxyCodecId)
@@ -1859,6 +1916,7 @@ void ExportDialog::refreshProfiles()
         const QSignalBlocker blocker(ui->profileComboBox);
         ui->profileComboBox->clear();
         ui->profileComboBox->addItem(tr("FFV1"), QStringLiteral("ffv1"));
+        ui->profileComboBox->addItem(tr("FFV1 (Compression Optimized)"), QStringLiteral("ffv1_compression"));
         ui->profileComboBox->addItem(tr("D10 MPEG-2"), QStringLiteral("d10"));
         ui->profileComboBox->addItem(tr("ProRes"), QStringLiteral("prores"));
         ui->profileComboBox->addItem(tr("AVC/H.264"), QStringLiteral("avc"));
@@ -1890,7 +1948,8 @@ void ExportDialog::refreshProfiles()
 void ExportDialog::updateProfileDependentControls()
 {
     const QString mainCodecId = selectedMainCodecId();
-    const bool ffv1Selected = mainCodecId == QStringLiteral("ffv1");
+    const bool ffv1Selected = mainCodecId == QStringLiteral("ffv1")
+                              || isFfv1CompressionProfileId(mainCodecId);
     const bool proresSelected = mainCodecId == QStringLiteral("prores");
     const bool webSelected = mainCodecId == QStringLiteral("web");
     const bool avcSelected = mainCodecId == QStringLiteral("avc");
@@ -2067,6 +2126,7 @@ void ExportDialog::on_exportButton_clicked()
     appendStatus(tr("Starting export..."));
     appendLog(tr("Starting export..."));
     const QString selectedProfile = selectedExportProfileName();
+    const bool ffv1CompressionProfileSelected = isFfv1CompressionProfileId(selectedMainCodecId());
     if (selectedProfile.isEmpty()) {
         appendStatus(tr("No export profile selected."));
         appendLog(tr("No export profile selected."));
@@ -2138,6 +2198,8 @@ void ExportDialog::on_exportButton_clicked()
         const bool supportsDropoutInterfieldCorrection = executableSupportsOption(
             exportPath, QStringLiteral("--dropout-interfield-correction"));
         const QString outputResolutionMode = effectiveOutputResolutionMode(ui ? ui->outputResolutionModeComboBox : nullptr);
+        const bool supportsAppendVideoFilter = executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"));
+        const bool supportsD1OutputSizing = executableSupportsD1OutputSizing(exportPath);
         if (dropoutMode == QStringLiteral("heavy")
             && !executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
             appendLog(tr("Dropout mode 'Heavy' selected, but --overcorrect is not supported by the detected tbc-video-export. Falling back to basic dropout correction."));
@@ -2158,8 +2220,19 @@ void ExportDialog::on_exportButton_clicked()
         const OutputResamplePlan outputResamplePlan = outputResamplePlanForModes(videoSystem,
                                                                                   resolutionMode,
                                                                                   outputResolutionMode);
+        const bool useD1OutputSizing = outputResamplePlan.enabled
+                                       && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
+                                       && supportsD1OutputSizing;
         if (outputResamplePlan.enabled) {
-            if (executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"))) {
+            if (useD1OutputSizing) {
+                appendLog(tr("Output resolution mode '%1' will export %2x%3 with SAR %4 using --d1.")
+                              .arg(ui->outputResolutionModeComboBox
+                                       ? ui->outputResolutionModeComboBox->currentText()
+                                       : tr("Default (D1)"))
+                              .arg(outputResamplePlan.width)
+                              .arg(outputResamplePlan.height)
+                              .arg(outputResamplePlan.sampleAspectRatio));
+            } else if (supportsAppendVideoFilter) {
                 appendLog(tr("Output resolution mode '%1' will export %2x%3 with SAR %4.")
                               .arg(ui->outputResolutionModeComboBox
                                        ? ui->outputResolutionModeComboBox->currentText()
@@ -2174,7 +2247,7 @@ void ExportDialog::on_exportButton_clicked()
                                   .arg(outputResamplePlan.height));
                 }
             } else {
-                appendLog(tr("Output resolution mode is selected, but --append-video-filter is not supported by the detected tbc-video-export. Using native output sizing."));
+                appendLog(tr("Output resolution mode is selected, but neither --d1/--standard nor --append-video-filter is supported by the detected tbc-video-export. Using native output sizing."));
             }
         } else if (outputResolutionMode != QStringLiteral("tool_native")) {
             appendLog(tr("Output resolution mode applies to Active Area and Active + VBI framing only. Using native output sizing for current framing."));
@@ -2182,6 +2255,27 @@ void ExportDialog::on_exportButton_clicked()
     }
     if (isFfv1ProfileName(selectedProfile) && ui->ffv1SlicesSpinBox) {
         int ffv1Slices = ui->ffv1SlicesSpinBox->value();
+        if (ffv1CompressionProfileSelected) {
+            const int compressionSlices = recommendedCompressionFfv1SlicesForResolutionMode(videoSystem, resolutionMode);
+            if (ffv1Slices != compressionSlices) {
+                const int originalSlices = ffv1Slices;
+                {
+                    const QSignalBlocker blocker(ui->ffv1SlicesSpinBox);
+                    ui->ffv1SlicesSpinBox->setValue(compressionSlices);
+                }
+                ffv1Slices = compressionSlices;
+                const QString compressionMessage = resolutionMode == QStringLiteral("full_frame_4fsc")
+                                                       ? tr("FFV1 compression profile adjusted slices from %1 to %2 for Full-Frame 4fsc (%3 compatibility).")
+                                                             .arg(originalSlices)
+                                                             .arg(ffv1Slices)
+                                                             .arg(videoSystemArg(videoSystem).toUpper())
+                                                       : tr("FFV1 compression profile adjusted slices from %1 to %2 for improved compression.")
+                                                             .arg(originalSlices)
+                                                             .arg(ffv1Slices);
+                appendStatus(compressionMessage);
+                appendLog(compressionMessage);
+            }
+        }
         if (!isSupportedFfv1SlicesValue(ffv1Slices)) {
             const QString supportedValuesText = supportedFfv1SlicesValuesText();
             const QString errorToShow = tr("Unsupported FFV1 slices value %1. Supported values: %2.")
@@ -2197,9 +2291,10 @@ void ExportDialog::on_exportButton_clicked()
             const int adjustedSlices = recommendedFfv1SlicesForResolutionMode(videoSystem, resolutionMode);
             if (!isSupportedFfv1SlicesValue(adjustedSlices)
                 || !isFfv1SlicesCompatibleWithResolutionMode(adjustedSlices, videoSystem, resolutionMode)) {
-                const QString errorToShow = tr("FFV1 slices value %1 is not compatible with Full-Frame 4fsc for PAL/PAL-M. Supported values: %2.")
+                const QString errorToShow = tr("FFV1 slices value %1 is not compatible with Full-Frame 4fsc for %2. Supported values: %3.")
                                                 .arg(ffv1Slices)
-                                                .arg(supportedPalFullFrameFfv1SlicesValuesText());
+                                                .arg(videoSystemArg(videoSystem).toUpper())
+                                                .arg(supportedFullFrameFfv1SlicesValuesTextForSystem(videoSystem));
                 cleanupTemporaryMetadataSnapshot();
                 appendStatus(errorToShow);
                 appendLog(errorToShow);
@@ -2214,9 +2309,10 @@ void ExportDialog::on_exportButton_clicked()
             }
             ffv1Slices = adjustedSlices;
 
-            const QString adjustMessage = tr("Adjusted FFV1 slices from %1 to %2 for Full-Frame 4fsc (PAL/PAL-M compatibility).")
+            const QString adjustMessage = tr("Adjusted FFV1 slices from %1 to %2 for Full-Frame 4fsc (%3 compatibility).")
                                               .arg(originalSlices)
-                                              .arg(ffv1Slices);
+                                              .arg(ffv1Slices)
+                                              .arg(videoSystemArg(videoSystem).toUpper());
             appendStatus(adjustMessage);
             appendLog(adjustMessage);
         }
@@ -3037,35 +3133,6 @@ QString ExportDialog::resolveVideoExportPath() const
     return QString();
 }
 
-QString ExportDialog::resolveLdChromaDecoderPath() const
-{
-    const QStringList candidateDirs = defaultExecutableSearchDirs(currentInputFile);
-
-    QStringList candidateNames;
-#if defined(Q_OS_WIN)
-    candidateNames << QStringLiteral("ld-chroma-decoder.exe") << QStringLiteral("ld-chroma-decoder");
-#else
-    candidateNames << QStringLiteral("ld-chroma-decoder");
-#endif
-
-    for (const QString &dir : candidateDirs) {
-        for (const QString &name : candidateNames) {
-            const QString candidate = QDir(dir).filePath(name);
-            QFileInfo candidateInfo(candidate);
-            if (candidateInfo.exists() && candidateInfo.isExecutable()) {
-                return candidate;
-            }
-        }
-    }
-
-    const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("ld-chroma-decoder"));
-    if (!fromPath.isEmpty()) {
-        return fromPath;
-    }
-
-    return QString();
-}
-
 QString ExportDialog::resolveFfmpegPath() const
 {
     const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
@@ -3174,7 +3241,8 @@ int ExportDialog::selectedMainBitDepth() const
 QString ExportDialog::selectedExportProfileName() const
 {
     const QString mainCodecId = selectedMainCodecId();
-    if (mainCodecId == QStringLiteral("ffv1")) {
+    if (mainCodecId == QStringLiteral("ffv1")
+        || mainCodecId == QStringLiteral("ffv1_compression")) {
         return QStringLiteral("ffv1");
     }
     if (mainCodecId == QStringLiteral("d10")) {
@@ -3927,16 +3995,15 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     };
     const bool forwardActiveLines = hasAnyNonDefaultVerticalFraming(videoParameters);
     if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
-        const QString decoderPath = resolveLdChromaDecoderPath();
-        const bool supportsFullFrame = executableSupportsOption(decoderPath, QStringLiteral("--full-frame"));
+        const bool supportsFullFrame = executableSupportsOption(exportPath, QStringLiteral("--full-frame"));
         if (supportsFullFrame) {
             args << QStringLiteral("--full-frame");
         } else {
             if (errorMessage) {
-                if (decoderPath.isEmpty()) {
-                    *errorMessage = tr("Full-Frame 4fsc export requires ld-chroma-decoder with --full-frame support, but no decoder executable was found.");
+                if (exportPath.isEmpty()) {
+                    *errorMessage = tr("Full-Frame 4fsc export requires tbc-video-export with --full-frame support, but no export executable was found.");
                 } else {
-                    *errorMessage = tr("Full-Frame 4fsc export requires ld-chroma-decoder with --full-frame support. Detected decoder does not support it: %1").arg(decoderPath);
+                    *errorMessage = tr("Full-Frame 4fsc export requires tbc-video-export with --full-frame support. Detected export tool does not support it: %1").arg(exportPath);
                 }
             }
             return QStringList();
@@ -3961,8 +4028,13 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         const OutputResamplePlan outputResamplePlan = outputResamplePlanForModes(videoParameters.system,
                                                                                   resolutionMode,
                                                                                   outputResolutionMode);
-        if (outputResamplePlan.enabled
-            && executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"))) {
+        const bool useD1OutputSizing = outputResamplePlan.enabled
+                                       && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
+                                       && executableSupportsD1OutputSizing(exportPath);
+        if (useD1OutputSizing) {
+            args << QStringLiteral("--d1");
+        } else if (outputResamplePlan.enabled
+                   && executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"))) {
             const QString filterExpr = outputResampleFilter(outputResamplePlan);
             if (!filterExpr.isEmpty()) {
                 args << QStringLiteral("--append-video-filter") << filterExpr;

@@ -110,13 +110,29 @@ def validate_black_levels_opts(value: str) -> tuple[int, int, int] | None:
 
 def _validate_line_opts(parser: argparse.ArgumentParser, opts: Opts) -> None:
     if opts.contains_active_line_opts() and (
-        opts.vbi or opts.full_vertical or opts.letterbox
+        opts.vbi or opts.full_vertical or opts.letterbox or opts.full_frame
     ):
         parser.error(
-            "arguments [--vbi | --full-vertical | --letterbox]: "
+            "arguments [--vbi | --full-vertical | --letterbox | --full-frame]: "
             "not allowed with arguments "
             "[--ffll | --lfll | --ffrl | --lfrl]"
         )
+
+    if opts.standard and (
+        opts.vbi
+        or opts.full_vertical
+        or opts.letterbox
+        or opts.full_frame
+        or opts.contains_active_line_opts()
+        or opts.luma_4fsc
+    ):
+        parser.error(
+            "arguments --standard/--d1: only allowed with default active-area "
+            "framing"
+        )
+
+    if opts.full_frame and opts.luma_4fsc:
+        parser.error("arguments --full-frame: not allowed with --luma-4fsc")
 
     if opts.letterbox and opts.force_anamorphic:
         parser.error("arguments --force-anamorphic: not allowed when letterbox is set")

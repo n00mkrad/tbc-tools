@@ -54,6 +54,8 @@ class Opts(argparse.Namespace):
     vbi: bool
     full_vertical: bool
     letterbox: bool
+    full_frame: bool
+    standard: bool
     first_active_field_line: int | None
     last_active_field_line: int | None
     first_active_frame_line: int | None

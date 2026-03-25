@@ -379,6 +379,32 @@ class TestWrappersChromaDecoder:
                 {"--lfrl", "620"},
             ],
         ),
+        WrapperTestCase(
+            id="pal full-frame",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=["--full-frame"],
+            expected_opts=[
+                {"--full-frame"},
+            ],
+            unexpected_opts=[
+                {"--ffll"},
+                {"--lfll"},
+                {"--ffrl"},
+                {"--lfrl"},
+            ],
+        ),
+        WrapperTestCase(
+            id="full-frame with vbi (exception)",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=["--full-frame", "--vbi"],
+            expected_exc=pytest.raises(SystemExit),
+        ),
+        WrapperTestCase(
+            id="full-frame with active lines (exception)",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=["--full-frame", "--ffll", "20"],
+            expected_exc=pytest.raises(SystemExit),
+        ),
         # PAL-M
         WrapperTestCase(
             id="pal-m svideo luma opts",

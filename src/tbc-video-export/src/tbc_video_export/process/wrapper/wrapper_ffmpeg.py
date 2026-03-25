@@ -14,6 +14,7 @@ from tbc_video_export.common.enums import (
     ProcessName,
     TBCType,
     VideoFormatType,
+    VideoSystem,
 )
 from tbc_video_export.common.utils import FlatList, ansi
 from tbc_video_export.process.wrapper.wrapper import Wrapper
@@ -286,9 +287,13 @@ class WrapperFFmpeg(Wrapper):
                 f"gimin={self._state.opts.force_black_level[1]}/255:"
                 f"bimin={self._state.opts.force_black_level[2]}/255"
             )
+        if (standard_filter := self._get_standard_output_filter()) is not None:
+            video_filters.append(standard_filter)
 
         if self._state.opts.append_video_filter is not None:
             video_filters.append(self._state.opts.append_video_filter)
+        if (chroma_alignment_filter := self._get_chroma_alignment_filter()) is not None:
+            video_filters.append(chroma_alignment_filter)
 
         video_filters.append(f"format={self._get_profile_video_format()}")
         video_filters.append(self._get_setparams_filter())
@@ -424,6 +429,59 @@ class WrapperFFmpeg(Wrapper):
 
         return None  # do not return default ar
 
+    def _get_standard_output_filter(self) -> str | None:
+        """Return auto D1 output sizing filter for --standard/--d1."""
+        if not self._state.opts.standard:
+            return None
+
+        if self._state.opts.contains_active_line_opts():
+            return None
+
+        if (
+            self._state.opts.vbi
+            or self._state.opts.full_vertical
+            or self._state.opts.letterbox
+            or self._state.opts.full_frame
+            or self._state.opts.luma_4fsc
+            or self._state.decoder_line_preset
+            != self._state.video_system_data.active_lines["default"]
+        ):
+            return None
+
+        return (
+            "scale=720:576:flags=lanczos:interl=1,setsar=128/117"
+            if self._state.video_system is VideoSystem.PAL
+            else "scale=720:486:flags=lanczos:interl=1,setsar=12/13"
+        )
+
+    def _get_chroma_alignment_filter(self) -> str | None:
+        """Return padding filter when selected codec/pix_fmt requires even dimensions."""
+        codec = self._get_video_profile().codec.lower()
+        if not (
+            codec.startswith("libx264")
+            or codec.startswith("h264_")
+            or codec.startswith("libx265")
+            or codec.startswith("hevc_")
+            or codec in {"libsvtav1", "libaom-av1"}
+        ):
+            return None
+
+        video_format = self._get_profile_video_format().lower()
+        is_h264_family = codec.startswith("libx264") or codec.startswith("h264_")
+
+        # 4:2:0 needs even width and height.
+        if "420" in video_format:
+            # Interlaced H.264 commonly requires height divisible by 4.
+            if is_h264_family:
+                return "pad=ceil(iw/2)*2:ceil(ih/4)*4:(ow-iw)/2:(oh-ih)/2"
+            return "pad=ceil(iw/2)*2:ceil(ih/2)*2:(ow-iw)/2:(oh-ih)/2"
+
+        # 4:2:2 needs even width.
+        if "422" in video_format:
+            return "pad=ceil(iw/2)*2:ceil(ih/2)*2:(ow-iw)/2:(oh-ih)/2"
+
+        return None
+
     def _get_setparams_filter(self) -> str:
         """Return filter for setparams."""
         ffmpeg_config = self._state.video_system_data.ffmpeg_config
@@ -441,7 +499,7 @@ class WrapperFFmpeg(Wrapper):
             (
                 "-c:v",
                 self._get_profile().video_profile.codec,
-                self._get_profile().video_profile.opts,
+                self._get_video_codec_profile_opts(),
                 self._additional_vopts,
             )
         )
@@ -465,6 +523,78 @@ class WrapperFFmpeg(Wrapper):
                     codec_opts.append(("-c:s", self._get_subtitle_format()))
 
         return codec_opts
+
+    def _get_video_codec_profile_opts(self) -> FlatList | None:
+        """Return codec opts from profile with runtime compatibility adjustments."""
+        if (opts := self._get_profile().video_profile.opts) is None:
+            return None
+        if (
+            self._get_video_profile().codec.lower() != "ffv1"
+            or not self._state.opts.full_frame
+        ):
+            return opts
+
+        return self._get_ffv1_full_frame_compatible_opts(opts)
+
+    def _get_ffv1_full_frame_compatible_opts(self, opts: FlatList) -> FlatList:
+        """Ensure FFV1 full-frame exports use a slice count compatible with frame geometry."""
+        compatible_slices = self._get_ffv1_full_frame_compatible_slices()
+        if not compatible_slices:
+            return opts
+
+        recommended_slices = self._get_recommended_ffv1_full_frame_slices()
+        if recommended_slices not in compatible_slices:
+            recommended_slices = compatible_slices[0]
+
+        adjusted_opts = list(opts.data)
+        current_slices, slices_value_index = self._get_ffv1_slices_opt(adjusted_opts)
+
+        if current_slices in compatible_slices:
+            return opts
+
+        if slices_value_index is None:
+            adjusted_opts.extend(["-slices", str(recommended_slices)])
+            self._state.export.append_message(
+                f"FFV1 full-frame compatibility set slices to {recommended_slices} "
+                f"for {str(self._state.video_system).upper()}."
+            )
+            return FlatList(adjusted_opts)
+
+        previous_slices = adjusted_opts[slices_value_index]
+        adjusted_opts[slices_value_index] = str(recommended_slices)
+        self._state.export.append_message(
+            f"FFV1 full-frame slices {previous_slices} are incompatible with "
+            f"{str(self._state.video_system).upper()}; using {recommended_slices}."
+        )
+        return FlatList(adjusted_opts)
+
+    def _get_ffv1_full_frame_compatible_slices(self) -> list[int]:
+        """Return FFV1 slices known to be compatible with full-frame dimensions."""
+        match self._state.video_system:
+            case VideoSystem.PAL:
+                return [6, 9, 15, 20, 25, 28]
+            case VideoSystem.PAL_M:
+                return [4, 6, 9]
+            case VideoSystem.NTSC:
+                return [4, 6, 9, 12, 15, 16, 20, 24, 25, 28, 30]
+        return [4]
+
+    def _get_recommended_ffv1_full_frame_slices(self) -> int:
+        """Return recommended FFV1 slices value for full-frame exports."""
+        return 20 if self._state.video_system is VideoSystem.PAL else 4
+
+    def _get_ffv1_slices_opt(self, opts: list[str]) -> tuple[int | None, int | None]:
+        """Return tuple containing current -slices value and its value index in opts."""
+        for idx, value in enumerate(opts):
+            if value != "-slices":
+                continue
+            if idx + 1 >= len(opts):
+                return None, None
+            try:
+                return int(opts[idx + 1]), idx + 1
+            except ValueError:
+                return None, idx + 1
+        return None, None
 
     def _get_metadata_opts(self) -> FlatList:
         """Return opts for metadata."""

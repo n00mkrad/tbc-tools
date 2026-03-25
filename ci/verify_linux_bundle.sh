@@ -165,6 +165,7 @@ case "$MODE" in
     for rel in "${COMMON_RELATIVE_PATHS[@]}"; do
       require_path "$ROOT/$rel"
     done
+    run_smoke_test "x86-appimage-apprun-tbc-video-export" "$ROOT/.smoke-x86-export.log" "$ROOT/AppRun" tbc-video-export --version
     run_smoke_test "x86-appimage-apprun-ffmpeg" "$ROOT/.smoke-x86.log" "$ROOT/AppRun" ffmpeg -version
 
     rm -rf "$ROOT"
@@ -200,6 +201,7 @@ case "$MODE" in
     require_path "$TARGET/plugins/sqldrivers/libqsqlite.so"
     require_path "$TARGET/plugins/iconengines/libqsvgicon.so"
     require_path "$TARGET/plugins/imageformats/libqsvg.so"
+    run_smoke_test "arm64-launcher-tbc-video-export" "$TARGET/.smoke-arm64-export.log" "$TARGET/tbc-tools-run" tbc-video-export --version
     run_smoke_test "arm64-launcher-ffmpeg" "$TARGET/.smoke-arm64.log" "$TARGET/tbc-tools-run" ffmpeg -version
     ;;
 

@@ -92,6 +92,32 @@ def add_ldtool_opts(parent: argparse.ArgumentParser) -> None:
             "\n\n"
         ),
     )
+    decoder_lines_opts.add_argument(
+        "--full-frame",
+        action="store_true",
+        default=False,
+        help=(
+            "Run ld-chroma-decoder full-frame mode.\\n"
+            "  - This is intended for full-frame 4fsc workflows in tools such as "
+            "ld-analyse."
+            "\\n\\n"
+        ),
+    )
+
+    decoder_opts.add_argument(
+        "--standard",
+        "--d1",
+        action="store_true",
+        default=False,
+        help=(
+            "Resize active-area output to standard D1 dimensions using auto "
+            "padding.\\n"
+            "  - PAL: 720x576 with SAR 128/117\\n"
+            "  - NTSC/PAL-M: 720x486 with SAR 12/13\\n"
+            "  - Only available for default active-area framing."
+            "\\n\\n"
+        ),
+    )
 
     decoder_opts.add_argument(
         "--first-active-field-line",

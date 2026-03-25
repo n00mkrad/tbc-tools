@@ -107,6 +107,21 @@ jobs:
           cp -a "$FFMPEG_BIN" AppDir/usr/bin/ffmpeg
           cp -a "$FFPROBE_BIN" AppDir/usr/bin/ffprobe
           chmod -R u+w AppDir/usr/bin
+          normalize_bin_script_shebangs() {
+            local bin_dir="$1"
+            for candidate in "$bin_dir"/*; do
+              [ -f "$candidate" ] || continue
+              [ -x "$candidate" ] || continue
+              local first_line
+              first_line="$(head -n 1 "$candidate" 2>/dev/null || true)"
+              case "$first_line" in
+                '#!/nix/store/'*'/bin/bash'|'#!/nix/store/'*'/bin/sh')
+                  sed -i '1s@^#!.*@#!/usr/bin/env bash@' "$candidate"
+                  ;;
+              esac
+            done
+          }
+          normalize_bin_script_shebangs AppDir/usr/bin
           PATCH_ELF_BIN="$(command -v patchelf || true)"
           if [ -z "$PATCH_ELF_BIN" ]; then
             nix build nixpkgs#patchelf --out-link patchelf-result
@@ -282,6 +297,33 @@ jobs:
             fi
             "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf"
           done
+          wrap_elf_tools_with_loader() {
+            local bin_dir="$1"
+            local loader_name="$2"
+            for exe in "$bin_dir"/*; do
+              [ -f "$exe" ] || continue
+              [ -x "$exe" ] || continue
+              if ! head -c 4 "$exe" 2>/dev/null | grep -q $'\177ELF'; then
+                continue
+              fi
+              local name
+              local real
+              name="$(basename "$exe")"
+              real="$bin_dir/.${name}.real"
+              mv "$exe" "$real"
+              cat > "$exe" <<EOF
+          #!/bin/bash
+          set -e
+          SELF_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+          ROOT_DIR="\$(cd "\${SELF_DIR}/.." && pwd)"
+          LOADER="\${ROOT_DIR}/lib/${loader_name}"
+          TARGET="\${SELF_DIR}/.${name}.real"
+          exec "\$LOADER" --library-path "\${ROOT_DIR}/lib" "\$TARGET" "\$@"
+          EOF
+              chmod +x "$exe"
+            done
+          }
+          wrap_elf_tools_with_loader AppDir/usr/bin ld-linux-x86-64.so.2
 
           # Some copied Nix store files are read-only; make bundle writable so linuxdeploy
           # can strip binaries/libs in non-root environments.
@@ -289,7 +331,7 @@ jobs:
           # Keep loader/glibc binaries intact; stripping these can break startup.
           export NO_STRIP=1
           cat > AppDir/AppRun <<'EOF'
-          #!/usr/bin/env bash
+          #!/bin/bash
           set -e
           APPDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           LOADER=""
@@ -301,19 +343,28 @@ jobs:
             echo "Missing bundled dynamic loader: $LOADER"
             exit 1
           fi
-          export LD_LIBRARY_PATH="$APPDIR/usr/lib"
+          export PATH="$APPDIR/usr/bin:${PATH}"
           export QT_PLUGIN_PATH="$APPDIR/usr/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
           export QT_QPA_PLATFORM_PLUGIN_PATH="$APPDIR/usr/plugins/platforms"
           export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+          unset LD_LIBRARY_PATH
+          run_target() {
+            local target="$1"
+            shift
+            if head -c 4 "$target" 2>/dev/null | grep -q $'\177ELF'; then
+              exec "$LOADER" --library-path "$APPDIR/usr/lib" "$target" "$@"
+            fi
+            exec "$target" "$@"
+          }
           if [ "$#" -gt 0 ] && [ -x "$APPDIR/usr/bin/$1" ]; then
             cmd="$1"
             shift
             if [ "$cmd" = "ld-analyse" ]; then
-              exec "$LOADER" --library-path "$APPDIR/usr/lib" "$APPDIR/usr/bin/$cmd" --force-dark-theme "$@"
+              run_target "$APPDIR/usr/bin/$cmd" --force-dark-theme "$@"
             fi
-            exec "$LOADER" --library-path "$APPDIR/usr/lib" "$APPDIR/usr/bin/$cmd" "$@"
+            run_target "$APPDIR/usr/bin/$cmd" "$@"
           fi
-          exec "$LOADER" --library-path "$APPDIR/usr/lib" "$APPDIR/usr/bin/ld-analyse" --force-dark-theme "$@"
+          run_target "$APPDIR/usr/bin/ld-analyse" --force-dark-theme "$@"
           EOF
           chmod +x AppDir/AppRun
           # Create minimal desktop file
@@ -403,6 +454,21 @@ jobs:
           cp -a "$FFMPEG_BIN" release/bin/ffmpeg
           cp -a "$FFPROBE_BIN" release/bin/ffprobe
           chmod -R u+w release/bin
+          normalize_bin_script_shebangs() {
+            local bin_dir="$1"
+            for candidate in "$bin_dir"/*; do
+              [ -f "$candidate" ] || continue
+              [ -x "$candidate" ] || continue
+              local first_line
+              first_line="$(head -n 1 "$candidate" 2>/dev/null || true)"
+              case "$first_line" in
+                '#!/nix/store/'*'/bin/bash'|'#!/nix/store/'*'/bin/sh')
+                  sed -i '1s@^#!.*@#!/usr/bin/env bash@' "$candidate"
+                  ;;
+              esac
+            done
+          }
+          normalize_bin_script_shebangs release/bin
           PATCH_ELF_BIN="$(command -v patchelf || true)"
           if [ -z "$PATCH_ELF_BIN" ]; then
             nix build nixpkgs#patchelf --out-link patchelf-result
@@ -537,8 +603,35 @@ jobs:
             fi
             "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf"
           done
+          wrap_elf_tools_with_loader() {
+            local bin_dir="$1"
+            local loader_name="$2"
+            for exe in "$bin_dir"/*; do
+              [ -f "$exe" ] || continue
+              [ -x "$exe" ] || continue
+              if ! head -c 4 "$exe" 2>/dev/null | grep -q $'\177ELF'; then
+                continue
+              fi
+              local name
+              local real
+              name="$(basename "$exe")"
+              real="$bin_dir/.${name}.real"
+              mv "$exe" "$real"
+              cat > "$exe" <<EOF
+          #!/bin/bash
+          set -e
+          SELF_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+          ROOT_DIR="\$(cd "\${SELF_DIR}/.." && pwd)"
+          LOADER="\${ROOT_DIR}/lib/${loader_name}"
+          TARGET="\${SELF_DIR}/.${name}.real"
+          exec "\$LOADER" --library-path "\${ROOT_DIR}/lib" "\$TARGET" "\$@"
+          EOF
+              chmod +x "$exe"
+            done
+          }
+          wrap_elf_tools_with_loader release/bin ld-linux-aarch64.so.1
           cat > release/tbc-tools-run <<'EOF'
-          #!/usr/bin/env bash
+          #!/bin/bash
           set -e
           SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           LOADER=""
@@ -550,19 +643,28 @@ jobs:
             echo "Missing bundled dynamic loader: $LOADER"
             exit 1
           fi
-          export LD_LIBRARY_PATH="$SELF_DIR/lib"
+          export PATH="$SELF_DIR/bin:${PATH}"
           export QT_PLUGIN_PATH="$SELF_DIR/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
           export QT_QPA_PLATFORM_PLUGIN_PATH="$SELF_DIR/plugins/platforms"
           export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+          unset LD_LIBRARY_PATH
+          run_target() {
+            local target="$1"
+            shift
+            if head -c 4 "$target" 2>/dev/null | grep -q $'\177ELF'; then
+              exec "$LOADER" --library-path "$SELF_DIR/lib" "$target" "$@"
+            fi
+            exec "$target" "$@"
+          }
           if [ "$#" -gt 0 ] && [ -x "$SELF_DIR/bin/$1" ]; then
             cmd="$1"
             shift
             if [ "$cmd" = "ld-analyse" ]; then
-              exec "$LOADER" --library-path "$SELF_DIR/lib" "$SELF_DIR/bin/$cmd" --force-dark-theme "$@"
+              run_target "$SELF_DIR/bin/$cmd" --force-dark-theme "$@"
             fi
-            exec "$LOADER" --library-path "$SELF_DIR/lib" "$SELF_DIR/bin/$cmd" "$@"
+            run_target "$SELF_DIR/bin/$cmd" "$@"
           fi
-          exec "$LOADER" --library-path "$SELF_DIR/lib" "$SELF_DIR/bin/ld-analyse" --force-dark-theme "$@"
+          run_target "$SELF_DIR/bin/ld-analyse" --force-dark-theme "$@"
           EOF
           chmod +x release/tbc-tools-run
 

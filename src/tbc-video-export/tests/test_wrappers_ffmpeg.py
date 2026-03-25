@@ -75,6 +75,54 @@ class TestWrappersFFmpeg:
             expected_opts=[{"-threads", "100"}],
         ),
         WrapperTestCase(
+            id="standard output (pal)",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=["--standard"],
+            expected_str=["scale=720:576:flags=lanczos:interl=1,setsar=128/117"],
+        ),
+        WrapperTestCase(
+            id="standard output (ntsc)",
+            input_tbc=f"{get_path('ntsc_svideo')}.tbc",
+            input_opts=["--standard"],
+            expected_str=["scale=720:486:flags=lanczos:interl=1,setsar=12/13"],
+        ),
+        WrapperTestCase(
+            id="d1 alias output (pal-m)",
+            input_tbc=f"{get_path('palm_svideo')}.tbc",
+            input_opts=["--d1"],
+            expected_str=["scale=720:486:flags=lanczos:interl=1,setsar=12/13"],
+        ),
+        WrapperTestCase(
+            id="full-frame h264 auto-pad (420)",
+            input_tbc=f"{get_path('palm_svideo')}.tbc",
+            input_opts=["--full-frame", "--h264"],
+            expected_str=["pad=ceil(iw/2)*2:ceil(ih/4)*4:(ow-iw)/2:(oh-ih)/2"],
+        ),
+        WrapperTestCase(
+            id="full-frame h264 lossless auto-pad (422)",
+            input_tbc=f"{get_path('palm_svideo')}.tbc",
+            input_opts=["--full-frame", "--h264_lossless"],
+            expected_str=["pad=ceil(iw/2)*2:ceil(ih/2)*2:(ow-iw)/2:(oh-ih)/2"],
+        ),
+        WrapperTestCase(
+            id="full-frame ffv1 no auto-pad",
+            input_tbc=f"{get_path('palm_svideo')}.tbc",
+            input_opts=["--full-frame"],
+            unexpected_str=["pad=ceil(iw/2)*2:"],
+        ),
+        WrapperTestCase(
+            id="standard with vbi (exception)",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=["--standard", "--vbi"],
+            expected_exc=pytest.raises(SystemExit),
+        ),
+        WrapperTestCase(
+            id="standard with full-frame (exception)",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=["--standard", "--full-frame"],
+            expected_exc=pytest.raises(SystemExit),
+        ),
+        WrapperTestCase(
             id="simple audio track",
             input_tbc=f"{get_path('pal_svideo')}.tbc",
             input_opts=["--audio-track", audio_file],
@@ -612,6 +660,37 @@ class TestWrappersFFmpeg:
 
             for e in test_case.unexpected_str:
                 assert not any(e in cmd for cmd in cmds)
+
+    @pytest.mark.parametrize(
+        ("input_name", "expected_slices"),
+        [
+            ("pal_svideo", "20"),
+            ("palm_svideo", "4"),
+            ("ntsc_svideo", "4"),
+        ],
+    )
+    def test_ffmpeg_full_frame_ffv1_slice_compatibility(  # noqa: D102
+        self,
+        force_ansi_support_on: None,  # noqa: ARG002
+        program_state: Callable[[list[str], str, str | None], ProgramState],
+        ffmpeg_wrapper_chroma: Callable[
+            [ProgramState, TBCType, ExportMode | None], WrapperFFmpeg
+        ],
+        input_name: str,
+        expected_slices: str,
+    ) -> None:
+        state = program_state(
+            ["--full-frame"],
+            f"{get_path(input_name)}.tbc",
+            "out_file",
+        )
+        ffmpeg_wrapper = ffmpeg_wrapper_chroma(
+            state, TBCType.CHROMA, ExportMode.CHROMA_MERGE
+        )
+
+        cmds = ffmpeg_wrapper.command.data
+        slices_idx = cmds.index("-slices")
+        assert cmds[slices_idx + 1] == expected_slices
 
     def test_ffmpeg_env(  # noqa: D102
         self,

@@ -1,0 +1,324 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AudioAlignmentDialog</class>
+ <widget class="QDialog" name="AudioAlignmentDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>700</width>
+    <height>450</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Auto Audio Align</string>
+  </property>
+  <layout class="QVBoxLayout" name="mainLayout">
+   <property name="spacing">
+    <number>4</number>
+   </property>
+   <property name="sizeConstraint">
+    <enum>QLayout::SetFixedSize</enum>
+   </property>
+   <property name="leftMargin">
+    <number>6</number>
+   </property>
+   <property name="topMargin">
+    <number>6</number>
+   </property>
+   <property name="rightMargin">
+    <number>6</number>
+   </property>
+   <property name="bottomMargin">
+    <number>6</number>
+   </property>
+   <item>
+    <layout class="QFormLayout" name="formLayout">
+     <property name="horizontalSpacing">
+      <number>4</number>
+     </property>
+     <property name="verticalSpacing">
+      <number>4</number>
+     </property>
+     <property name="fieldGrowthPolicy">
+      <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+     </property>
+     <item row="0" column="0">
+      <widget class="QLabel" name="jsonLabel">
+       <property name="text">
+        <string>Metadata JSON</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <layout class="QHBoxLayout" name="jsonLayout">
+       <item>
+        <widget class="QLineEdit" name="jsonLineEdit">
+         <property name="minimumSize">
+          <size>
+           <width>420</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="placeholderText">
+          <string>Input .json from decoded TBC metadata</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="jsonBrowseButton">
+         <property name="text">
+          <string>Browse...</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="linearInputLabel">
+       <property name="text">
+        <string>Linear/Baseband Input</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <layout class="QHBoxLayout" name="linearInputLayout">
+       <item>
+        <widget class="QLineEdit" name="linearInputLineEdit">
+         <property name="placeholderText">
+          <string>Linear or baseband audio stream to align</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="linearInputBrowseButton">
+         <property name="text">
+          <string>Browse...</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="linearOutputLabel">
+       <property name="text">
+        <string>Linear/Baseband Output</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <layout class="QHBoxLayout" name="linearOutputLayout">
+       <item>
+        <widget class="QLineEdit" name="linearOutputLineEdit">
+         <property name="placeholderText">
+          <string>Aligned linear/baseband output stream file</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="linearOutputBrowseButton">
+         <property name="text">
+          <string>Browse...</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="hifiInputLabel">
+       <property name="text">
+        <string>HiFi Input</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <layout class="QHBoxLayout" name="hifiInputLayout">
+       <item>
+        <widget class="QLineEdit" name="hifiInputLineEdit">
+         <property name="placeholderText">
+          <string>HiFi decoded audio stream to align</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="hifiInputBrowseButton">
+         <property name="text">
+          <string>Browse...</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="hifiOutputLabel">
+       <property name="text">
+        <string>HiFi Output</string>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <layout class="QHBoxLayout" name="hifiOutputLayout">
+       <item>
+        <widget class="QLineEdit" name="hifiOutputLineEdit">
+         <property name="placeholderText">
+          <string>Aligned hifi output stream file</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="hifiOutputBrowseButton">
+         <property name="text">
+          <string>Browse...</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="rfVideoRatePresetLabel">
+       <property name="text">
+        <string>RF Video Sample Rate</string>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <layout class="QHBoxLayout" name="rfVideoRateLayout">
+       <item>
+        <widget class="QComboBox" name="rfVideoRatePresetComboBox">
+         <item>
+          <property name="text">
+           <string>40 Msps (40000000)</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>20 Msps (20000000)</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>16 Msps (16000000)</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Custom</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+       <item>
+        <widget class="QSpinBox" name="rfVideoSampleRateCustomSpinBox">
+         <property name="minimum">
+          <number>1</number>
+         </property>
+         <property name="maximum">
+          <number>1000000000</number>
+         </property>
+         <property name="singleStep">
+          <number>100000</number>
+         </property>
+         <property name="value">
+          <number>40000000</number>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="6" column="0">
+      <widget class="QLabel" name="rfRateWarningTitleLabel">
+       <property name="text">
+        <string>Important</string>
+       </property>
+      </widget>
+     </item>
+     <item row="6" column="1">
+      <widget class="QLabel" name="rfRateWarningLabel">
+       <property name="text">
+        <string>RF Video Sample Rate must match the decoder timebase used to generate metadata JSON. Use 20000000 for 20 Msps no-resampling, 16000000 for 16 Msps captures, or 40000000 when the decoder used internal resampling to 40 Msps.</string>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item row="7" column="0">
+      <widget class="QLabel" name="overwriteLabel">
+       <property name="text">
+        <string>Overwrite Output</string>
+       </property>
+      </widget>
+     </item>
+     <item row="7" column="1">
+      <widget class="QCheckBox" name="overwriteCheckBox">
+       <property name="text">
+        <string>Enable overwrite</string>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item row="8" column="0">
+      <widget class="QLabel" name="loadTracksForExportLabel">
+       <property name="text">
+        <string>After alignment</string>
+       </property>
+      </widget>
+     </item>
+     <item row="8" column="1">
+      <widget class="QCheckBox" name="loadTracksForExportCheckBox">
+       <property name="text">
+        <string>Load tracks for export</string>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="actionLayout">
+     <item>
+      <spacer name="actionSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="alignButton">
+       <property name="text">
+        <string>Align</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="statusLabel">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <connections/>
+</ui>

@@ -33,6 +33,7 @@ __pycache__
 *.dll
 *.dylib
 *.so
+!src/audio-align/vendor/vhs_decode_auto_audio_align/Binah.dll
 
 # Fortran module files
 *.mod
@@ -48,6 +49,7 @@ __pycache__
 *.app
 *.exe
 *.out
+!src/audio-align/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe
 
 # ld-decode data files
 *.tbc

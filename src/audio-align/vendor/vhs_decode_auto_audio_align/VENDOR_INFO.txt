@@ -1,0 +1,10 @@
+Upstream project: https://gitlab.com/wolfre/vhs-decode-auto-audio-align
+Vendored version: v1.0.2
+Asset source: https://gitlab.com/wolfre/vhs-decode-auto-audio-align/-/jobs/11614603802/artifacts/raw/vhs-decode-auto-audio-align_1.0.2.zip
+Included runtime files:
+  - VhsDecodeAutoAudioAlign.exe
+  - Binah.dll
+  - LICENSE-app.txt
+  - LICENSE-Binah.txt
+  - CHANGELOG.md
+  - build-info.txt

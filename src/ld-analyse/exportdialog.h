@@ -36,6 +36,8 @@ public:
     void setSource(TbcSource *source);
     void setInPoint(int frameNumber);
     void setOutPoint(int frameNumber);
+    void loadAudioTracksForExport(const QStringList &trackFiles,
+                                  const QStringList &trackNames = QStringList());
     void refreshResolutionOptions();
 
 private slots:

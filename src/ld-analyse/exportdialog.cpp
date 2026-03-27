@@ -1518,6 +1518,66 @@ void ExportDialog::setOutPoint(int frameNumber)
     syncRangeTimecodeEditors();
 }
 
+void ExportDialog::loadAudioTracksForExport(const QStringList &trackFiles, const QStringList &trackNames)
+{
+    if (!ui) {
+        return;
+    }
+
+    QLineEdit *trackFileEdits[] = {
+        ui->audio1LineEdit,
+        ui->audio2LineEdit,
+        ui->audio3LineEdit,
+        ui->audio4LineEdit
+    };
+    QLineEdit *trackNameEdits[] = {
+        ui->audio1NameLineEdit,
+        ui->audio2NameLineEdit,
+        ui->audio3NameLineEdit,
+        ui->audio4NameLineEdit
+    };
+    const int slotCount = static_cast<int>(sizeof(trackFileEdits) / sizeof(trackFileEdits[0]));
+
+    for (int slot = 0; slot < slotCount; ++slot) {
+        if (trackFileEdits[slot]) {
+            trackFileEdits[slot]->clear();
+        }
+        if (trackNameEdits[slot]) {
+            trackNameEdits[slot]->clear();
+        }
+    }
+
+    int loadedTrackCount = 0;
+    for (const QString &trackFileValue : trackFiles) {
+        const QString trackFile = trackFileValue.trimmed();
+        if (trackFile.isEmpty()) {
+            continue;
+        }
+        if (loadedTrackCount >= slotCount) {
+            break;
+        }
+
+        if (trackFileEdits[loadedTrackCount]) {
+            trackFileEdits[loadedTrackCount]->setText(trackFile);
+        }
+        QString trackName = loadedTrackCount < trackNames.size()
+                                ? trackNames.at(loadedTrackCount).trimmed()
+                                : QString();
+        if (trackName.isEmpty()) {
+            trackName = QFileInfo(trackFile).completeBaseName();
+        }
+        if (trackNameEdits[loadedTrackCount]) {
+            trackNameEdits[loadedTrackCount]->setText(trackName);
+        }
+        loadedTrackCount++;
+    }
+
+    if (loadedTrackCount > 0) {
+        appendStatus(tr("Loaded %1 audio track(s) from Auto Audio Align.").arg(loadedTrackCount));
+        appendLog(tr("Loaded %1 audio track(s) from Auto Audio Align.").arg(loadedTrackCount));
+    }
+}
+
 void ExportDialog::refreshResolutionOptions()
 {
     syncResolutionModeSelectionFromSource();

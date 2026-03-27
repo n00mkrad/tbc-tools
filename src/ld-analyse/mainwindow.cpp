@@ -38,6 +38,10 @@
 #include <QDateTime>
 #include <QFileOpenEvent>
 #include <QMimeData>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QScreen>
 #include <QtMath>
 #include <QUrl>
@@ -635,6 +639,75 @@ bool sameFilePath(const QString &left, const QString &right)
         return false;
     }
     return normalizedLeft == normalizedRight;
+}
+
+struct ExportAudioTrackEntry {
+    QString filePath;
+    QString trackName;
+};
+
+QList<ExportAudioTrackEntry> readExportAudioTrackPayload(const QString &payloadPath, QString *errorMessage)
+{
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+
+    QFile payloadFile(payloadPath);
+    if (!payloadFile.exists()) {
+        return {};
+    }
+    if (!payloadFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (errorMessage) {
+            *errorMessage = QObject::tr("Unable to read auto audio align export-track payload:\n%1").arg(payloadPath);
+        }
+        return {};
+    }
+
+    const QByteArray payloadData = payloadFile.readAll();
+    payloadFile.close();
+    if (payloadData.trimmed().isEmpty()) {
+        return {};
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument payloadDoc = QJsonDocument::fromJson(payloadData, &parseError);
+    if (payloadDoc.isNull() || !payloadDoc.isObject()) {
+        if (errorMessage) {
+            *errorMessage = QObject::tr("Invalid auto audio align export-track payload JSON:\n%1")
+                                .arg(parseError.errorString());
+        }
+        return {};
+    }
+
+    const QJsonObject rootObject = payloadDoc.object();
+    const QString payloadFormat = rootObject.value(QStringLiteral("format")).toString().trimmed();
+    if (!payloadFormat.isEmpty()
+        && payloadFormat.compare(QStringLiteral("ld-analyse-export-audio-tracks"), Qt::CaseInsensitive) != 0) {
+        if (errorMessage) {
+            *errorMessage = QObject::tr("Unsupported auto audio align export-track payload format:\n%1")
+                                .arg(payloadFormat);
+        }
+        return {};
+    }
+
+    QList<ExportAudioTrackEntry> trackEntries;
+    const QJsonArray tracksArray = rootObject.value(QStringLiteral("tracks")).toArray();
+    for (const QJsonValue &trackValue : tracksArray) {
+        if (!trackValue.isObject()) {
+            continue;
+        }
+        const QJsonObject trackObject = trackValue.toObject();
+        const QString trackFilePath = trackObject.value(QStringLiteral("file")).toString().trimmed();
+        if (trackFilePath.isEmpty()) {
+            continue;
+        }
+        ExportAudioTrackEntry entry;
+        entry.filePath = trackFilePath;
+        entry.trackName = trackObject.value(QStringLiteral("name")).toString().trimmed();
+        trackEntries.append(entry);
+    }
+
+    return trackEntries;
 }
 
 #if defined(Q_OS_MACOS)
@@ -3263,6 +3336,163 @@ void MainWindow::on_actionFix_JSON_SNR_triggered()
          || sameFilePath(metadataFilename, metadataJsonFilename)
          || sameFilePath(inputTbcFilename, tbcSource.getCurrentSourceFilename()))) {
         loadTbcFile(lastFilename);
+    }
+}
+
+void MainWindow::on_actionAuto_Audio_Align_triggered()
+{
+    const QString toolPath = resolveExternalExecutable({QStringLiteral("tbc-audio-align")});
+    if (toolPath.isEmpty()) {
+        QMessageBox::warning(this, tr("Tool not found"),
+                             tr("tbc-audio-align was not found in PATH or alongside the application."));
+        return;
+    }
+
+    QString defaultJsonPath;
+    if (metadataJsonLoaded && !metadataJsonFilename.isEmpty()) {
+        defaultJsonPath = metadataJsonFilename;
+    } else if (tbcSource.getIsSourceLoaded()) {
+        const QString currentMetadataFilename = tbcSource.getCurrentMetadataFilename();
+        if (currentMetadataFilename.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) {
+            defaultJsonPath = currentMetadataFilename;
+        } else if (currentMetadataFilename.endsWith(QStringLiteral(".db"), Qt::CaseInsensitive)) {
+            QString candidateJsonPath = currentMetadataFilename;
+            candidateJsonPath.chop(3);
+            candidateJsonPath += QStringLiteral(".json");
+            if (QFileInfo::exists(candidateJsonPath)) {
+                defaultJsonPath = candidateJsonPath;
+            }
+        }
+
+        if (defaultJsonPath.isEmpty()) {
+            const QString currentSourceFilename = tbcSource.getCurrentSourceFilename();
+            if (!currentSourceFilename.isEmpty()) {
+                const QString sidecarJsonPath = currentSourceFilename + QStringLiteral(".json");
+                if (QFileInfo::exists(sidecarJsonPath)) {
+                    defaultJsonPath = sidecarJsonPath;
+                } else {
+                    const QFileInfo sourceInfo(currentSourceFilename);
+                    const QString stemJsonPath = QDir(sourceInfo.absolutePath())
+                                                     .filePath(sourceInfo.completeBaseName()
+                                                               + QStringLiteral(".json"));
+                    if (QFileInfo::exists(stemJsonPath)) {
+                        defaultJsonPath = stemJsonPath;
+                    }
+                }
+            }
+        }
+    }
+
+    QStringList arguments;
+    if (!defaultJsonPath.isEmpty()) {
+        arguments << QStringLiteral("--json") << defaultJsonPath;
+    }
+
+    const QString sourceDirectory = configuration.getSourceDirectory();
+    if (!sourceDirectory.isEmpty()) {
+        arguments << QStringLiteral("--source-dir") << sourceDirectory;
+    }
+    const QString exportTrackPayloadPath = QDir::temp().filePath(
+        QStringLiteral("ld-analyse-auto-audio-align-tracks-%1.json")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    arguments << QStringLiteral("--export-track-file") << exportTrackPayloadPath;
+
+    QProcess *audioAlignProcess = new QProcess(this);
+    audioAlignProcess->setProcessChannelMode(QProcess::MergedChannels);
+    audioAlignProcess->setProperty("autoAudioAlignTracksLoaded", false);
+    auto tryLoadExportTracks = [this, audioAlignProcess, exportTrackPayloadPath](bool showStatusMessage,
+                                                                                  QString *payloadErrorOut = nullptr) -> bool {
+        if (payloadErrorOut) {
+            payloadErrorOut->clear();
+        }
+        if (audioAlignProcess->property("autoAudioAlignTracksLoaded").toBool()) {
+            return true;
+        }
+
+        QString payloadError;
+        const QList<ExportAudioTrackEntry> trackEntries = readExportAudioTrackPayload(exportTrackPayloadPath, &payloadError);
+        if (payloadErrorOut) {
+            *payloadErrorOut = payloadError;
+        }
+        if (!payloadError.isEmpty() || trackEntries.isEmpty() || !exportDialog) {
+            return false;
+        }
+
+        QStringList trackFiles;
+        QStringList trackNames;
+        trackFiles.reserve(trackEntries.size());
+        trackNames.reserve(trackEntries.size());
+        for (const ExportAudioTrackEntry &trackEntry : trackEntries) {
+            trackFiles << trackEntry.filePath;
+            trackNames << trackEntry.trackName;
+        }
+        exportDialog->loadAudioTracksForExport(trackFiles, trackNames);
+        if (ui && ui->mainTabWidget) {
+            ui->mainTabWidget->setCurrentWidget(exportDialog);
+        }
+        audioAlignProcess->setProperty("autoAudioAlignTracksLoaded", true);
+        if (showStatusMessage) {
+            statusBar()->showMessage(tr("Loaded %1 aligned audio track(s) into Export.").arg(trackFiles.size()), 5000);
+        }
+        return true;
+    };
+    QTimer *payloadWatchTimer = new QTimer(audioAlignProcess);
+    payloadWatchTimer->setInterval(300);
+    connect(payloadWatchTimer, &QTimer::timeout, this, [tryLoadExportTracks]() {
+        tryLoadExportTracks(true, nullptr);
+    });
+    connect(audioAlignProcess,
+            &QProcess::finished,
+            this,
+            [this, audioAlignProcess, exportTrackPayloadPath, payloadWatchTimer, tryLoadExportTracks]
+            (int exitCode, QProcess::ExitStatus exitStatus) {
+        if (payloadWatchTimer) {
+            payloadWatchTimer->stop();
+        }
+        const QString processOutput = QString::fromLocal8Bit(audioAlignProcess->readAllStandardOutput()).trimmed();
+        const bool processSucceeded = exitStatus == QProcess::NormalExit && exitCode == 0;
+
+        QString payloadError;
+        const bool tracksLoaded = tryLoadExportTracks(true, &payloadError);
+        QFile::remove(exportTrackPayloadPath);
+
+        if (!processSucceeded) {
+            const QString failureMessage = processOutput.isEmpty()
+                                               ? tr("Auto Audio Align closed with an error.")
+                                               : processOutput;
+            statusBar()->showMessage(failureMessage, 5000);
+            audioAlignProcess->deleteLater();
+            return;
+        }
+        if (!tracksLoaded && !payloadError.isEmpty()) {
+            QMessageBox::warning(this, tr("Auto Audio Align"), payloadError);
+            statusBar()->showMessage(tr("Auto Audio Align completed, but Export tracks were not loaded."), 5000);
+            audioAlignProcess->deleteLater();
+            return;
+        }
+        if (!tracksLoaded) {
+            statusBar()->showMessage(tr("Auto Audio Align completed."), 5000);
+        }
+
+        audioAlignProcess->deleteLater();
+    });
+    audioAlignProcess->start(toolPath, arguments);
+    if (!audioAlignProcess->waitForStarted(3000)) {
+        if (payloadWatchTimer) {
+            payloadWatchTimer->stop();
+        }
+        audioAlignProcess->deleteLater();
+        QFile::remove(exportTrackPayloadPath);
+        QMessageBox::warning(this, tr("Tool launch failed"),
+                             tr("Unable to launch tbc-audio-align."));
+        return;
+    }
+    payloadWatchTimer->start();
+
+    if (!defaultJsonPath.isEmpty()) {
+        statusBar()->showMessage(tr("Opened Auto Audio Align with %1").arg(defaultJsonPath), 5000);
+    } else {
+        statusBar()->showMessage(tr("Opened Auto Audio Align. Select metadata JSON and audio input files."), 5000);
     }
 }
 

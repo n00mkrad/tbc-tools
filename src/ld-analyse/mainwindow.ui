@@ -790,6 +790,7 @@
     <addaction name="actionProcess_VBI"/>
     <addaction name="actionProcess_VITS"/>
     <addaction name="actionFix_JSON_SNR"/>
+    <addaction name="actionAuto_Audio_Align"/>
     <addaction name="separator"/>
     <addaction name="actionMetadata_Status"/>
     <addaction name="actionMetadata_Conversion"/>
@@ -850,6 +851,11 @@
   <action name="actionFix_JSON_SNR">
    <property name="text">
     <string>Fix JSON SNR...</string>
+   </property>
+  </action>
+  <action name="actionAuto_Audio_Align">
+   <property name="text">
+    <string>Auto Audio Align...</string>
    </property>
   </action>
   <action name="actionExit">

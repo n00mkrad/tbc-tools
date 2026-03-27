@@ -94,6 +94,7 @@ private slots:
     void on_actionProcess_VBI_triggered();
     void on_actionProcess_VITS_triggered();
     void on_actionFix_JSON_SNR_triggered();
+    void on_actionAuto_Audio_Align_triggered();
 
     // Media control frame handlers
     void on_previousPushButton_clicked();

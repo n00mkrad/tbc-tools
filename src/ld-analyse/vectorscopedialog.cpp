@@ -12,6 +12,8 @@
 #include "vectorscopedialog.h"
 #include "ui_vectorscopedialog.h"
 #include "tbc/logging.h"
+#include <algorithm>
+#include <array>
 
 #include <cmath>
 #include <random>
@@ -22,8 +24,239 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
 #include <QVBoxLayout>
+
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kMajorMarkerLengthPixels = 18.0;
+constexpr double kMinorMarkerLengthPixels = 10.0;
+constexpr double kIqLabelOffsetPixels = 22.0;
+constexpr double kColorLabelOffsetPixels = 48.0;
+constexpr double kZoneHalfAngleDegrees = 13.0;
+constexpr double kZoneHalfRadialSpanPercent = 0.14;
+constexpr double kTargetBoxSizePixels = 42.0;
+constexpr double kTargetCrosshairSizePixels = 22.0;
+
+constexpr double kNtscIAxisDegrees = 147.0;
+constexpr double kNtscNegIAxisDegrees = -33.0;
+constexpr double kNtscQAxisDegrees = 57.0;
+constexpr double kNtscNegQAxisDegrees = -123.0;
+constexpr double kIqLabelAngularOffsetDegrees = 4.0;
+
+QPointF pointFromStandardDegrees(double angleDegrees, double magnitude, qint32 halfSize)
+{
+    const double theta = (angleDegrees * kPi) / 180.0;
+    const double x = static_cast<double>(halfSize) + (magnitude * std::cos(theta));
+    const double y = static_cast<double>(halfSize) - (magnitude * std::sin(theta));
+    return QPointF(x, y);
+}
+
+QColor vectorscopeTargetColor(qint32 rgb)
+{
+    switch (rgb) {
+    case 1: return QColor(70, 150, 255, 120);  // Blue
+    case 2: return QColor(70, 230, 120, 120);  // Green
+    case 3: return QColor(90, 235, 235, 120);  // Cyan
+    case 4: return QColor(255, 90, 90, 120);   // Red
+    case 5: return QColor(230, 90, 230, 120);  // Magenta
+    case 6: return QColor(245, 215, 80, 120);  // Yellow
+    default: return QColor(255, 255, 255, 120);
+    }
+}
+
+void drawReferenceAxis(QPainter &painter, qint32 halfSize, double angleDegrees, double innerMagnitude, double outerMagnitude)
+{
+    painter.drawLine(pointFromStandardDegrees(angleDegrees, innerMagnitude, halfSize),
+                     pointFromStandardDegrees(angleDegrees, outerMagnitude, halfSize));
+}
+
+void drawCircleMarkers(QPainter &painter, qint32 size, qint32 halfSize, qint32 radius)
+{
+    const double outerRadius = static_cast<double>(radius);
+    for (qint32 degrees = 0; degrees < 360; degrees += 2) {
+        const bool isMajor = (degrees % 10) == 0;
+        const double markerLength = isMajor ? kMajorMarkerLengthPixels : kMinorMarkerLengthPixels;
+        const double theta = (static_cast<double>(degrees) * kPi) / 180.0;
+        const double x1 = static_cast<double>(halfSize) + ((outerRadius - markerLength) * std::cos(theta));
+        const double y1 = static_cast<double>(halfSize) - ((outerRadius - markerLength) * std::sin(theta));
+        const double x2 = static_cast<double>(halfSize) + (outerRadius * std::cos(theta));
+        const double y2 = static_cast<double>(halfSize) - (outerRadius * std::sin(theta));
+        painter.setPen(QPen(Qt::white, isMajor ? 2.0 : 1.0));
+        painter.drawLine(QPointF(x1, y1), QPointF(x2, y2));
+    }
+
+    painter.setPen(QPen(Qt::white, 1.0));
+    painter.drawEllipse(0, 0, size - 1, size - 1);
+}
+
+void drawNtscIqLabels(QPainter &painter, qint32 halfSize, qint32 radius)
+{
+    struct AxisLabel {
+        const char *text;
+        double angleDegrees;
+        double labelOffsetDegrees;
+    };
+    constexpr AxisLabel axisLabels[] = {
+        {"I", kNtscIAxisDegrees, kIqLabelAngularOffsetDegrees},
+        {"Q", kNtscQAxisDegrees, -kIqLabelAngularOffsetDegrees},
+        {"-I", kNtscNegIAxisDegrees, -kIqLabelAngularOffsetDegrees},
+        {"-Q", kNtscNegQAxisDegrees, kIqLabelAngularOffsetDegrees},
+    };
+
+    QFont labelFont = painter.font();
+    labelFont.setPointSize(24);
+    labelFont.setBold(true);
+    painter.setFont(labelFont);
+    painter.setPen(QPen(QColor(200, 200, 200), 1));
+
+    const double labelRadius = static_cast<double>(radius) - kIqLabelOffsetPixels;
+    for (const AxisLabel &axisLabel : axisLabels) {
+        const QPointF centre = pointFromStandardDegrees(axisLabel.angleDegrees + axisLabel.labelOffsetDegrees,
+                                                        labelRadius,
+                                                        halfSize);
+        const QString text = QString::fromUtf8(axisLabel.text);
+        const QFontMetrics metrics(labelFont);
+        const QRect textRect = metrics.boundingRect(text);
+        painter.drawText(static_cast<qint32>(centre.x()) - (textRect.width() / 2),
+                         static_cast<qint32>(centre.y()) + (textRect.height() / 3),
+                         text);
+    }
+}
+
+void drawColorZone(QPainter &painter, qint32 halfSize, qint32 radius, double angleDegrees, double magnitude, const QColor &color)
+{
+    const double zoneHalfAngleRadians = (kZoneHalfAngleDegrees * kPi) / 180.0;
+    const double radialSpan = magnitude * kZoneHalfRadialSpanPercent;
+    const double innerRadius = std::max(0.0, magnitude - radialSpan);
+    const double outerRadius = std::min(static_cast<double>(radius), magnitude + radialSpan);
+    const double angleRadians = (angleDegrees * kPi) / 180.0;
+
+    QPainterPath zonePath;
+    zonePath.moveTo(pointFromStandardDegrees(angleDegrees - kZoneHalfAngleDegrees, innerRadius, halfSize));
+    for (qint32 step = 0; step <= 12; ++step) {
+        const double t = static_cast<double>(step) / 12.0;
+        const double arcRadians = angleRadians - zoneHalfAngleRadians + (t * zoneHalfAngleRadians * 2.0);
+        const double arcDegrees = (arcRadians * 180.0) / kPi;
+        zonePath.lineTo(pointFromStandardDegrees(arcDegrees, outerRadius, halfSize));
+    }
+    for (qint32 step = 12; step >= 0; --step) {
+        const double t = static_cast<double>(step) / 12.0;
+        const double arcRadians = angleRadians - zoneHalfAngleRadians + (t * zoneHalfAngleRadians * 2.0);
+        const double arcDegrees = (arcRadians * 180.0) / kPi;
+        zonePath.lineTo(pointFromStandardDegrees(arcDegrees, innerRadius, halfSize));
+    }
+    zonePath.closeSubpath();
+
+    QColor fillColor = color;
+    fillColor.setAlpha(52);
+    QColor outlineColor = color;
+    outlineColor.setAlpha(180);
+    painter.save();
+    painter.setPen(QPen(outlineColor, 1));
+    painter.setBrush(fillColor);
+    painter.drawPath(zonePath);
+    painter.restore();
+}
+
+void drawTargetBox(QPainter &painter, const QPointF &centerPoint, const QColor &color)
+{
+    const double halfBox = kTargetBoxSizePixels / 2.0;
+    const double halfCrosshair = kTargetCrosshairSizePixels / 2.0;
+    const QRectF boxRect(centerPoint.x() - halfBox, centerPoint.y() - halfBox,
+                         kTargetBoxSizePixels, kTargetBoxSizePixels);
+
+    QColor outlineColor = color;
+    outlineColor.setAlpha(220);
+    painter.save();
+    painter.setPen(QPen(outlineColor, 2));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(boxRect);
+    painter.drawLine(QPointF(centerPoint.x() - halfCrosshair, centerPoint.y()),
+                     QPointF(centerPoint.x() + halfCrosshair, centerPoint.y()));
+    painter.drawLine(QPointF(centerPoint.x(), centerPoint.y() - halfCrosshair),
+                     QPointF(centerPoint.x(), centerPoint.y() + halfCrosshair));
+    painter.restore();
+}
+
+void drawDecodeOrcStyleGraticule(QPainter &scopePainter, qint32 size, qint32 halfSize, qint32 radius,
+                                 const LdDecodeMetaData::VideoParameters &videoParameters, bool graticule75)
+{
+    scopePainter.save();
+    scopePainter.setRenderHint(QPainter::Antialiasing, true);
+    scopePainter.setPen(QPen(Qt::white, 1.0));
+
+    // Draw center cross hairs and main circle/tick markers.
+    scopePainter.drawLine(halfSize, 0, halfSize, size - 1);
+    scopePainter.drawLine(0, halfSize, size - 1, halfSize);
+    drawCircleMarkers(scopePainter, size, halfSize, radius);
+
+    // NTSC I/Q reference axes + labels.
+    if (videoParameters.system == NTSC) {
+        const double innerMagnitude = 0.2 * static_cast<double>(radius);
+        const double outerMagnitude = static_cast<double>(radius);
+        drawReferenceAxis(scopePainter, halfSize, kNtscIAxisDegrees, innerMagnitude, outerMagnitude);
+        drawReferenceAxis(scopePainter, halfSize, kNtscNegIAxisDegrees, innerMagnitude, outerMagnitude);
+        drawReferenceAxis(scopePainter, halfSize, kNtscQAxisDegrees, innerMagnitude, outerMagnitude);
+        drawReferenceAxis(scopePainter, halfSize, kNtscNegQAxisDegrees, innerMagnitude, outerMagnitude);
+        drawNtscIqLabels(scopePainter, halfSize, radius);
+    }
+
+    // Draw color-bar target zones and boxes.
+    const qint32 ireRange = videoParameters.white16bIre - videoParameters.black16bIre;
+    if (ireRange > 0) {
+        constexpr std::array<const char *, 7> colorLabels = {"", "B", "G", "Cy", "R", "Mg", "Yl"};
+        constexpr qint32 scopeScale = 65536 / 1024;
+        const double percent = graticule75 ? 0.75 : 1.0;
+        const double uvScale = static_cast<double>(ireRange) / static_cast<double>(scopeScale);
+
+        for (qint32 rgb = 1; rgb < 7; rgb++) {
+            const double R = percent * static_cast<double>((rgb >> 2) & 1);
+            const double G = percent * static_cast<double>((rgb >> 1) & 1);
+            const double B = percent * static_cast<double>(rgb & 1);
+
+            const double U = (R * -0.147141) + (G * -0.288869) + (B * 0.436010);
+            const double V = (R * 0.614975)  + (G * -0.514965) + (B * -0.100010);
+
+            const double uScaled = U * uvScale;
+            const double vScaled = V * uvScale;
+            const QPointF targetPoint(static_cast<double>(halfSize) + uScaled,
+                                      static_cast<double>(halfSize) - vScaled);
+            const double targetMagnitude = std::hypot(uScaled, vScaled);
+            const double targetAngleDegrees = (std::atan2(V, U) * 180.0) / kPi;
+            const QColor targetColor = vectorscopeTargetColor(rgb);
+
+            drawColorZone(scopePainter, halfSize, radius, targetAngleDegrees, targetMagnitude, targetColor);
+            drawTargetBox(scopePainter, targetPoint, targetColor);
+
+            const QPointF labelPoint = pointFromStandardDegrees(targetAngleDegrees,
+                                                                targetMagnitude + kColorLabelOffsetPixels,
+                                                                halfSize);
+            QFont labelFont = scopePainter.font();
+            labelFont.setPointSize(14);
+            labelFont.setBold(true);
+            scopePainter.setFont(labelFont);
+
+            QColor labelColor = targetColor;
+            labelColor.setAlpha(255);
+            scopePainter.setPen(QPen(labelColor, 1.0));
+
+            const QString labelText = QString::fromUtf8(colorLabels[rgb]);
+            const QFontMetrics metrics(labelFont);
+            const qint32 textWidth = metrics.horizontalAdvance(labelText);
+            const qint32 textHeight = metrics.height();
+            scopePainter.drawText(static_cast<qint32>(labelPoint.x()) - (textWidth / 2),
+                                  static_cast<qint32>(labelPoint.y()) + (textHeight / 4),
+                                  labelText);
+        }
+    }
+
+    scopePainter.restore();
+}
+
+} // namespace
 
 VectorscopeDialog::VectorscopeDialog(QWidget *parent) :
     QDialog(parent),
@@ -227,14 +460,12 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
 
     for (auto fieldN = startingFrame; fieldN < fieldCount; fieldN++) {
         QColor color = Qt::green;
-        // Set color to cyan on second field if blend enabled...
-        if (ui->fieldSelectAllRadioButton->isChecked() && (blendColors || densityMode) && fieldN == 1) {
-            color = Qt::cyan;
-        }
-
-        // ...or second only is selected
         if (ui->fieldSelectSecondRadioButton->isChecked()) {
             color = Qt::cyan;
+        } else if (ui->fieldSelectFirstRadioButton->isChecked()) {
+            color = Qt::yellow;
+        } else if ((blendColors || densityMode) && ui->fieldSelectAllRadioButton->isChecked()) {
+            color = (fieldN == 0) ? QColor(255, 255, 0) : QColor(0, 255, 255);
         }
 
         if (densityMode) {
@@ -267,60 +498,13 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
 
     // Overlay the graticule, unless it's disabled
     if (!ui->graticuleNoneRadioButton->isChecked()) {
-        scopePainter.setPen(Qt::white);
-
-        // Draw the vertical/horizontal graticule lines and circle
-        scopePainter.drawLine(HALF_SIZE, 0, HALF_SIZE, SIZE - 1);
-        scopePainter.drawLine(0, HALF_SIZE, SIZE - 1, HALF_SIZE);
-        scopePainter.drawEllipse(0, 0, SIZE - 1, SIZE - 1);
-
-        // For NTSC: draw I/Q graticule lines, 33 degrees offset from the axes
-        if (videoParameters.system == NTSC) {
-            double theta = (-33.0 * M_PI) / 180;
-            for (qint32 i = 0; i < 4; i++) {
-                scopePainter.drawLine(HALF_SIZE + (0.2 * HALF_SIZE * cos(theta)),
-                                      HALF_SIZE + (0.2 * HALF_SIZE * sin(theta)),
-                                      HALF_SIZE + (HALF_SIZE * cos(theta)),
-                                      HALF_SIZE + (HALF_SIZE * sin(theta)));
-                theta += M_PI / 2.0;
-            }
-        }
-
-        // Scaling factor for which graticule
-        const double percent = ui->graticule75RadioButton->isChecked() ? 0.75 : 1.0;
-
-        // Draw graticule targets for the six colour bars
-        for (qint32 rgb = 1; rgb < 7; rgb++) {
-            // R'G'B' for this bar
-            const double R = percent * static_cast<double>((rgb >> 2) & 1);
-            const double G = percent * static_cast<double>((rgb >> 1) & 1);
-            const double B = percent * static_cast<double>(rgb & 1);
-
-            // Convert R'G'B' to Y'UV [Poynton p337 eq 28.5]
-            const double U = (R * -0.147141) + (G * -0.288869) + (B * 0.436010);
-            const double V = (R * 0.614975)  + (G * -0.514965) + (B * -0.100010);
-
-            // Convert to angle and magnitude, scaled to match scope coords
-            const double barTheta = atan2(-V, U);
-            const double barMag = sqrt((V * V) + (U * U)) * (videoParameters.white16bIre - videoParameters.black16bIre) / SCALE;
-
-            // Draw the target grid, with 10 degree angle and 10% magnitude steps
-            const double stepTheta = (10.0 * M_PI) / 180.0;
-            const double stepMag = 0.1 * barMag;
-            for (qint32 step = -1; step < 2; step++) {
-                // XXX These should really be curved lines
-                const double theta = barTheta + (step * stepTheta);
-                scopePainter.drawLine(HALF_SIZE + ((barMag - stepMag) * cos(theta)), HALF_SIZE + ((barMag - stepMag) * sin(theta)),
-                                      HALF_SIZE + ((barMag + stepMag) * cos(theta)), HALF_SIZE + ((barMag + stepMag) * sin(theta)));
-            }
-            for (qint32 step = -1; step < 2; step++) {
-                const double mag = barMag + (step * stepMag);
-                scopePainter.drawLine(HALF_SIZE + (mag * cos(barTheta - stepTheta)), HALF_SIZE + (mag * sin(barTheta - stepTheta)),
-                                      HALF_SIZE + (mag * cos(barTheta + stepTheta)), HALF_SIZE + (mag * sin(barTheta + stepTheta)));
-            }
-        }
-
-        // XXX Draw a line for the colourburst -- we don't decode it at the moment
+        scopePainter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        drawDecodeOrcStyleGraticule(scopePainter,
+                                    SIZE,
+                                    HALF_SIZE,
+                                    HALF_SIZE - 1,
+                                    videoParameters,
+                                    ui->graticule75RadioButton->isChecked());
     }
 
     // Return the QImage

@@ -56,6 +56,7 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <optional>
 #if defined(Q_OS_UNIX)
 #include <signal.h>
 #endif
@@ -859,6 +860,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     // Set up dialogues
     oscilloscopeDialog = new OscilloscopeDialog(this);
     vectorscopeDialog = new VectorscopeDialog(this);
+    fieldTimingDialog = new FieldTimingDialog(this);
     aboutDialog = new AboutDialog(this);
     vbiDialog = new VbiDialog(this);
     dropoutAnalysisDialog = new DropoutAnalysisDialog(this);
@@ -1138,6 +1140,7 @@ void MainWindow::setGuiEnabled(bool enabled)
     // Enable menu options
     ui->actionLine_scope->setEnabled(enabled);
     ui->actionVectorscope->setEnabled(enabled);
+    ui->actionField_timing_scope->setEnabled(enabled);
     ui->actionVBI->setEnabled(enabled);
     ui->actionNTSC->setEnabled(enabled);
     ui->actionVideo_metadata->setEnabled(enabled);
@@ -1441,6 +1444,7 @@ void MainWindow::updateGuiLoaded()
         ui->actionSave_frame_as_PNG->setEnabled(false);
         ui->actionLine_scope->setEnabled(false);
         ui->actionVectorscope->setEnabled(false);
+        ui->actionField_timing_scope->setEnabled(false);
     }
 
     // Update the status bar readout
@@ -1540,6 +1544,7 @@ void MainWindow::updateGuiUnloaded()
     // Hide configuration dialogues
     videoParametersDialog->hide();
     chromaDecoderConfigDialog->hide();
+    fieldTimingDialog->hide();
 
     updateMetadataStatusPanel();
     if (exportDialog) {
@@ -1779,6 +1784,9 @@ void MainWindow::updateImage()
     }
     if (vectorscopeDialog->isVisible()) {
         updateVectorscopeDialogue();
+    }
+    if (fieldTimingDialog->isVisible()) {
+        updateFieldTimingDialogue();
     }
 }
 
@@ -2189,6 +2197,34 @@ void MainWindow::updateVectorscopeDialogue()
     // Update the vectorscope dialogue
     vectorscopeDialog->showTraceImage(tbcSource.getComponentFrame(), tbcSource.getVideoParameters(),
                                       tbcSource.getViewMode(), currentFieldNumber % 2);
+}
+
+// Method to update the field timing scope
+void MainWindow::updateFieldTimingDialogue()
+{
+    const TbcSource::FieldTimingData timingData = tbcSource.getFieldTimingData();
+    if (!timingData.valid) {
+        return;
+    }
+
+    const std::optional<qint32> secondFieldNumber = timingData.hasSecondField
+        ? std::optional<qint32>(timingData.secondFieldNumber)
+        : std::nullopt;
+    const std::optional<LdDecodeMetaData::VideoParameters> videoParameters = tbcSource.getVideoParameters();
+
+    fieldTimingDialog->setFieldData(
+        tbcSource.getCurrentSourceFilename(),
+        timingData.firstFieldNumber,
+        timingData.firstFieldComposite,
+        secondFieldNumber,
+        timingData.secondFieldComposite,
+        timingData.firstFieldLuma,
+        timingData.firstFieldChroma,
+        timingData.secondFieldLuma,
+        timingData.secondFieldChroma,
+        videoParameters,
+        timingData.firstFieldHeight,
+        timingData.secondFieldHeight);
 }
 
 // Method to set the view (field/frame) values
@@ -3521,6 +3557,17 @@ void MainWindow::on_actionVectorscope_triggered()
         // Show the vectorscope dialogue
         updateVectorscopeDialogue();
         vectorscopeDialog->show();
+    }
+}
+
+// Display the field timing scope view
+void MainWindow::on_actionField_timing_scope_triggered()
+{
+    if (tbcSource.getIsSourceLoaded()) {
+        updateFieldTimingDialogue();
+        fieldTimingDialog->show();
+        fieldTimingDialog->raise();
+        fieldTimingDialog->activateWindow();
     }
 }
 

@@ -748,6 +748,92 @@ TbcSource::ScanLineData TbcSource::getScanLineData(qint32 scanLine)
     return scanLineData;
 }
 
+TbcSource::FieldTimingData TbcSource::getFieldTimingData()
+{
+    FieldTimingData timingData;
+
+    if (metadataOnly || loadedFrameNumber == -1) {
+        return timingData;
+    }
+
+    const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    if (videoParameters.fieldWidth <= 0) {
+        return timingData;
+    }
+
+    loadInputFields();
+
+    const qint32 firstInputIndex = inputStartIndex;
+    const qint32 secondInputIndex = inputStartIndex + 1;
+    if (firstInputIndex < 0
+        || secondInputIndex < 0
+        || firstInputIndex >= inputFields.size()
+        || secondInputIndex >= inputFields.size()) {
+        return timingData;
+    }
+
+    const auto toStdVector = [](const SourceVideo::Data &sourceSamples) {
+        std::vector<uint16_t> samples;
+        samples.reserve(sourceSamples.size());
+        for (const quint16 sample : sourceSamples) {
+            samples.push_back(static_cast<uint16_t>(sample));
+        }
+        return samples;
+    };
+
+    const auto calculateFieldHeight = [&](const SourceVideo::Data &sourceSamples) {
+        if (videoParameters.fieldWidth <= 0) {
+            return 0;
+        }
+        const qint32 derivedHeight = sourceSamples.size() / videoParameters.fieldWidth;
+        return derivedHeight > 0 ? derivedHeight : videoParameters.fieldHeight;
+    };
+
+    const bool showBothFields = (viewMode == ViewMode::FRAME_VIEW || viewMode == ViewMode::SPLIT_VIEW);
+    const bool useFirstField = (loadedFieldNumber % 2) != 0;
+    const qint32 selectedInputIndex = useFirstField ? firstInputIndex : secondInputIndex;
+
+    timingData.fieldWidth = videoParameters.fieldWidth;
+    if (showBothFields) {
+        timingData.firstFieldNumber = firstFieldNumber;
+        timingData.secondFieldNumber = secondFieldNumber;
+        timingData.hasSecondField = true;
+        timingData.firstFieldComposite = toStdVector(inputFields[firstInputIndex].data);
+        timingData.secondFieldComposite = toStdVector(inputFields[secondInputIndex].data);
+        timingData.firstFieldHeight = calculateFieldHeight(inputFields[firstInputIndex].data);
+        timingData.secondFieldHeight = calculateFieldHeight(inputFields[secondInputIndex].data);
+    } else {
+        timingData.firstFieldNumber = useFirstField ? firstFieldNumber : secondFieldNumber;
+        timingData.hasSecondField = false;
+        timingData.firstFieldComposite = toStdVector(inputFields[selectedInputIndex].data);
+        timingData.firstFieldHeight = calculateFieldHeight(inputFields[selectedInputIndex].data);
+        timingData.secondFieldHeight = 0;
+    }
+
+    if (sourceMode == BOTH_SOURCES
+        && firstInputIndex >= 0
+        && secondInputIndex >= 0
+        && firstInputIndex < chromaInputFields.size()
+        && secondInputIndex < chromaInputFields.size()) {
+        const auto populateYcData = [&](qint32 inputIndex,
+                                        std::vector<uint16_t> &ySamples,
+                                        std::vector<uint16_t> &cSamples) {
+            ySamples = toStdVector(inputFields[inputIndex].data);
+            cSamples = toStdVector(chromaInputFields[inputIndex].data);
+        };
+
+        if (showBothFields) {
+            populateYcData(firstInputIndex, timingData.firstFieldLuma, timingData.firstFieldChroma);
+            populateYcData(secondInputIndex, timingData.secondFieldLuma, timingData.secondFieldChroma);
+        } else {
+            populateYcData(selectedInputIndex, timingData.firstFieldLuma, timingData.firstFieldChroma);
+        }
+    }
+
+    timingData.valid = !timingData.firstFieldComposite.empty();
+    return timingData;
+}
+
 // Method to return the decoded VBI data for the frame
 VbiDecoder::Vbi TbcSource::getFrameVbi()
 {

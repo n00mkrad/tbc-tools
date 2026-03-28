@@ -33,6 +33,7 @@
 
 #include "oscilloscopedialog.h"
 #include "vectorscopedialog.h"
+#include "fieldtimingdialog.h"
 #include "aboutdialog.h"
 #include "vbidialog.h"
 #include "dropoutanalysisdialog.h"
@@ -72,6 +73,7 @@ private slots:
     void on_actionSave_Metadata_triggered();
     void on_actionLine_scope_triggered();
     void on_actionVectorscope_triggered();
+    void on_actionField_timing_scope_triggered();
     void on_actionAbout_ld_analyse_triggered();
     void on_actionVBI_triggered();
     void on_actionDropout_analysis_triggered();
@@ -181,6 +183,7 @@ private:
     // Dialogues
     OscilloscopeDialog* oscilloscopeDialog;
     VectorscopeDialog* vectorscopeDialog;
+    FieldTimingDialog* fieldTimingDialog;
     AboutDialog* aboutDialog;
     VbiDialog* vbiDialog;
     DropoutAnalysisDialog* dropoutAnalysisDialog;
@@ -281,6 +284,7 @@ private:
     void cleanupTempMetadataFile();
     void updateOscilloscopeDialogue();
     void updateVectorscopeDialogue();
+    void updateFieldTimingDialogue();
     void populateThemesMenu();
     void applyThemeStyle(const QString &styleName);
     void mouseScanLineSelect(qint32 oX, qint32 oY);

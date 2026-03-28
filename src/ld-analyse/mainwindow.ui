@@ -762,6 +762,7 @@
     </property>
     <addaction name="actionVectorscope"/>
     <addaction name="actionLine_scope"/>
+    <addaction name="actionField_timing_scope"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -880,6 +881,11 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+U</string>
+   </property>
+  </action>
+  <action name="actionField_timing_scope">
+   <property name="text">
+    <string>Field timing scope...</string>
    </property>
   </action>
   <action name="actionVBI">

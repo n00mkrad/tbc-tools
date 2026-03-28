@@ -17,6 +17,7 @@
 #include <QPainter>
 #include <QtConcurrent/QtConcurrent>
 #include <QDebug>
+#include <vector>
 
 // TBC library includes
 #include "sourcevideo.h"
@@ -53,6 +54,22 @@ public:
         qint32 activeVideoStart;
         qint32 activeVideoEnd;
         bool isActiveLine;
+    };
+
+    struct FieldTimingData {
+        qint32 firstFieldNumber = 0;
+        qint32 secondFieldNumber = 0;
+        bool hasSecondField = false;
+        qint32 fieldWidth = 0;
+        qint32 firstFieldHeight = 0;
+        qint32 secondFieldHeight = 0;
+        std::vector<uint16_t> firstFieldComposite;
+        std::vector<uint16_t> secondFieldComposite;
+        std::vector<uint16_t> firstFieldLuma;
+        std::vector<uint16_t> secondFieldLuma;
+        std::vector<uint16_t> firstFieldChroma;
+        std::vector<uint16_t> secondFieldChroma;
+        bool valid = false;
     };
 
     void loadSource(QString inputFileName, QString metadataFilename = QString());
@@ -136,6 +153,7 @@ public:
 
     const ComponentFrame &getComponentFrame();
     ScanLineData getScanLineData(qint32 scanLine);
+    FieldTimingData getFieldTimingData();
 
     qint32 getFirstFieldNumber() const;
     qint32 getSecondFieldNumber() const;

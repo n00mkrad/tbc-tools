@@ -13,6 +13,8 @@ set(ld-analyse_SOURCES
     metadataconverterutil.cpp
     oscilloscopedialog.cpp oscilloscopedialog.ui
     vectorscopedialog.cpp vectorscopedialog.ui
+    fieldtimingdialog.cpp fieldtimingdialog.h
+    fieldtimingwidget.cpp fieldtimingwidget.h
     aboutdialog.cpp aboutdialog.ui
     videoparametersdialog.cpp videoparametersdialog.ui
     chromadecoderconfigdialog.cpp chromadecoderconfigdialog.ui

@@ -60,6 +60,8 @@ public:
                            QString &chromaDecoder, double &chromaGain, double &chromaPhase, double &lumaNR,
                            int &ntscAdaptive, double &ntscAdaptThreshold, double &ntscChromaWeight,
                            int &ntscPhaseCompensation, double &palTransformThreshold,
+                           int &userEditInSelection, int &userEditOutSelection,
+                           int &userMarkerSelection, QString &userMarkerComment,
                            QString &captureNotes);
 
     // Read PCM audio parameters
@@ -125,6 +127,8 @@ public:
                            const QString &chromaDecoder, double chromaGain, double chromaPhase, double lumaNR,
                            int ntscAdaptive, double ntscAdaptThreshold, double ntscChromaWeight,
                            int ntscPhaseCompensation, double palTransformThreshold,
+                           int userEditInSelection, int userEditOutSelection,
+                           int userMarkerSelection, const QString &userMarkerComment,
                            const QString &captureNotes);
 
     // Update existing capture metadata  
@@ -140,6 +144,8 @@ public:
                              const QString &chromaDecoder, double chromaGain, double chromaPhase, double lumaNR,
                              int ntscAdaptive, double ntscAdaptThreshold, double ntscChromaWeight,
                              int ntscPhaseCompensation, double palTransformThreshold,
+                             int userEditInSelection, int userEditOutSelection,
+                             int userMarkerSelection, const QString &userMarkerComment,
                              const QString &captureNotes);
 
     // Write PCM audio parameters

@@ -38,16 +38,14 @@
 #include <QDateTime>
 #include <QFileOpenEvent>
 #include <QMimeData>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonParseError>
 #include <QScreen>
 #include <QtMath>
 #include <QUrl>
-#include <QUuid>
 #include <QClipboard>
+#include <QWheelEvent>
+#include <QWindow>
 #include <QHash>
+#include <QInputDialog>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QTextEdit>
@@ -62,6 +60,7 @@
 #endif
 
 #include "metadataconverterutil.h"
+#include "../audio-align/audioalignmentdialog.h"
 #include "../ld-process-vits/processingpool.h"
 namespace {
 QString chromaDecoderNameFromConfig(VideoSystem system,
@@ -430,6 +429,18 @@ int nominalFrameRateForSystem(VideoSystem system)
     }
 }
 
+qint32 minActiveFrameLineForSystem(VideoSystem system)
+{
+    switch (system) {
+    case PAL:
+        return 2;
+    case PAL_M:
+    case NTSC:
+    default:
+        return 1;
+    }
+}
+
 QString resolveExternalExecutable(const QStringList &toolNames)
 {
     if (toolNames.isEmpty()) {
@@ -642,74 +653,6 @@ bool sameFilePath(const QString &left, const QString &right)
     return normalizedLeft == normalizedRight;
 }
 
-struct ExportAudioTrackEntry {
-    QString filePath;
-    QString trackName;
-};
-
-QList<ExportAudioTrackEntry> readExportAudioTrackPayload(const QString &payloadPath, QString *errorMessage)
-{
-    if (errorMessage) {
-        errorMessage->clear();
-    }
-
-    QFile payloadFile(payloadPath);
-    if (!payloadFile.exists()) {
-        return {};
-    }
-    if (!payloadFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (errorMessage) {
-            *errorMessage = QObject::tr("Unable to read auto audio align export-track payload:\n%1").arg(payloadPath);
-        }
-        return {};
-    }
-
-    const QByteArray payloadData = payloadFile.readAll();
-    payloadFile.close();
-    if (payloadData.trimmed().isEmpty()) {
-        return {};
-    }
-
-    QJsonParseError parseError;
-    const QJsonDocument payloadDoc = QJsonDocument::fromJson(payloadData, &parseError);
-    if (payloadDoc.isNull() || !payloadDoc.isObject()) {
-        if (errorMessage) {
-            *errorMessage = QObject::tr("Invalid auto audio align export-track payload JSON:\n%1")
-                                .arg(parseError.errorString());
-        }
-        return {};
-    }
-
-    const QJsonObject rootObject = payloadDoc.object();
-    const QString payloadFormat = rootObject.value(QStringLiteral("format")).toString().trimmed();
-    if (!payloadFormat.isEmpty()
-        && payloadFormat.compare(QStringLiteral("ld-analyse-export-audio-tracks"), Qt::CaseInsensitive) != 0) {
-        if (errorMessage) {
-            *errorMessage = QObject::tr("Unsupported auto audio align export-track payload format:\n%1")
-                                .arg(payloadFormat);
-        }
-        return {};
-    }
-
-    QList<ExportAudioTrackEntry> trackEntries;
-    const QJsonArray tracksArray = rootObject.value(QStringLiteral("tracks")).toArray();
-    for (const QJsonValue &trackValue : tracksArray) {
-        if (!trackValue.isObject()) {
-            continue;
-        }
-        const QJsonObject trackObject = trackValue.toObject();
-        const QString trackFilePath = trackObject.value(QStringLiteral("file")).toString().trimmed();
-        if (trackFilePath.isEmpty()) {
-            continue;
-        }
-        ExportAudioTrackEntry entry;
-        entry.filePath = trackFilePath;
-        entry.trackName = trackObject.value(QStringLiteral("name")).toString().trimmed();
-        trackEntries.append(entry);
-    }
-
-    return trackEntries;
-}
 
 #if defined(Q_OS_MACOS)
 QString chooseFileViaAppleScript(const QString &startPath)
@@ -787,6 +730,9 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
         connect(ui->mainTabWidget, &QTabWidget::currentChanged, this, [this](int) {
             if (!isViewerTabActive()) {
                 clearCursorReadout();
+                exportBoundaryDragHandle = ExportBoundaryHandle::None;
+                exportBoundarySelectedHandle = ExportBoundaryHandle::None;
+                updateExportBoundaryHoverCursor(QPoint(-1, -1));
                 return;
             }
             if (resizeFrameWithWindow && tbcSource.getIsSourceLoaded() && isViewerTabActive()) {
@@ -875,6 +821,8 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     metadataStatusDialog = new MetadataStatusDialog(this);
     exportDialog = new ExportDialog(this);
     ui->mainTabWidget->addTab(exportDialog, tr("Export"));
+    connect(exportDialog, &ExportDialog::userEditRangeSelectionChanged,
+            this, &MainWindow::exportRangeSelectionChangedSignalHandler);
 
     // Add a status bar to show the state of the source video file
     ui->statusBar->addWidget(&sourceVideoStatus);
@@ -1213,6 +1161,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) {
             if (event->type() == QEvent::MouseMove || event->type() == QEvent::Leave) {
                 clearCursorReadout();
+                updateExportBoundaryHoverCursor(QPoint(-1, -1));
             }
             return QMainWindow::eventFilter(watched, event);
         }
@@ -1227,8 +1176,28 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             }
             const QPoint viewerPos = ui->imageViewerLabel->mapFromGlobal(globalPos);
             updateCursorReadout(viewerPos);
+            if (exportBoundaryDragHandle == ExportBoundaryHandle::None) {
+                updateExportBoundaryHoverCursor(viewerPos);
+            }
+        } else if (event->type() == QEvent::Wheel) {
+            if (exportBoundarySelectedHandle == ExportBoundaryHandle::None) {
+                return QMainWindow::eventFilter(watched, event);
+            }
+            const auto *wheelEvent = static_cast<QWheelEvent *>(event);
+            const int rawDelta = (wheelEvent->angleDelta().y() != 0)
+                                     ? wheelEvent->angleDelta().y()
+                                     : wheelEvent->pixelDelta().y();
+            if (rawDelta == 0) {
+                return QMainWindow::eventFilter(watched, event);
+            }
+            const qint32 step = (rawDelta > 0) ? -1 : 1;
+            applyExportBoundaryWheelStep(step);
+            updateExportBoundaryHoverCursor(QPoint(-1, -1));
+            event->accept();
+            return true;
         } else if (event->type() == QEvent::Leave) {
             clearCursorReadout();
+            updateExportBoundaryHoverCursor(QPoint(-1, -1));
         }
     }
 
@@ -1492,6 +1461,9 @@ void MainWindow::updateGuiUnloaded()
 {
     setPlaybackRunning(false);
     vectorscopeSelectionDragging = false;
+    exportBoundaryDragHandle = ExportBoundaryHandle::None;
+    exportBoundarySelectedHandle = ExportBoundaryHandle::None;
+    updateExportBoundaryHoverCursor(QPoint(-1, -1));
     if (vectorscopeSelectionPushButton) {
         vectorscopeSelectionPushButton->setChecked(false);
     }
@@ -2059,11 +2031,253 @@ QVector<QRect> MainWindow::getActiveVideoRects() const
 
     return rects;
 }
+
+bool MainWindow::isExportBoundaryDragAvailable() const
+{
+    if (!showExportBoundary || !tbcSource.getIsSourceLoaded() || !isViewerTabActive()) {
+        return false;
+    }
+    if (!ui || !ui->imageViewerLabel || !ui->mouseModePushButton) {
+        return false;
+    }
+    if (ui->mouseModePushButton->isChecked()) {
+        return false;
+    }
+    if (vectorscopeSelectionDragging) {
+        return false;
+    }
+    if (vectorscopeSelectionPushButton && vectorscopeSelectionPushButton->isChecked()) {
+        return false;
+    }
+    if (tbcSource.getViewMode() != TbcSource::ViewMode::FRAME_VIEW) {
+        return false;
+    }
+    return !getActiveVideoRects().isEmpty();
+}
+
+MainWindow::ExportBoundaryHandle MainWindow::exportBoundaryHandleAtViewerPoint(const QPoint &viewerPoint) const
+{
+    if (!isExportBoundaryDragAvailable()) {
+        return ExportBoundaryHandle::None;
+    }
+
+    qint32 sourceX = 0;
+    qint32 sourceY = 0;
+    if (!mapViewerToSourceCoordinates(viewerPoint, sourceX, sourceY)) {
+        return ExportBoundaryHandle::None;
+    }
+
+    const QVector<QRect> activeRects = getActiveVideoRects();
+    if (activeRects.isEmpty()) {
+        return ExportBoundaryHandle::None;
+    }
+    const QRect activeRect = activeRects.first();
+    if (activeRect.width() <= 0 || activeRect.height() <= 0) {
+        return ExportBoundaryHandle::None;
+    }
+
+    const qint32 left = activeRect.left();
+    const qint32 right = activeRect.right();
+    const qint32 top = activeRect.top();
+    const qint32 bottom = activeRect.bottom();
+    const qint32 handleTolerance = qMax<qint32>(
+        2,
+        static_cast<qint32>(qCeil(6.0 / qMax(0.1, scaleFactor))));
+
+    ExportBoundaryHandle bestHandle = ExportBoundaryHandle::None;
+    qint32 bestDistance = handleTolerance + 1;
+    const auto considerHandle = [&](ExportBoundaryHandle handle, qint32 distance) {
+        if (distance > handleTolerance) {
+            return;
+        }
+        if (bestHandle == ExportBoundaryHandle::None || distance < bestDistance) {
+            bestHandle = handle;
+            bestDistance = distance;
+        }
+    };
+
+    if (sourceY >= top - handleTolerance && sourceY <= bottom + handleTolerance) {
+        considerHandle(ExportBoundaryHandle::Left, qAbs(sourceX - left));
+        considerHandle(ExportBoundaryHandle::Right, qAbs(sourceX - right));
+    }
+    if (sourceX >= left - handleTolerance && sourceX <= right + handleTolerance) {
+        considerHandle(ExportBoundaryHandle::Top, qAbs(sourceY - top));
+    }
+
+    return bestHandle;
+}
+
+void MainWindow::updateExportBoundaryHoverCursor(const QPoint &viewerPoint)
+{
+    if (!ui || !ui->imageViewerLabel) {
+        return;
+    }
+    ExportBoundaryHandle hoverHandle = ExportBoundaryHandle::None;
+    if (exportBoundaryDragHandle != ExportBoundaryHandle::None) {
+        hoverHandle = exportBoundaryDragHandle;
+    } else {
+        hoverHandle = exportBoundaryHandleAtViewerPoint(viewerPoint);
+        if (hoverHandle == ExportBoundaryHandle::None
+            && exportBoundarySelectedHandle != ExportBoundaryHandle::None
+            && isExportBoundaryDragAvailable()) {
+            hoverHandle = exportBoundarySelectedHandle;
+        }
+    }
+
+    Qt::CursorShape cursorShape = Qt::ArrowCursor;
+    if (hoverHandle == ExportBoundaryHandle::Top) {
+        cursorShape = Qt::SizeVerCursor;
+    } else if (hoverHandle == ExportBoundaryHandle::Left
+               || hoverHandle == ExportBoundaryHandle::Right) {
+        cursorShape = Qt::SizeHorCursor;
+    }
+
+    if (ui->imageViewerLabel->cursor().shape() != cursorShape) {
+        ui->imageViewerLabel->setCursor(cursorShape);
+    }
+    if (ui->scrollArea && ui->scrollArea->viewport()
+        && ui->scrollArea->viewport()->cursor().shape() != cursorShape) {
+        ui->scrollArea->viewport()->setCursor(cursorShape);
+    }
+}
+
+void MainWindow::applyExportBoundaryDragAtViewerPoint(const QPoint &viewerPoint)
+{
+    if (exportBoundaryDragHandle == ExportBoundaryHandle::None || !isExportBoundaryDragAvailable()) {
+        return;
+    }
+
+    qint32 sourceX = 0;
+    qint32 sourceY = 0;
+    if (!mapViewerToSourceCoordinates(viewerPoint, sourceX, sourceY)) {
+        return;
+    }
+
+    LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
+    bool changed = false;
+
+    switch (exportBoundaryDragHandle) {
+    case ExportBoundaryHandle::Top: {
+        const qint32 minimumLine = minActiveFrameLineForSystem(videoParameters.system);
+        const qint32 maximumLine = qMax(minimumLine, videoParameters.lastActiveFrameLine);
+        const qint32 targetFirstActiveFrameLine = qBound(minimumLine, sourceY, maximumLine);
+        if (videoParameters.firstActiveFrameLine != targetFirstActiveFrameLine) {
+            videoParameters.firstActiveFrameLine = targetFirstActiveFrameLine;
+            changed = true;
+        }
+        break;
+    }
+    case ExportBoundaryHandle::Left: {
+        const qint32 minimumStart = qBound<qint32>(
+            0,
+            videoParameters.colourBurstEnd,
+            qMax<qint32>(0, videoParameters.fieldWidth - 1));
+        const qint32 maximumStart = qMax(minimumStart, videoParameters.activeVideoEnd - 1);
+        const qint32 targetActiveVideoStart = qBound(minimumStart, sourceX, maximumStart);
+        if (videoParameters.activeVideoStart != targetActiveVideoStart) {
+            videoParameters.activeVideoStart = targetActiveVideoStart;
+            changed = true;
+        }
+        break;
+    }
+    case ExportBoundaryHandle::Right: {
+        const qint32 minimumEnd = videoParameters.activeVideoStart + 1;
+        const qint32 maximumEnd = qMax(minimumEnd, videoParameters.fieldWidth);
+        const qint32 targetActiveVideoEnd = qBound(minimumEnd, sourceX + 1, maximumEnd);
+        if (videoParameters.activeVideoEnd != targetActiveVideoEnd) {
+            videoParameters.activeVideoEnd = targetActiveVideoEnd;
+            changed = true;
+        }
+        break;
+    }
+    case ExportBoundaryHandle::None:
+    default:
+        break;
+    }
+
+    if (!changed) {
+        return;
+    }
+
+    if (videoParametersDialog) {
+        videoParametersDialog->setVideoParameters(videoParameters);
+    }
+    videoParametersChangedSignalHandler(videoParameters);
+}
+
+void MainWindow::applyExportBoundaryWheelStep(qint32 step)
+{
+    if (step == 0 || exportBoundarySelectedHandle == ExportBoundaryHandle::None) {
+        return;
+    }
+    if (!isExportBoundaryDragAvailable()) {
+        exportBoundarySelectedHandle = ExportBoundaryHandle::None;
+        return;
+    }
+
+    LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
+    bool changed = false;
+    switch (exportBoundarySelectedHandle) {
+    case ExportBoundaryHandle::Top: {
+        const qint32 minimumLine = minActiveFrameLineForSystem(videoParameters.system);
+        const qint32 maximumLine = qMax(minimumLine, videoParameters.lastActiveFrameLine);
+        const qint32 targetFirstActiveFrameLine = qBound(minimumLine,
+                                                         videoParameters.firstActiveFrameLine + step,
+                                                         maximumLine);
+        if (videoParameters.firstActiveFrameLine != targetFirstActiveFrameLine) {
+            videoParameters.firstActiveFrameLine = targetFirstActiveFrameLine;
+            changed = true;
+        }
+        break;
+    }
+    case ExportBoundaryHandle::Left: {
+        const qint32 minimumStart = qBound<qint32>(
+            0,
+            videoParameters.colourBurstEnd,
+            qMax<qint32>(0, videoParameters.fieldWidth - 1));
+        const qint32 maximumStart = qMax(minimumStart, videoParameters.activeVideoEnd - 1);
+        const qint32 targetActiveVideoStart = qBound(minimumStart,
+                                                     videoParameters.activeVideoStart + step,
+                                                     maximumStart);
+        if (videoParameters.activeVideoStart != targetActiveVideoStart) {
+            videoParameters.activeVideoStart = targetActiveVideoStart;
+            changed = true;
+        }
+        break;
+    }
+    case ExportBoundaryHandle::Right: {
+        const qint32 minimumEnd = videoParameters.activeVideoStart + 1;
+        const qint32 maximumEnd = qMax(minimumEnd, videoParameters.fieldWidth);
+        const qint32 targetActiveVideoEnd = qBound(minimumEnd,
+                                                   videoParameters.activeVideoEnd + step,
+                                                   maximumEnd);
+        if (videoParameters.activeVideoEnd != targetActiveVideoEnd) {
+            videoParameters.activeVideoEnd = targetActiveVideoEnd;
+            changed = true;
+        }
+        break;
+    }
+    case ExportBoundaryHandle::None:
+    default:
+        break;
+    }
+
+    if (!changed) {
+        return;
+    }
+    if (videoParametersDialog) {
+        videoParametersDialog->setVideoParameters(videoParameters);
+    }
+    videoParametersChangedSignalHandler(videoParameters);
+}
 // Method to hide the current image
 void MainWindow::hideImage()
 {
     ui->imageViewerLabel->clear();
     vectorscopeSelectionDragging = false;
+    exportBoundaryDragHandle = ExportBoundaryHandle::None;
+    exportBoundarySelectedHandle = ExportBoundaryHandle::None;
+    updateExportBoundaryHoverCursor(QPoint(-1, -1));
     cursorReadoutImage = QImage();
     clearCursorReadout();
 }
@@ -3377,12 +3591,6 @@ void MainWindow::on_actionFix_JSON_SNR_triggered()
 
 void MainWindow::on_actionAuto_Audio_Align_triggered()
 {
-    const QString toolPath = resolveExternalExecutable({QStringLiteral("tbc-audio-align")});
-    if (toolPath.isEmpty()) {
-        QMessageBox::warning(this, tr("Tool not found"),
-                             tr("tbc-audio-align was not found in PATH or alongside the application."));
-        return;
-    }
 
     QString defaultJsonPath;
     if (metadataJsonLoaded && !metadataJsonFilename.isEmpty()) {
@@ -3419,111 +3627,58 @@ void MainWindow::on_actionAuto_Audio_Align_triggered()
         }
     }
 
-    QStringList arguments;
-    if (!defaultJsonPath.isEmpty()) {
-        arguments << QStringLiteral("--json") << defaultJsonPath;
+    if (!audioAlignmentDialog) {
+        audioAlignmentDialog = new AudioAlignmentDialog(this);
+        audioAlignmentDialog->setModal(false);
+        audioAlignmentDialog->setWindowModality(Qt::NonModal);
+        audioAlignmentDialog->setWindowFlags(Qt::Window
+                                             | Qt::CustomizeWindowHint
+                                             | Qt::WindowTitleHint
+                                             | Qt::WindowSystemMenuHint
+                                             | Qt::WindowMinimizeButtonHint
+                                             | Qt::WindowCloseButtonHint);
+        audioAlignmentDialog->setAttribute(Qt::WA_TranslucentBackground, false);
+        audioAlignmentDialog->setAttribute(Qt::WA_NoSystemBackground, false);
+        audioAlignmentDialog->setAutoFillBackground(true);
+        audioAlignmentDialog->setWindowOpacity(1.0);
+        connect(audioAlignmentDialog, &QObject::destroyed, this, [this]() {
+            audioAlignmentDialog = nullptr;
+        });
+        connect(audioAlignmentDialog,
+                &AudioAlignmentDialog::exportTracksPrepared,
+                this,
+                [this](const QStringList &trackFiles, const QStringList &trackNames) {
+            if (!exportDialog || trackFiles.isEmpty()) {
+                return;
+            }
+            exportDialog->loadAudioTracksForExport(trackFiles, trackNames);
+            if (ui && ui->mainTabWidget) {
+                ui->mainTabWidget->setCurrentWidget(exportDialog);
+            }
+            statusBar()->showMessage(tr("Loaded %1 aligned audio track(s) into Export.")
+                                         .arg(trackFiles.size()),
+                                     5000);
+        });
     }
+    audioAlignmentDialog->setModal(false);
+    audioAlignmentDialog->setWindowModality(Qt::NonModal);
+    audioAlignmentDialog->setWindowOpacity(1.0);
 
     const QString sourceDirectory = configuration.getSourceDirectory();
     if (!sourceDirectory.isEmpty()) {
-        arguments << QStringLiteral("--source-dir") << sourceDirectory;
+        audioAlignmentDialog->setSourceDirectory(sourceDirectory);
     }
-    const QString exportTrackPayloadPath = QDir::temp().filePath(
-        QStringLiteral("ld-analyse-auto-audio-align-tracks-%1.json")
-            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
-    arguments << QStringLiteral("--export-track-file") << exportTrackPayloadPath;
-
-    QProcess *audioAlignProcess = new QProcess(this);
-    audioAlignProcess->setProcessChannelMode(QProcess::MergedChannels);
-    audioAlignProcess->setProperty("autoAudioAlignTracksLoaded", false);
-    auto tryLoadExportTracks = [this, audioAlignProcess, exportTrackPayloadPath](bool showStatusMessage,
-                                                                                  QString *payloadErrorOut = nullptr) -> bool {
-        if (payloadErrorOut) {
-            payloadErrorOut->clear();
-        }
-        if (audioAlignProcess->property("autoAudioAlignTracksLoaded").toBool()) {
-            return true;
-        }
-
-        QString payloadError;
-        const QList<ExportAudioTrackEntry> trackEntries = readExportAudioTrackPayload(exportTrackPayloadPath, &payloadError);
-        if (payloadErrorOut) {
-            *payloadErrorOut = payloadError;
-        }
-        if (!payloadError.isEmpty() || trackEntries.isEmpty() || !exportDialog) {
-            return false;
-        }
-
-        QStringList trackFiles;
-        QStringList trackNames;
-        trackFiles.reserve(trackEntries.size());
-        trackNames.reserve(trackEntries.size());
-        for (const ExportAudioTrackEntry &trackEntry : trackEntries) {
-            trackFiles << trackEntry.filePath;
-            trackNames << trackEntry.trackName;
-        }
-        exportDialog->loadAudioTracksForExport(trackFiles, trackNames);
-        if (ui && ui->mainTabWidget) {
-            ui->mainTabWidget->setCurrentWidget(exportDialog);
-        }
-        audioAlignProcess->setProperty("autoAudioAlignTracksLoaded", true);
-        if (showStatusMessage) {
-            statusBar()->showMessage(tr("Loaded %1 aligned audio track(s) into Export.").arg(trackFiles.size()), 5000);
-        }
-        return true;
-    };
-    QTimer *payloadWatchTimer = new QTimer(audioAlignProcess);
-    payloadWatchTimer->setInterval(300);
-    connect(payloadWatchTimer, &QTimer::timeout, this, [tryLoadExportTracks]() {
-        tryLoadExportTracks(true, nullptr);
-    });
-    connect(audioAlignProcess,
-            &QProcess::finished,
-            this,
-            [this, audioAlignProcess, exportTrackPayloadPath, payloadWatchTimer, tryLoadExportTracks]
-            (int exitCode, QProcess::ExitStatus exitStatus) {
-        if (payloadWatchTimer) {
-            payloadWatchTimer->stop();
-        }
-        const QString processOutput = QString::fromLocal8Bit(audioAlignProcess->readAllStandardOutput()).trimmed();
-        const bool processSucceeded = exitStatus == QProcess::NormalExit && exitCode == 0;
-
-        QString payloadError;
-        const bool tracksLoaded = tryLoadExportTracks(true, &payloadError);
-        QFile::remove(exportTrackPayloadPath);
-
-        if (!processSucceeded) {
-            const QString failureMessage = processOutput.isEmpty()
-                                               ? tr("Auto Audio Align closed with an error.")
-                                               : processOutput;
-            statusBar()->showMessage(failureMessage, 5000);
-            audioAlignProcess->deleteLater();
-            return;
-        }
-        if (!tracksLoaded && !payloadError.isEmpty()) {
-            QMessageBox::warning(this, tr("Auto Audio Align"), payloadError);
-            statusBar()->showMessage(tr("Auto Audio Align completed, but Export tracks were not loaded."), 5000);
-            audioAlignProcess->deleteLater();
-            return;
-        }
-        if (!tracksLoaded) {
-            statusBar()->showMessage(tr("Auto Audio Align completed."), 5000);
-        }
-
-        audioAlignProcess->deleteLater();
-    });
-    audioAlignProcess->start(toolPath, arguments);
-    if (!audioAlignProcess->waitForStarted(3000)) {
-        if (payloadWatchTimer) {
-            payloadWatchTimer->stop();
-        }
-        audioAlignProcess->deleteLater();
-        QFile::remove(exportTrackPayloadPath);
-        QMessageBox::warning(this, tr("Tool launch failed"),
-                             tr("Unable to launch tbc-audio-align."));
-        return;
+    audioAlignmentDialog->setExportTrackOutputFile(QString());
+    if (!defaultJsonPath.isEmpty()) {
+        audioAlignmentDialog->setDefaultJson(defaultJsonPath);
     }
-    payloadWatchTimer->start();
+
+    audioAlignmentDialog->show();
+    if (audioAlignmentDialog->windowHandle() && windowHandle()) {
+        audioAlignmentDialog->windowHandle()->setTransientParent(windowHandle());
+    }
+    audioAlignmentDialog->raise();
+    audioAlignmentDialog->activateWindow();
 
     if (!defaultJsonPath.isEmpty()) {
         statusBar()->showMessage(tr("Opened Auto Audio Align with %1").arg(defaultJsonPath), 5000);
@@ -4199,8 +4354,15 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
     if (tbcSource.getFieldViewEnabled()) {
         framePoint = (playbackPositionValue + 1) / 2;
     }
-    framePoint = qBound(1, framePoint, qMax(1, tbcSource.getNumberOfFrames()));
+    const int totalFrames = qMax(1, tbcSource.getNumberOfFrames());
+    framePoint = qBound(1, framePoint, totalFrames);
     const QString framePointTimecode = frameToTimecode(framePoint);
+    const LdDecodeMetaData::VideoParameters currentVideoParameters = tbcSource.getVideoParameters();
+    const bool markerSet = currentVideoParameters.userMarkerSelection > 0
+                           && currentVideoParameters.userMarkerSelection <= totalFrames;
+    const int markerFrame = markerSet ? currentVideoParameters.userMarkerSelection : -1;
+    const QString markerTimecode = markerSet ? frameToTimecode(markerFrame) : QString();
+    const bool markerMetadataSet = markerSet || !currentVideoParameters.userMarkerComment.isEmpty();
 
     QMenu sliderMenu(this);
     QAction *setInPointAction = sliderMenu.addAction(tr("Set In Point (%1 | %2)")
@@ -4209,10 +4371,43 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
     QAction *setOutPointAction = sliderMenu.addAction(tr("Set Out Point (%1 | %2)")
                                                          .arg(framePoint)
                                                          .arg(framePointTimecode));
+    sliderMenu.addSeparator();
+    QAction *setMarkerAction = sliderMenu.addAction(tr("Set Marker (%1 | %2)")
+                                                        .arg(framePoint)
+                                                        .arg(framePointTimecode));
+    QAction *setMarkerCommentAction = sliderMenu.addAction(tr("Set Marker Comment..."));
+    QAction *editMarkerCommentAction = sliderMenu.addAction(tr("Edit Existing Marker Comment..."));
+    editMarkerCommentAction->setEnabled(markerSet);
+    QAction *clearMarkerAction = sliderMenu.addAction(markerSet
+                                                          ? tr("Clear Marker (%1 | %2)")
+                                                                .arg(markerFrame)
+                                                                .arg(markerTimecode)
+                                                          : tr("Clear Marker"));
+    clearMarkerAction->setEnabled(markerMetadataSet);
     QAction *selectedAction = sliderMenu.exec(ui->posHorizontalSlider->mapToGlobal(pos));
     if (!selectedAction) {
         return;
     }
+
+    auto updateMarkerMetadata = [this](qint32 markerSelection, const QString &markerComment) {
+        LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
+        bool changed = false;
+        if (videoParameters.userMarkerSelection != markerSelection) {
+            videoParameters.userMarkerSelection = markerSelection;
+            changed = true;
+        }
+        if (videoParameters.userMarkerComment != markerComment) {
+            videoParameters.userMarkerComment = markerComment;
+            changed = true;
+        }
+        if (!changed) {
+            return false;
+        }
+        tbcSource.setVideoParameters(videoParameters);
+        ui->actionSave_Metadata->setEnabled(true);
+        updateMetadataStatusPanel();
+        return true;
+    };
     if (selectedAction == setInPointAction) {
         exportDialog->setInPoint(framePoint);
         statusBar()->showMessage(tr("Export In point set to frame %1 (%2)")
@@ -4223,6 +4418,51 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
         statusBar()->showMessage(tr("Export Out point set to frame %1 (%2)")
                                      .arg(framePoint)
                                      .arg(framePointTimecode), 3000);
+    } else if (selectedAction == setMarkerAction) {
+        updateMarkerMetadata(framePoint, currentVideoParameters.userMarkerComment);
+        statusBar()->showMessage(tr("Marker set to frame %1 (%2)")
+                                     .arg(framePoint)
+                                     .arg(framePointTimecode), 3000);
+    } else if (selectedAction == setMarkerCommentAction) {
+        bool ok = false;
+        const QString initialComment = (markerSet && markerFrame == framePoint)
+            ? currentVideoParameters.userMarkerComment
+            : QString();
+        const QString markerComment = QInputDialog::getText(this,
+                                                            tr("Set Marker Comment"),
+                                                            tr("Comment for marker frame %1 (%2):")
+                                                                .arg(framePoint)
+                                                                .arg(framePointTimecode),
+                                                            QLineEdit::Normal,
+                                                            initialComment,
+                                                            &ok);
+        if (!ok) {
+            return;
+        }
+        updateMarkerMetadata(framePoint, markerComment.trimmed());
+        statusBar()->showMessage(tr("Marker comment updated at frame %1 (%2)")
+                                     .arg(framePoint)
+                                     .arg(framePointTimecode), 3000);
+    } else if (selectedAction == editMarkerCommentAction && markerSet) {
+        bool ok = false;
+        const QString markerComment = QInputDialog::getText(this,
+                                                            tr("Edit Marker Comment"),
+                                                            tr("Comment for marker frame %1 (%2):")
+                                                                .arg(markerFrame)
+                                                                .arg(markerTimecode),
+                                                            QLineEdit::Normal,
+                                                            currentVideoParameters.userMarkerComment,
+                                                            &ok);
+        if (!ok) {
+            return;
+        }
+        updateMarkerMetadata(markerFrame, markerComment.trimmed());
+        statusBar()->showMessage(tr("Marker comment updated at frame %1 (%2)")
+                                     .arg(markerFrame)
+                                     .arg(markerTimecode), 3000);
+    } else if (selectedAction == clearMarkerAction) {
+        updateMarkerMetadata(-1, QString());
+        statusBar()->showMessage(tr("Marker cleared"), 3000);
     }
 }
 
@@ -4570,6 +4810,8 @@ void MainWindow::on_originalSizePushButton_clicked()
 void MainWindow::on_mouseModePushButton_clicked()
 {
     if (ui->mouseModePushButton->isChecked()) {
+        exportBoundaryDragHandle = ExportBoundaryHandle::None;
+        exportBoundarySelectedHandle = ExportBoundaryHandle::None;
         if (vectorscopeSelectionPushButton && vectorscopeSelectionPushButton->isChecked()) {
             vectorscopeSelectionPushButton->setChecked(false);
         }
@@ -4587,6 +4829,10 @@ void MainWindow::on_mouseModePushButton_clicked()
 void MainWindow::on_vectorscopeSelectionPushButton_toggled(bool checked)
 {
     vectorscopeSelectionDragging = false;
+    if (checked) {
+        exportBoundaryDragHandle = ExportBoundaryHandle::None;
+        exportBoundarySelectedHandle = ExportBoundaryHandle::None;
+    }
     if (checked && ui->mouseModePushButton && ui->mouseModePushButton->isChecked()) {
         ui->mouseModePushButton->setChecked(false);
     }
@@ -4668,6 +4914,24 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
             event->accept();
             return;
         }
+        if (event->button() == Qt::LeftButton && isExportBoundaryDragAvailable()) {
+            const ExportBoundaryHandle dragHandle = exportBoundaryHandleAtViewerPoint(origin);
+            if (dragHandle != ExportBoundaryHandle::None) {
+                exportBoundarySelectedHandle = dragHandle;
+                exportBoundaryDragHandle = dragHandle;
+                applyExportBoundaryDragAtViewerPoint(origin);
+                updateExportBoundaryHoverCursor(origin);
+                event->accept();
+                return;
+            }
+        }
+        if (event->button() == Qt::LeftButton) {
+            exportBoundarySelectedHandle = ExportBoundaryHandle::None;
+            exportBoundaryDragHandle = ExportBoundaryHandle::None;
+        }
+        if (exportBoundaryDragHandle == ExportBoundaryHandle::None) {
+            updateExportBoundaryHoverCursor(origin);
+        }
 
         mouseScanLineSelect(oX, oY);
         event->accept();
@@ -4690,6 +4954,17 @@ void MainWindow::mouseMoveEvent(QMouseEvent *event)
 
     // Get the mouse position relative to our scene
     QPoint origin = ui->imageViewerLabel->mapFromGlobal(QCursor::pos());
+    if (exportBoundaryDragHandle != ExportBoundaryHandle::None
+        && !(event->buttons() & Qt::LeftButton)) {
+        exportBoundaryDragHandle = ExportBoundaryHandle::None;
+    }
+    if (exportBoundaryDragHandle != ExportBoundaryHandle::None
+        && (event->buttons() & Qt::LeftButton)) {
+        applyExportBoundaryDragAtViewerPoint(origin);
+        updateExportBoundaryHoverCursor(origin);
+        event->accept();
+        return;
+    }
 
     // Check that the mouse click is within bounds of the current picture
     qint32 oX = origin.x();
@@ -4714,6 +4989,9 @@ void MainWindow::mouseMoveEvent(QMouseEvent *event)
             event->accept();
             return;
         }
+        if (exportBoundaryDragHandle == ExportBoundaryHandle::None) {
+            updateExportBoundaryHoverCursor(origin);
+        }
 
         mouseScanLineSelect(oX, oY);
         event->accept();
@@ -4722,6 +5000,9 @@ void MainWindow::mouseMoveEvent(QMouseEvent *event)
 
     if (!vectorscopeSelectionDragging) {
         clearCursorReadout();
+        if (exportBoundaryDragHandle == ExportBoundaryHandle::None) {
+            updateExportBoundaryHoverCursor(QPoint(-1, -1));
+        }
     }
     QMainWindow::mouseMoveEvent(event);
 }
@@ -4751,6 +5032,15 @@ void MainWindow::mouseReleaseEvent(QMouseEvent *event)
             updateVectorscopeDialogue();
         }
         updateImageViewer();
+        event->accept();
+        return;
+    }
+    if (event->button() == Qt::LeftButton
+        && exportBoundaryDragHandle != ExportBoundaryHandle::None) {
+        QPoint origin = ui->imageViewerLabel->mapFromGlobal(QCursor::pos());
+        applyExportBoundaryDragAtViewerPoint(origin);
+        exportBoundaryDragHandle = ExportBoundaryHandle::None;
+        updateExportBoundaryHoverCursor(origin);
         event->accept();
         return;
     }
@@ -4815,10 +5105,44 @@ void MainWindow::videoLevelsChangedSignalHandler(qint32 blackLevel, qint32 white
     videoParameters.white16bIre = whiteLevel;
     videoParametersChangedSignalHandler(videoParameters);
 }
+void MainWindow::exportRangeSelectionChangedSignalHandler(int inPoint, int outPoint, bool clearMetadataValues)
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        return;
+    }
+
+    const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+    qint32 clampedIn = qBound<qint32>(1, inPoint, totalFrames);
+    qint32 clampedOut = qBound<qint32>(1, outPoint, totalFrames);
+    if (clampedOut < clampedIn) {
+        clampedOut = clampedIn;
+    }
+
+    const qint32 metadataIn = clearMetadataValues ? -1 : clampedIn;
+    const qint32 metadataOut = clearMetadataValues ? -1 : clampedOut;
+
+    LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
+    if (videoParameters.userEditInSelection == metadataIn
+        && videoParameters.userEditOutSelection == metadataOut) {
+        return;
+    }
+
+    videoParameters.userEditInSelection = metadataIn;
+    videoParameters.userEditOutSelection = metadataOut;
+    tbcSource.setVideoParameters(videoParameters);
+
+    ui->actionSave_Metadata->setEnabled(true);
+    updateMetadataStatusPanel();
+}
 
 void MainWindow::exportBoundaryToggledSignalHandler(bool enabled)
 {
     showExportBoundary = enabled;
+    if (!enabled) {
+        exportBoundaryDragHandle = ExportBoundaryHandle::None;
+        exportBoundarySelectedHandle = ExportBoundaryHandle::None;
+        updateExportBoundaryHoverCursor(QPoint(-1, -1));
+    }
     configuration.setShowExportBoundary(enabled);
     configuration.writeConfiguration();
 

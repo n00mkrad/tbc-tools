@@ -88,6 +88,10 @@ public:
 
         QString gitBranch;
         QString gitCommit;
+        qint32 userEditInSelection = -1;
+        qint32 userEditOutSelection = -1;
+        qint32 userMarkerSelection = -1;
+        QString userMarkerComment;
 
         // -- Members set by the library --
 

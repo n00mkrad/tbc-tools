@@ -4,6 +4,8 @@ add_compile_definitions(_USE_MATH_DEFINES)
 set(ld-analyse_SOURCES
     blacksnranalysisdialog.cpp blacksnranalysisdialog.ui
     busydialog.cpp busydialog.ui
+    ../audio-align/audioalignmentdialog.cpp ../audio-align/audioalignmentdialog.h ../audio-align/audioalignmentdialog.ui
+    ../audio-align/audioalignmentutil.cpp ../audio-align/audioalignmentutil.h
     closedcaptionsdialog.cpp closedcaptionsdialog.ui
     exportdialog.cpp exportdialog.ui
     metadataconversiondialog.cpp metadataconversiondialog.ui
@@ -57,6 +59,23 @@ target_include_directories(ld-analyse PRIVATE
 target_link_libraries(ld-analyse PRIVATE
     Qt::Core Qt::Gui Qt::Widgets Qt::Svg
     lddecode-library lddecode-chroma
+)
+
+set(_audio_align_vendor_dir "${CMAKE_SOURCE_DIR}/src/audio-align/vendor/vhs_decode_auto_audio_align")
+target_compile_definitions(ld-analyse PRIVATE
+    AUDIO_ALIGN_VENDOR_DIR="${_audio_align_vendor_dir}"
+)
+add_custom_command(TARGET ld-analyse POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ld-analyse>/vendor/vhs_decode_auto_audio_align"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${_audio_align_vendor_dir}/VhsDecodeAutoAudioAlign.exe"
+        "${_audio_align_vendor_dir}/Binah.dll"
+        "${_audio_align_vendor_dir}/LICENSE-app.txt"
+        "${_audio_align_vendor_dir}/LICENSE-Binah.txt"
+        "${_audio_align_vendor_dir}/CHANGELOG.md"
+        "${_audio_align_vendor_dir}/build-info.txt"
+        "${_audio_align_vendor_dir}/VENDOR_INFO.txt"
+        "$<TARGET_FILE_DIR:ld-analyse>/vendor/vhs_decode_auto_audio_align"
 )
 
 if(WIN32)

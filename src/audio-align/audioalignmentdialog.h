@@ -13,10 +13,14 @@
 
 #include <QDialog>
 #include <QtGlobal>
+#include <QVector>
+#include <QStringList>
 
 namespace Ui {
 class AudioAlignmentDialog;
 }
+class QCloseEvent;
+class QThread;
 
 class AudioAlignmentDialog : public QDialog
 {
@@ -32,6 +36,10 @@ public:
     void setDefaultOutputFile(const QString &outputFilename);
     void setDefaultRfVideoSampleRate(quint32 sampleRateHz);
     void setExportTrackOutputFile(const QString &outputFilename);
+signals:
+    void exportTracksPrepared(const QStringList &trackFiles, const QStringList &trackNames);
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void on_jsonBrowseButton_clicked();
@@ -42,6 +50,27 @@ private slots:
     void on_alignButton_clicked();
 
 private:
+    struct AlignmentTrackRequest {
+        bool isLinearTrack = false;
+        QString trackLabel;
+        QString inputFile;
+        QString outputFile;
+    };
+    struct AlignmentRunResult {
+        bool success = false;
+        bool linearAligned = false;
+        bool hifiAligned = false;
+        QString linearOutputFile;
+        QString hifiOutputFile;
+        QString failureTrackLabel;
+        QString errorMessage;
+    };
+    void setAlignmentUiBusy(bool busy);
+    void startAlignmentRun(const QString &jsonFileName,
+                           const QVector<AlignmentTrackRequest> &trackRequests,
+                           bool overwriteOutput,
+                           quint32 rfVideoSampleRateHz);
+    void finishAlignmentRun(const AlignmentRunResult &result);
     void updateLinearOutputFromInput(bool forceOutputUpdate);
     void updateHifiOutputFromInput(bool forceOutputUpdate);
     void tryAutoDetectInputsFromJson(bool forceReplaceInputs);
@@ -56,6 +85,8 @@ private:
     QString exportTrackOutputFile;
     bool userEditedLinearOutput = false;
     bool userEditedHifiOutput = false;
+    bool alignmentInProgress = false;
+    QThread *alignmentWorkerThread = nullptr;
 };
 
 #endif // AUDIOALIGNMENTDIALOG_H

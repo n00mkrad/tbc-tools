@@ -1340,6 +1340,7 @@ ExportDialog::ExportDialog(QWidget *parent) :
             }
             updateRangeLengthLabel();
             syncRangeTimecodeEditors();
+            emitRangeSelectionChanged(false);
         });
         connect(ui->outPointSpinBox, &QSpinBox::valueChanged, this, [this](int value) {
             if (!ui->inPointSpinBox) {
@@ -1350,6 +1351,7 @@ ExportDialog::ExportDialog(QWidget *parent) :
             }
             updateRangeLengthLabel();
             syncRangeTimecodeEditors();
+            emitRangeSelectionChanged(false);
         });
     }
     if (ui->inPointSpinBox && ui->outPointSpinBox
@@ -1721,6 +1723,24 @@ void ExportDialog::updateOutputResolutionModeControlsEnabledState(bool enabled)
         ui->outputResolutionModeComboBox->setEnabled(enabled && outputModeRelevant);
     }
 }
+void ExportDialog::emitRangeSelectionChanged(bool clearMetadataValues)
+{
+    if (!ui || !ui->inPointSpinBox || !ui->outPointSpinBox) {
+        return;
+    }
+    if (!tbcSource || !tbcSource->getIsSourceLoaded() || tbcSource->getIsMetadataOnly()) {
+        return;
+    }
+
+    const int totalFrames = qMax(1, tbcSource->getNumberOfFrames());
+    int inPoint = qBound(1, ui->inPointSpinBox->value(), totalFrames);
+    int outPoint = qBound(1, ui->outPointSpinBox->value(), totalFrames);
+    if (outPoint < inPoint) {
+        outPoint = inPoint;
+    }
+
+    emit userEditRangeSelectionChanged(inPoint, outPoint, clearMetadataValues);
+}
 
 void ExportDialog::updateRangeControlsForSource(bool resetToFullRange)
 {
@@ -1747,8 +1767,20 @@ void ExportDialog::updateRangeControlsForSource(bool resetToFullRange)
     int inPoint = ui->inPointSpinBox->value();
     int outPoint = ui->outPointSpinBox->value();
     if (resetToFullRange) {
-        inPoint = 1;
-        outPoint = totalFrames;
+        bool restoredFromMetadata = false;
+        const LdDecodeMetaData::VideoParameters &videoParameters = tbcSource->getVideoParameters();
+        if (videoParameters.userEditInSelection > 0 && videoParameters.userEditOutSelection > 0) {
+            inPoint = qBound(1, videoParameters.userEditInSelection, totalFrames);
+            outPoint = qBound(1, videoParameters.userEditOutSelection, totalFrames);
+            if (outPoint < inPoint) {
+                outPoint = inPoint;
+            }
+            restoredFromMetadata = true;
+        }
+        if (!restoredFromMetadata) {
+            inPoint = 1;
+            outPoint = totalFrames;
+        }
     } else {
         inPoint = qBound(1, inPoint, totalFrames);
         outPoint = qBound(1, outPoint, totalFrames);
@@ -2166,6 +2198,33 @@ void ExportDialog::on_audio4BrowseButton_clicked()
         ui->audio4LineEdit->setText(selected);
     }
 }
+void ExportDialog::on_resetInOutButton_clicked()
+{
+    if (!ui || !ui->inPointSpinBox || !ui->outPointSpinBox) {
+        return;
+    }
+    if (!tbcSource || !tbcSource->getIsSourceLoaded() || tbcSource->getIsMetadataOnly()) {
+        return;
+    }
+
+    const int totalFrames = qMax(1, tbcSource->getNumberOfFrames());
+    {
+        const QSignalBlocker blockIn(ui->inPointSpinBox);
+        const QSignalBlocker blockOut(ui->outPointSpinBox);
+        ui->inPointSpinBox->setMinimum(1);
+        ui->inPointSpinBox->setMaximum(totalFrames);
+        ui->outPointSpinBox->setMinimum(1);
+        ui->outPointSpinBox->setMaximum(totalFrames);
+        ui->inPointSpinBox->setValue(1);
+        ui->outPointSpinBox->setValue(totalFrames);
+    }
+
+    updateRangeLengthLabel();
+    syncRangeTimecodeEditors();
+    emitRangeSelectionChanged(true);
+    appendStatus(tr("In/Out range reset to full source span."));
+    appendLog(tr("Reset in/out range and cleared stored UserEditInSelection/UserEditOutSelection."));
+}
 
 void ExportDialog::on_exportButton_clicked()
 {
@@ -2568,7 +2627,11 @@ void ExportDialog::on_exportButton_clicked()
         cleanupTemporaryMetadataSnapshot();
         appendStatus(tr("Failed to start tbc-video-export."));
         appendLog(tr("Failed to start tbc-video-export."));
-        QMessageBox::warning(this, tr("Error"), tr("Failed to start tbc-video-export."));
+        const QString startErrorText = exportProcess ? exportProcess->errorString().trimmed() : QString();
+        showExportFailureNotification(tr("Export failed"),
+                                      tr("Failed to start tbc-video-export."),
+                                      startErrorText,
+                                      tr("tbc-video-export could not be started."));
         clearRunState();
         setBusy(false);
         return;
@@ -2701,7 +2764,6 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
         || combinedOutput.contains(QStringLiteral("ProcessError"));
 
     const bool success = exitStatus == QProcess::NormalExit && exitCode == 0 && !reportedFailure;
-    const QString errorText = processStderr.isEmpty() ? processStdout : processStderr;
     if (finishedStage != RunStage::ProxyExport) {
         mainExportFinished = true;
         mainExportSucceeded = success;
@@ -2718,13 +2780,10 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
         } else {
             appendStatus(tr("Proxy generation failed."));
             appendLog(tr("Proxy generation failed."));
-            QMessageBox::warning(this, tr("Proxy generation failed"),
-                                 errorText.isEmpty()
-                                     ? tr("ffmpeg reported failure while generating proxy output.")
-                                     : errorText);
-            if (!errorText.trimmed().isEmpty()) {
-                appendLog(errorText.trimmed());
-            }
+            showExportFailureNotification(tr("Proxy generation failed"),
+                                          tr("Proxy generation failed."),
+                                          combinedOutput,
+                                          tr("ffmpeg reported failure while generating proxy output."));
         }
         clearRunState();
         return;
@@ -2737,17 +2796,14 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
             return;
         }
         if (parallelProxyFinished && !parallelProxySucceeded) {
-            const QString proxyErrorText = parallelProxyStderr.isEmpty() ? parallelProxyStdout : parallelProxyStderr;
+            const QString proxyCombinedOutput = parallelProxyStdout + QStringLiteral("\n") + parallelProxyStderr;
             setBusy(false);
             appendStatus(tr("Export complete (proxy failed)."));
             appendLog(tr("Parallel proxy export failed."));
-            QMessageBox::warning(this, tr("Proxy generation failed"),
-                                 proxyErrorText.isEmpty()
-                                     ? tr("Parallel proxy export reported failure.")
-                                     : proxyErrorText);
-            if (!proxyErrorText.trimmed().isEmpty()) {
-                appendLog(proxyErrorText.trimmed());
-            }
+            showExportFailureNotification(tr("Proxy generation failed"),
+                                          tr("Main export completed, but proxy generation failed."),
+                                          proxyCombinedOutput,
+                                          tr("Parallel proxy export reported failure."));
             clearRunState();
             return;
         }
@@ -2762,10 +2818,10 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
             appendLog(proxyErrorMessage.isEmpty()
                           ? tr("Main export completed, but proxy generation could not be started.")
                           : proxyErrorMessage);
-            QMessageBox::warning(this, tr("Proxy generation failed"),
-                                 proxyErrorMessage.isEmpty()
-                                     ? tr("Main export completed, but proxy generation could not be started.")
-                                     : proxyErrorMessage);
+            showExportFailureNotification(tr("Proxy generation failed"),
+                                          tr("Main export completed, but proxy generation could not be started."),
+                                          proxyErrorMessage,
+                                          tr("Main export completed, but proxy generation could not be started."));
             clearRunState();
             return;
         }
@@ -2791,13 +2847,10 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
     }
     appendStatus(tr("Export failed."));
     appendLog(tr("Export failed."));
-    QMessageBox::warning(this, tr("Export failed"),
-                         errorText.isEmpty()
-                             ? tr("tbc-video-export reported failure.")
-                             : errorText);
-    if (!errorText.trimmed().isEmpty()) {
-        appendLog(errorText.trimmed());
-    }
+    showExportFailureNotification(tr("Export failed"),
+                                  tr("Export failed."),
+                                  combinedOutput,
+                                  tr("tbc-video-export reported failure."));
     clearRunState();
 }
 
@@ -2823,17 +2876,31 @@ void ExportDialog::handleProcessError(QProcess::ProcessError)
         return;
     }
     if (failedStage == RunStage::ProxyExport) {
-        appendStatus(errorText.isEmpty() ? tr("Proxy generation failed to start.") : errorText);
-        appendLog(errorText.isEmpty() ? tr("Proxy generation failed to start.") : errorText);
-        QMessageBox::warning(this, tr("Proxy generation failed"),
-                             errorText.isEmpty()
-                                 ? tr("ffmpeg could not be started for proxy generation.")
-                                 : errorText);
+        const QString proxySummary = tr("Proxy generation failed to start.");
+        appendStatus(proxySummary);
+        appendLog(errorText.isEmpty() ? proxySummary : tr("%1 %2").arg(proxySummary, errorText));
+        const QString detailedOutput = processStdout
+                                       + QStringLiteral("\n")
+                                       + processStderr
+                                       + QStringLiteral("\n")
+                                       + errorText;
+        showExportFailureNotification(tr("Proxy generation failed"),
+                                      proxySummary,
+                                      detailedOutput,
+                                      tr("ffmpeg could not be started for proxy generation."));
     } else {
-        appendStatus(errorText.isEmpty() ? tr("Export failed to start.") : errorText);
-        appendLog(errorText.isEmpty() ? tr("Export failed to start.") : errorText);
-        QMessageBox::warning(this, tr("Export failed"),
-                             errorText.isEmpty() ? tr("tbc-video-export could not be started.") : errorText);
+        const QString exportSummary = tr("Export failed to start.");
+        appendStatus(exportSummary);
+        appendLog(errorText.isEmpty() ? exportSummary : tr("%1 %2").arg(exportSummary, errorText));
+        const QString detailedOutput = processStdout
+                                       + QStringLiteral("\n")
+                                       + processStderr
+                                       + QStringLiteral("\n")
+                                       + errorText;
+        showExportFailureNotification(tr("Export failed"),
+                                      exportSummary,
+                                      detailedOutput,
+                                      tr("tbc-video-export could not be started."));
     }
     clearRunState();
 }
@@ -2966,16 +3033,13 @@ void ExportDialog::handleParallelProxyProcessFinished(int exitCode, QProcess::Ex
         return;
     }
 
-    const QString errorText = parallelProxyStderr.isEmpty() ? parallelProxyStdout : parallelProxyStderr;
     appendStatus(tr("Export complete (proxy failed)."));
     appendLog(tr("Parallel proxy export failed after main export completion."));
-    QMessageBox::warning(this, tr("Proxy generation failed"),
-                         errorText.isEmpty()
-                             ? tr("Parallel proxy export reported failure.")
-                             : errorText);
-    if (!errorText.trimmed().isEmpty()) {
-        appendLog(errorText.trimmed());
-    }
+    const QString detailedOutput = parallelProxyStdout + QStringLiteral("\n") + parallelProxyStderr;
+    showExportFailureNotification(tr("Proxy generation failed"),
+                                  tr("Main export completed, but proxy generation failed."),
+                                  detailedOutput,
+                                  tr("Parallel proxy export reported failure."));
     clearRunState();
 }
 
@@ -2995,10 +3059,15 @@ void ExportDialog::handleParallelProxyProcessError(QProcess::ProcessError)
 
     setBusy(false);
     appendStatus(tr("Export complete (proxy failed)."));
-    QMessageBox::warning(this, tr("Proxy generation failed"),
-                         errorText.isEmpty()
-                             ? tr("Parallel proxy export failed to start.")
-                             : errorText);
+    const QString detailedOutput = parallelProxyStdout
+                                   + QStringLiteral("\n")
+                                   + parallelProxyStderr
+                                   + QStringLiteral("\n")
+                                   + errorText;
+    showExportFailureNotification(tr("Proxy generation failed"),
+                                  tr("Main export completed, but proxy generation failed to start."),
+                                  detailedOutput,
+                                  tr("Parallel proxy export failed to start."));
     clearRunState();
 }
 void ExportDialog::resetProcessStats()
@@ -3187,6 +3256,9 @@ void ExportDialog::setBusy(bool busy)
     }
     if (ui->outPointTimecodeLineEdit) {
         ui->outPointTimecodeLineEdit->setEnabled(enabled);
+    }
+    if (ui->resetInOutButton) {
+        ui->resetInOutButton->setEnabled(enabled);
     }
     updateProfileDependentControls();
 }
@@ -4547,6 +4619,111 @@ void ExportDialog::appendLog(const QString &message)
     const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
     const QString line = QStringLiteral("[%1] %2").arg(timestamp, trimmed);
     ui->logTextEdit->appendPlainText(line);
+}
+QString ExportDialog::writeExportFailureLog(const QString &failureTitle,
+                                            const QString &summaryMessage,
+                                            const QString &detailedOutput) const
+{
+    QString outputDirectory;
+    if (!outputBaseForCurrentRun.trimmed().isEmpty()) {
+        outputDirectory = QFileInfo(outputBaseForCurrentRun).absolutePath();
+    }
+    if (outputDirectory.isEmpty() && !currentInputFile.trimmed().isEmpty()) {
+        outputDirectory = QFileInfo(currentInputFile).absolutePath();
+    }
+    if (outputDirectory.isEmpty()) {
+        outputDirectory = QDir::tempPath();
+    }
+    if (!QDir().mkpath(outputDirectory)) {
+        outputDirectory = QDir::tempPath();
+    }
+
+    const QString timestampToken = QDateTime::currentDateTime().toString(QStringLiteral("dd.MM.yyyy-hh.mm.ss"));
+    QDir outputDir(outputDirectory);
+    QString logPath = outputDir.filePath(QStringLiteral("export-fail-%1.log").arg(timestampToken));
+    int collisionIndex = 1;
+    while (QFileInfo::exists(logPath)) {
+        logPath = outputDir.filePath(QStringLiteral("export-fail-%1-%2.log")
+                                         .arg(timestampToken)
+                                         .arg(collisionIndex));
+        collisionIndex++;
+    }
+
+    QFile logFile(logPath);
+    if (!logFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        return QString();
+    }
+
+    QTextStream stream(&logFile);
+    stream << "Timestamp: "
+           << QDateTime::currentDateTime().toString(Qt::ISODateWithMs)
+           << '\n';
+    stream << "Failure: " << failureTitle.trimmed() << '\n';
+    if (!summaryMessage.trimmed().isEmpty()) {
+        stream << "Summary: " << summaryMessage.trimmed() << '\n';
+    }
+    if (!currentInputFile.trimmed().isEmpty()) {
+        stream << "Input: " << QDir::toNativeSeparators(currentInputFile) << '\n';
+    }
+    if (!outputBaseForCurrentRun.trimmed().isEmpty()) {
+        stream << "Output base: " << QDir::toNativeSeparators(outputBaseForCurrentRun) << '\n';
+    }
+    if (!proxyOutputPathForCurrentRun.trimmed().isEmpty()) {
+        stream << "Proxy output: " << QDir::toNativeSeparators(proxyOutputPathForCurrentRun) << '\n';
+    }
+    stream << '\n';
+
+    stream << "=== Process output ===\n";
+    if (detailedOutput.trimmed().isEmpty()) {
+        stream << "(none captured)\n";
+    } else {
+        stream << detailedOutput.trimmed() << '\n';
+    }
+
+    if (ui && ui->logTextEdit) {
+        const QString exportLog = ui->logTextEdit->toPlainText().trimmed();
+        if (!exportLog.isEmpty()) {
+            stream << '\n';
+            stream << "=== Export dialog log ===\n";
+            stream << exportLog << '\n';
+        }
+    }
+
+    stream.flush();
+    if (stream.status() != QTextStream::Ok) {
+        logFile.close();
+        QFile::remove(logPath);
+        return QString();
+    }
+    logFile.close();
+    return logPath;
+}
+
+void ExportDialog::showExportFailureNotification(const QString &dialogTitle,
+                                                 const QString &summaryMessage,
+                                                 const QString &detailedOutput,
+                                                 const QString &fallbackMessage)
+{
+    QString finalSummary = summaryMessage.trimmed();
+    if (finalSummary.isEmpty()) {
+        finalSummary = fallbackMessage.trimmed();
+    }
+    if (finalSummary.isEmpty()) {
+        finalSummary = tr("Export failed.");
+    }
+
+    const QString logPath = writeExportFailureLog(dialogTitle, finalSummary, detailedOutput);
+    QString dialogMessage = finalSummary;
+    if (!logPath.isEmpty()) {
+        const QString nativeLogPath = QDir::toNativeSeparators(logPath);
+        appendLog(tr("Export failure log saved to: %1").arg(nativeLogPath));
+        dialogMessage += tr("\n\nDetailed error output was saved to:\n%1").arg(nativeLogPath);
+    } else {
+        appendLog(tr("Failed to write export failure log file."));
+        dialogMessage += tr("\n\nDetailed error output could not be saved. Check the Export log pane.");
+    }
+
+    QMessageBox::warning(this, dialogTitle, dialogMessage);
 }
 
 QString ExportDialog::formatCommand(const QString &program, const QStringList &args) const

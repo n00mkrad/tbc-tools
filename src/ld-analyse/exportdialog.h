@@ -39,6 +39,8 @@ public:
     void loadAudioTracksForExport(const QStringList &trackFiles,
                                   const QStringList &trackNames = QStringList());
     void refreshResolutionOptions();
+signals:
+    void userEditRangeSelectionChanged(int inPoint, int outPoint, bool clearMetadataValues);
 
 private slots:
     void on_outputBrowseButton_clicked();
@@ -46,6 +48,7 @@ private slots:
     void on_audio2BrowseButton_clicked();
     void on_audio3BrowseButton_clicked();
     void on_audio4BrowseButton_clicked();
+    void on_resetInOutButton_clicked();
     void on_exportButton_clicked();
     void on_cancelButton_clicked();
 
@@ -65,6 +68,7 @@ private:
     void updateFromSource();
     void refreshProfiles();
     void updateProfileDependentControls();
+    void emitRangeSelectionChanged(bool clearMetadataValues);
     void setBusy(bool busy);
     void updateRangeControlsForSource(bool resetToFullRange);
     void updateRangeLengthLabel();
@@ -115,6 +119,13 @@ private:
     void cleanupTemporaryMetadataSnapshot();
     void appendStatus(const QString &message);
     void appendLog(const QString &message);
+    QString writeExportFailureLog(const QString &failureTitle,
+                                  const QString &summaryMessage,
+                                  const QString &detailedOutput) const;
+    void showExportFailureNotification(const QString &dialogTitle,
+                                       const QString &summaryMessage,
+                                       const QString &detailedOutput,
+                                       const QString &fallbackMessage);
     QString formatCommand(const QString &program, const QStringList &args) const;
     void resetProcessStats();
     void initializeProcessStats();

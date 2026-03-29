@@ -417,6 +417,10 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
         }
         else if (member == "palTransformThreshold") reader.read(palTransformThreshold);
         else if (member == "tapeFormat") reader.read(tapeFormat);
+        else if (member == "UserEditInSelection" || member == "userEditInSelection") reader.read(userEditInSelection);
+        else if (member == "UserEditOutSelection" || member == "userEditOutSelection") reader.read(userEditOutSelection);
+        else if (member == "UserMarkerComment" || member == "userMarkerComment") reader.read(userMarkerComment);
+        else if (member == "UserMarkerSelection" || member == "userMarkerSelection") reader.read(userMarkerSelection);
         else reader.discard();
     }
 
@@ -474,6 +478,18 @@ void LdDecodeMetaData::VideoParameters::write(JsonWriter &writer) const
     }
     if (gitCommit != "") {
         writer.writeMember("gitCommit", gitCommit);
+    }
+    if (userEditInSelection > 0) {
+        writer.writeMember("UserEditInSelection", userEditInSelection);
+    }
+    if (userEditOutSelection > 0) {
+        writer.writeMember("UserEditOutSelection", userEditOutSelection);
+    }
+    if (!userMarkerComment.isEmpty()) {
+        writer.writeMember("UserMarkerComment", userMarkerComment);
+    }
+    if (userMarkerSelection > 0) {
+        writer.writeMember("UserMarkerSelection", userMarkerSelection);
     }
     writer.writeMember("isMapped", isMapped);
     writer.writeMember("isSubcarrierLocked", isSubcarrierLocked);
@@ -891,6 +907,10 @@ bool LdDecodeMetaData::read(QString fileName)
         double ntscChromaWeight = -1.0;
         int ntscPhaseCompensation = -1;
         double palTransformThreshold = -1.0;
+        int userEditInSelection = -1;
+        int userEditOutSelection = -1;
+        int userMarkerSelection = -1;
+        QString userMarkerComment;
         bool isMapped, isSubcarrierLocked, isWidescreen;
 
         // Read capture metadata
@@ -904,6 +924,8 @@ bool LdDecodeMetaData::read(QString fileName)
                                        black16bIre, blanking16bIre, chromaDecoder, chromaGain,
                                        chromaPhase, lumaNR, ntscAdaptive, ntscAdaptThreshold,
                                        ntscChromaWeight, ntscPhaseCompensation, palTransformThreshold,
+                                       userEditInSelection, userEditOutSelection,
+                                       userMarkerSelection, userMarkerComment,
                                        captureNotes)) {
             qCritical() << "Failed to read capture metadata from SQLite file";
             return false;
@@ -942,6 +964,10 @@ bool LdDecodeMetaData::read(QString fileName)
         videoParameters.ntscChromaWeight = ntscChromaWeight;
         videoParameters.ntscPhaseCompensation = ntscPhaseCompensation;
         videoParameters.palTransformThreshold = palTransformThreshold;
+        videoParameters.userEditInSelection = userEditInSelection;
+        videoParameters.userEditOutSelection = userEditOutSelection;
+        videoParameters.userMarkerSelection = userMarkerSelection;
+        videoParameters.userMarkerComment = userMarkerComment;
         videoParameters.gitBranch = gitBranch;
         videoParameters.gitCommit = gitCommit;
         videoParameters.isValid = true;
@@ -1028,6 +1054,10 @@ bool LdDecodeMetaData::write(QString fileName) const
             double existingNtscChromaWeight = -1.0;
             int existingNtscPhaseCompensation = -1;
             double existingPalTransformThreshold = -1.0;
+            int existingUserEditInSelection = -1;
+            int existingUserEditOutSelection = -1;
+            int existingUserMarkerSelection = -1;
+            QString existingUserMarkerComment;
             bool existingIsMapped, existingIsSubcarrierLocked, existingIsWidescreen;
             
             if (reader.readCaptureMetadata(captureId, existingSystem, existingDecoder, 
@@ -1042,7 +1072,10 @@ bool LdDecodeMetaData::write(QString fileName) const
                                          existingChromaDecoder, existingChromaGain, existingChromaPhase,
                                          existingLumaNR, existingNtscAdaptive, existingNtscAdaptThreshold,
                                          existingNtscChromaWeight, existingNtscPhaseCompensation,
-                                         existingPalTransformThreshold, existingCaptureNotes)) {
+                                         existingPalTransformThreshold,
+                                         existingUserEditInSelection, existingUserEditOutSelection,
+                                         existingUserMarkerSelection, existingUserMarkerComment,
+                                         existingCaptureNotes)) {
                 tbcDebugStream() << "Updating existing SQLite file with capture_id:" << captureId;
             } else {
                 qWarning() << "Could not read existing capture metadata, treating as new file";
@@ -1093,6 +1126,10 @@ bool LdDecodeMetaData::write(QString fileName) const
                                             videoParameters.ntscAdaptive, videoParameters.ntscAdaptThreshold,
                                             videoParameters.ntscChromaWeight, videoParameters.ntscPhaseCompensation,
                                             videoParameters.palTransformThreshold,
+                                            videoParameters.userEditInSelection,
+                                            videoParameters.userEditOutSelection,
+                                            videoParameters.userMarkerSelection,
+                                            videoParameters.userMarkerComment,
                                             videoParameters.tapeFormat)) {
                 writer.rollbackTransaction();
                 return false;
@@ -1116,6 +1153,10 @@ bool LdDecodeMetaData::write(QString fileName) const
                 videoParameters.ntscAdaptive, videoParameters.ntscAdaptThreshold,
                 videoParameters.ntscChromaWeight, videoParameters.ntscPhaseCompensation,
                 videoParameters.palTransformThreshold,
+                videoParameters.userEditInSelection,
+                videoParameters.userEditOutSelection,
+                videoParameters.userMarkerSelection,
+                videoParameters.userMarkerComment,
                 videoParameters.tapeFormat);
 
             if (captureId == -1) {

@@ -14,6 +14,7 @@
 #include "audioalignmentutil.h"
 
 #include <QApplication>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
@@ -23,15 +24,22 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLineEdit>
+#include <QMetaObject>
 #include <QMessageBox>
+#include <QPointer>
 #include <QSaveFile>
 #include <QSignalBlocker>
+#include <QThread>
 
 AudioAlignmentDialog::AudioAlignmentDialog(QWidget *parent) :
     QDialog(parent),
     ui(new Ui::AudioAlignmentDialog)
 {
     ui->setupUi(this);
+    setAttribute(Qt::WA_TranslucentBackground, false);
+    setAttribute(Qt::WA_NoSystemBackground, false);
+    setAutoFillBackground(true);
+    setWindowOpacity(1.0);
 
     const QString rfTimebaseWarning = tr("RF Video Sample Rate must match the decoder timebase used to generate metadata JSON: use 20000000 for 20 Msps no-resampling captures, 16000000 for 16 Msps captures, or 40000000 when the decoder used internal resampling to 40 Msps.");
     if (ui->rfVideoRatePresetComboBox) {
@@ -125,9 +133,247 @@ AudioAlignmentDialog::AudioAlignmentDialog(QWidget *parent) :
     }
 }
 
+void AudioAlignmentDialog::setAlignmentUiBusy(bool busy)
+{
+    alignmentInProgress = busy;
+    const bool enabled = !busy;
+    auto setWidgetEnabled = [enabled](QWidget *widget) {
+        if (widget) {
+            widget->setEnabled(enabled);
+        }
+    };
+
+    setWidgetEnabled(ui->jsonLineEdit);
+    setWidgetEnabled(ui->jsonBrowseButton);
+    setWidgetEnabled(ui->linearInputLineEdit);
+    setWidgetEnabled(ui->linearInputBrowseButton);
+    setWidgetEnabled(ui->linearOutputLineEdit);
+    setWidgetEnabled(ui->linearOutputBrowseButton);
+    setWidgetEnabled(ui->hifiInputLineEdit);
+    setWidgetEnabled(ui->hifiInputBrowseButton);
+    setWidgetEnabled(ui->hifiOutputLineEdit);
+    setWidgetEnabled(ui->hifiOutputBrowseButton);
+    setWidgetEnabled(ui->rfVideoRatePresetComboBox);
+    setWidgetEnabled(ui->rfVideoSampleRateCustomSpinBox);
+    setWidgetEnabled(ui->overwriteCheckBox);
+    setWidgetEnabled(ui->loadTracksForExportCheckBox);
+
+    if (ui->alignButton) {
+        ui->alignButton->setEnabled(enabled);
+        ui->alignButton->setText(busy ? tr("Aligning...") : tr("Align"));
+    }
+}
+
+void AudioAlignmentDialog::startAlignmentRun(const QString &jsonFileName,
+                                             const QVector<AlignmentTrackRequest> &trackRequests,
+                                             bool overwriteOutput,
+                                             quint32 rfVideoSampleRateHz)
+{
+    if (alignmentInProgress || alignmentWorkerThread) {
+        QApplication::restoreOverrideCursor();
+        if (ui && ui->statusLabel) {
+            ui->statusLabel->setText(tr("Alignment is already running..."));
+        }
+        return;
+    }
+
+    setAlignmentUiBusy(true);
+
+    QPointer<AudioAlignmentDialog> self(this);
+    alignmentWorkerThread = QThread::create([self, jsonFileName, trackRequests, overwriteOutput, rfVideoSampleRateHz]() {
+        AlignmentRunResult runResult;
+        runResult.success = true;
+        const int totalTracks = qMax(1, static_cast<int>(trackRequests.size()));
+        int completedTracks = 0;
+
+        auto postStatus = [self](const QString &statusText) {
+            if (!self) {
+                return;
+            }
+            QMetaObject::invokeMethod(self.data(), [self, statusText]() {
+                if (!self || !self->ui || !self->ui->statusLabel) {
+                    return;
+                }
+                self->ui->statusLabel->setText(statusText);
+            }, Qt::QueuedConnection);
+        };
+        auto updateProgressStatus = [&postStatus, &completedTracks, totalTracks](const QString &trackLabel,
+                                                                                  int trackPercent,
+                                                                                  const QString &stageMessage) {
+            const int boundedTrackPercent = qBound(0, trackPercent, 100);
+            const double completedFraction = static_cast<double>(completedTracks)
+                                             + (static_cast<double>(boundedTrackPercent) / 100.0);
+            const int overallPercent = qBound(0,
+                                              static_cast<int>(((completedFraction / qMax(1, totalTracks)) * 100.0) + 0.5),
+                                              100);
+            QString progressText = stageMessage.trimmed();
+            if (progressText.isEmpty()) {
+                progressText = QObject::tr("Running alignment for %1...").arg(trackLabel);
+            } else {
+                progressText = QObject::tr("%1: %2").arg(trackLabel, progressText);
+            }
+            postStatus(QObject::tr("%1 (%2%)").arg(progressText).arg(overallPercent));
+        };
+
+        for (const AlignmentTrackRequest &trackRequest : trackRequests) {
+            updateProgressStatus(trackRequest.trackLabel, 0, QString());
+
+            QString trackErrorMessage;
+            const bool success = AudioAlignmentUtil::runStreamAlign(
+                jsonFileName,
+                trackRequest.inputFile,
+                trackRequest.outputFile,
+                rfVideoSampleRateHz,
+                overwriteOutput,
+                [&](int stagePercent, const QString &stageMessage) {
+                    updateProgressStatus(trackRequest.trackLabel, stagePercent, stageMessage);
+                },
+                &trackErrorMessage);
+            if (!success) {
+                runResult.success = false;
+                runResult.failureTrackLabel = trackRequest.trackLabel;
+                runResult.errorMessage = trackErrorMessage;
+                break;
+            }
+
+            completedTracks++;
+            updateProgressStatus(trackRequest.trackLabel, 100, QObject::tr("Alignment complete."));
+            if (trackRequest.isLinearTrack) {
+                runResult.linearAligned = true;
+                runResult.linearOutputFile = trackRequest.outputFile;
+            } else {
+                runResult.hifiAligned = true;
+                runResult.hifiOutputFile = trackRequest.outputFile;
+            }
+        }
+
+        if (!self) {
+            return;
+        }
+        QMetaObject::invokeMethod(self.data(), [self, runResult]() {
+            if (!self) {
+                return;
+            }
+            self->finishAlignmentRun(runResult);
+        }, Qt::QueuedConnection);
+    });
+
+    if (!alignmentWorkerThread) {
+        setAlignmentUiBusy(false);
+        QApplication::restoreOverrideCursor();
+        if (ui && ui->statusLabel) {
+            ui->statusLabel->setText(tr("Unable to start alignment worker."));
+        }
+        return;
+    }
+
+    connect(alignmentWorkerThread, &QThread::finished, this, [this]() {
+        if (!alignmentWorkerThread) {
+            return;
+        }
+        alignmentWorkerThread->deleteLater();
+        alignmentWorkerThread = nullptr;
+    });
+    alignmentWorkerThread->start();
+}
+
+void AudioAlignmentDialog::finishAlignmentRun(const AlignmentRunResult &result)
+{
+    QApplication::restoreOverrideCursor();
+    setAlignmentUiBusy(false);
+
+    if (!result.success) {
+        const QString failedTrackLabel = result.failureTrackLabel.isEmpty()
+                                             ? tr("Selected")
+                                             : result.failureTrackLabel;
+        if (ui && ui->statusLabel) {
+            ui->statusLabel->setText(tr("%1 alignment failed.").arg(failedTrackLabel));
+        }
+        QMessageBox::warning(this, tr("Error"),
+                             result.errorMessage.isEmpty()
+                                 ? tr("Auto audio alignment failed for %1.").arg(failedTrackLabel)
+                                 : result.errorMessage);
+        return;
+    }
+
+    if (ui && ui->statusLabel) {
+        if (result.linearAligned && result.hifiAligned) {
+            ui->statusLabel->setText(tr("Alignment complete for Baseband and HiFi-Decode tracks."));
+        } else if (result.linearAligned) {
+            ui->statusLabel->setText(tr("Alignment complete for Baseband track."));
+        } else {
+            ui->statusLabel->setText(tr("Alignment complete for HiFi-Decode track."));
+        }
+    }
+
+    const bool shouldPrepareExportTracks = ui->loadTracksForExportCheckBox
+                                           && ui->loadTracksForExportCheckBox->isChecked();
+    if (shouldPrepareExportTracks) {
+        QStringList preparedTrackFiles;
+        QStringList preparedTrackNames;
+        if (result.linearAligned && !result.linearOutputFile.trimmed().isEmpty()) {
+            preparedTrackFiles << result.linearOutputFile;
+            preparedTrackNames << tr("Baseband");
+        }
+        if (result.hifiAligned && !result.hifiOutputFile.trimmed().isEmpty()) {
+            preparedTrackFiles << result.hifiOutputFile;
+            preparedTrackNames << tr("HiFi-Decode");
+        }
+        if (!preparedTrackFiles.isEmpty()) {
+            emit exportTracksPrepared(preparedTrackFiles, preparedTrackNames);
+        }
+
+        bool payloadReady = true;
+        if (!exportTrackOutputFile.trimmed().isEmpty()) {
+            QString payloadError;
+            payloadReady = writeExportTrackPayload(result.linearOutputFile,
+                                                   result.hifiOutputFile,
+                                                   result.linearAligned,
+                                                   result.hifiAligned,
+                                                   &payloadError);
+            if (!payloadReady) {
+                QMessageBox::warning(this, tr("Export track auto-load"),
+                                     payloadError.isEmpty()
+                                         ? tr("Alignment completed, but export track auto-load data could not be written.")
+                                         : payloadError);
+            }
+        }
+
+        if (payloadReady && ui && ui->statusLabel && !preparedTrackFiles.isEmpty()) {
+            ui->statusLabel->setText(ui->statusLabel->text() + tr(" Export tracks prepared."));
+        }
+    }
+
+    const QString outputPathForDirectory = result.hifiAligned
+                                               ? result.hifiOutputFile
+                                               : result.linearOutputFile;
+    const QFileInfo outputInfo(outputPathForDirectory);
+    if (!outputInfo.absolutePath().isEmpty()) {
+        sourceDirectory = outputInfo.absolutePath();
+    }
+}
+
 AudioAlignmentDialog::~AudioAlignmentDialog()
 {
+    if (alignmentWorkerThread) {
+        alignmentWorkerThread->wait();
+        delete alignmentWorkerThread;
+        alignmentWorkerThread = nullptr;
+    }
     delete ui;
+}
+
+void AudioAlignmentDialog::closeEvent(QCloseEvent *event)
+{
+    if (alignmentInProgress) {
+        if (ui && ui->statusLabel) {
+            ui->statusLabel->setText(tr("Alignment is currently running. Please wait for completion."));
+        }
+        event->ignore();
+        return;
+    }
+
+    QDialog::closeEvent(event);
 }
 
 void AudioAlignmentDialog::setSourceDirectory(const QString &directory)
@@ -417,100 +663,30 @@ void AudioAlignmentDialog::on_alignButton_clicked()
         ui->hifiOutputLineEdit->setText(hifiOutputFileName);
     }
 
-    ui->alignButton->setEnabled(false);
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-
-    const int totalTracks = (hasLinearTrack ? 1 : 0) + (hasHifiTrack ? 1 : 0);
-    int completedTracks = 0;
-    auto updateProgressStatus = [&](const QString &trackLabel, int trackPercent, const QString &stageMessage) {
-        const int boundedTrackPercent = qBound(0, trackPercent, 100);
-        const double completedFraction = static_cast<double>(completedTracks)
-                                         + (static_cast<double>(boundedTrackPercent) / 100.0);
-        const int overallPercent = qBound(0,
-                                          static_cast<int>(((completedFraction / qMax(1, totalTracks)) * 100.0) + 0.5),
-                                          100);
-        QString progressText = stageMessage.trimmed();
-        if (progressText.isEmpty()) {
-            progressText = tr("Running alignment for %1...").arg(trackLabel);
-        } else {
-            progressText = tr("%1: %2").arg(trackLabel, progressText);
-        }
-        ui->statusLabel->setText(tr("%1 (%2%)").arg(progressText).arg(overallPercent));
-        QApplication::processEvents();
-    };
-
-    auto runTrack = [&](const QString &trackLabel, const QString &inputFileName, const QString &outputFileName) {
-        updateProgressStatus(trackLabel, 0, QString());
-
-        QString errorMessage;
-        const bool success = AudioAlignmentUtil::runStreamAlign(
-            jsonFileName,
-            inputFileName,
-            outputFileName,
-            currentRfVideoSampleRateHz(),
-            ui->overwriteCheckBox->isChecked(),
-            [&](int stagePercent, const QString &stageMessage) {
-                updateProgressStatus(trackLabel, stagePercent, stageMessage);
-            },
-            &errorMessage);
-        if (!success) {
-            ui->statusLabel->setText(tr("%1 alignment failed.").arg(trackLabel));
-            QMessageBox::warning(this, tr("Error"),
-                                 errorMessage.isEmpty()
-                                     ? tr("Auto audio alignment failed for %1.").arg(trackLabel)
-                                     : errorMessage);
-            return false;
-        }
-        completedTracks++;
-        updateProgressStatus(trackLabel, 100, tr("Alignment complete."));
-        return true;
-    };
-
-    bool success = true;
+    QVector<AlignmentTrackRequest> trackRequests;
+    trackRequests.reserve(2);
     if (hasLinearTrack) {
-        success = runTrack(tr("Baseband"), linearInputFileName, linearOutputFileName);
+        AlignmentTrackRequest request;
+        request.isLinearTrack = true;
+        request.trackLabel = tr("Baseband");
+        request.inputFile = linearInputFileName;
+        request.outputFile = linearOutputFileName;
+        trackRequests.push_back(request);
     }
-    if (success && hasHifiTrack) {
-        success = runTrack(tr("HiFi-Decode"), hifiInputFileName, hifiOutputFileName);
-    }
-
-    QApplication::restoreOverrideCursor();
-    ui->alignButton->setEnabled(true);
-
-    if (!success) {
-        return;
-    }
-
-    if (hasLinearTrack && hasHifiTrack) {
-        ui->statusLabel->setText(tr("Alignment complete for Baseband and HiFi-Decode tracks."));
-    } else if (hasLinearTrack) {
-        ui->statusLabel->setText(tr("Alignment complete for Baseband track."));
-    } else {
-        ui->statusLabel->setText(tr("Alignment complete for HiFi-Decode track."));
-    }
-    const bool shouldPrepareExportTracks = ui->loadTracksForExportCheckBox
-                                           && ui->loadTracksForExportCheckBox->isChecked()
-                                           && !exportTrackOutputFile.trimmed().isEmpty();
-    if (shouldPrepareExportTracks) {
-        QString payloadError;
-        if (!writeExportTrackPayload(linearOutputFileName,
-                                     hifiOutputFileName,
-                                     hasLinearTrack,
-                                     hasHifiTrack,
-                                     &payloadError)) {
-            QMessageBox::warning(this, tr("Export track auto-load"),
-                                 payloadError.isEmpty()
-                                     ? tr("Alignment completed, but export track auto-load data could not be written.")
-                                     : payloadError);
-        } else if (ui->statusLabel) {
-            ui->statusLabel->setText(ui->statusLabel->text() + tr(" Export tracks prepared."));
-        }
+    if (hasHifiTrack) {
+        AlignmentTrackRequest request;
+        request.isLinearTrack = false;
+        request.trackLabel = tr("HiFi-Decode");
+        request.inputFile = hifiInputFileName;
+        request.outputFile = hifiOutputFileName;
+        trackRequests.push_back(request);
     }
 
-    const QFileInfo outputInfo(hasHifiTrack ? hifiOutputFileName : linearOutputFileName);
-    if (!outputInfo.absolutePath().isEmpty()) {
-        sourceDirectory = outputInfo.absolutePath();
-    }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    startAlignmentRun(jsonFileName,
+                      trackRequests,
+                      ui->overwriteCheckBox && ui->overwriteCheckBox->isChecked(),
+                      currentRfVideoSampleRateHz());
 }
 
 void AudioAlignmentDialog::updateLinearOutputFromInput(bool forceOutputUpdate)

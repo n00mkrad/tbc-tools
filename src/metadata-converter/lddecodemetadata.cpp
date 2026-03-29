@@ -335,6 +335,10 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
         }
         else if (member == "palTransformThreshold") reader.read(palTransformThreshold);
         else if (member == "tapeFormat") reader.read(tapeFormat);
+        else if (member == "UserEditInSelection" || member == "userEditInSelection") reader.read(userEditInSelection);
+        else if (member == "UserEditOutSelection" || member == "userEditOutSelection") reader.read(userEditOutSelection);
+        else if (member == "UserMarkerComment" || member == "userMarkerComment") reader.read(userMarkerComment);
+        else if (member == "UserMarkerSelection" || member == "userMarkerSelection") reader.read(userMarkerSelection);
         else reader.discard();
     }
 
@@ -392,6 +396,18 @@ void LdDecodeMetaData::VideoParameters::write(JsonWriter &writer) const
     }
     if (gitCommit != "") {
         writer.writeMember("gitCommit", gitCommit);
+    }
+    if (userEditInSelection > 0) {
+        writer.writeMember("UserEditInSelection", userEditInSelection);
+    }
+    if (userEditOutSelection > 0) {
+        writer.writeMember("UserEditOutSelection", userEditOutSelection);
+    }
+    if (!userMarkerComment.isEmpty()) {
+        writer.writeMember("UserMarkerComment", userMarkerComment);
+    }
+    if (userMarkerSelection > 0) {
+        writer.writeMember("UserMarkerSelection", userMarkerSelection);
     }
     writer.writeMember("isMapped", isMapped);
     writer.writeMember("isSubcarrierLocked", isSubcarrierLocked);
@@ -850,6 +866,10 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         double ntscChromaWeight = -1.0;
         int ntscPhaseCompensation = -1;
         double palTransformThreshold = -1.0;
+        int userEditInSelection = -1;
+        int userEditOutSelection = -1;
+        int userMarkerSelection = -1;
+        QString userMarkerComment;
         bool isMapped, isSubcarrierLocked, isWidescreen;
 
         if (!reader.readCaptureMetadata(captureId, system, decoder, gitBranch, gitCommit,
@@ -862,6 +882,8 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
                                         black16bIre, blanking16bIre, chromaDecoder, chromaGain,
                                         chromaPhase, lumaNR, ntscAdaptive, ntscAdaptThreshold,
                                         ntscChromaWeight, ntscPhaseCompensation, palTransformThreshold,
+                                        userEditInSelection, userEditOutSelection,
+                                        userMarkerSelection, userMarkerComment,
                                         captureNotes)) {
             qCritical() << "Failed to read capture metadata from SQLite file";
             return false;
@@ -899,6 +921,10 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         videoParameters.ntscChromaWeight = ntscChromaWeight;
         videoParameters.ntscPhaseCompensation = ntscPhaseCompensation;
         videoParameters.palTransformThreshold = palTransformThreshold;
+        videoParameters.userEditInSelection = userEditInSelection;
+        videoParameters.userEditOutSelection = userEditOutSelection;
+        videoParameters.userMarkerSelection = userMarkerSelection;
+        videoParameters.userMarkerComment = userMarkerComment;
         videoParameters.gitBranch = gitBranch;
         videoParameters.gitCommit = gitCommit;
         videoParameters.isValid = true;

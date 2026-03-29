@@ -53,6 +53,7 @@
 namespace Ui {
 class MainWindow;
 }
+class AudioAlignmentDialog;
 
 class MainWindow : public QMainWindow
 {
@@ -138,6 +139,7 @@ private slots:
     void videoParametersChangedSignalHandler(const LdDecodeMetaData::VideoParameters &videoParameters);
     void videoLevelsChangedSignalHandler(qint32 blackLevel, qint32 whiteLevel);
     void chromaDecoderConfigChangedSignalHandler();
+    void exportRangeSelectionChangedSignalHandler(int inPoint, int outPoint, bool clearMetadataValues);
     void exportBoundaryToggledSignalHandler(bool enabled);
     void exportBoundaryThicknessChangedSignalHandler(int thickness);
 
@@ -156,6 +158,12 @@ protected:
     void dropEvent(QDropEvent *event) override;
 
 private:
+    enum class ExportBoundaryHandle {
+        None,
+        Top,
+        Left,
+        Right
+    };
     struct UiStateSnapshot {
         bool valid = false;
         qint32 frameNumber = 1;
@@ -197,6 +205,7 @@ private:
     MetadataConversionDialog *metadataConversionDialog;
     MetadataStatusDialog *metadataStatusDialog;
     ExportDialog *exportDialog;
+    AudioAlignmentDialog *audioAlignmentDialog = nullptr;
 
     // Class globals
     Configuration configuration;
@@ -217,6 +226,8 @@ private:
     qint32 currentFrameNumber = 1;
     bool vectorscopeSelectionDragging = false;
     QPoint vectorscopeSelectionAnchor;
+    ExportBoundaryHandle exportBoundaryDragHandle = ExportBoundaryHandle::None;
+    ExportBoundaryHandle exportBoundarySelectedHandle = ExportBoundaryHandle::None;
     double scaleFactor;
     QPalette buttonPalette;
     QString lastFilename;
@@ -271,6 +282,11 @@ private:
     QString outputBaseNameForCurrentSource();
     void updateImageViewer();
     QVector<QRect> getActiveVideoRects() const;
+    bool isExportBoundaryDragAvailable() const;
+    ExportBoundaryHandle exportBoundaryHandleAtViewerPoint(const QPoint &viewerPoint) const;
+    void updateExportBoundaryHoverCursor(const QPoint &viewerPoint);
+    void applyExportBoundaryDragAtViewerPoint(const QPoint &viewerPoint);
+    void applyExportBoundaryWheelStep(qint32 step);
     void hideImage();
     bool mapViewerToSourceCoordinates(const QPoint &viewerPoint, qint32 &sourceX, qint32 &sourceY) const;
     void updateCursorReadout(const QPoint &viewerPoint);

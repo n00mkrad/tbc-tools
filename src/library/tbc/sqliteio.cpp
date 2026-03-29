@@ -49,7 +49,7 @@ namespace SqliteValue
 
 // SQL schema as per documentation
 static const QString SCHEMA_SQL = R"(
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 
 CREATE TABLE IF NOT EXISTS capture (
     capture_id INTEGER PRIMARY KEY,
@@ -91,6 +91,10 @@ CREATE TABLE IF NOT EXISTS capture (
     ntsc_chroma_weight REAL,
     ntsc_phase_compensation INTEGER,
     pal_transform_threshold REAL,
+    user_edit_in_selection INTEGER,
+    user_edit_out_selection INTEGER,
+    user_marker_selection INTEGER,
+    user_marker_comment TEXT,
 
     capture_notes TEXT
 );
@@ -242,6 +246,8 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
                                      QString &chromaDecoder, double &chromaGain, double &chromaPhase, double &lumaNR,
                                      int &ntscAdaptive, double &ntscAdaptThreshold, double &ntscChromaWeight,
                                      int &ntscPhaseCompensation, double &palTransformThreshold,
+                                     int &userEditInSelection, int &userEditOutSelection,
+                                     int &userMarkerSelection, QString &userMarkerComment,
                                      QString &captureNotes)
 {
     // Check if blanking_16b_ire column exists (for backward compatibility)
@@ -255,6 +261,10 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
     bool hasNtscChromaWeightColumn = false;
     bool hasNtscPhaseCompensationColumn = false;
     bool hasPalTransformThresholdColumn = false;
+    bool hasUserEditInSelectionColumn = false;
+    bool hasUserEditOutSelectionColumn = false;
+    bool hasUserMarkerSelectionColumn = false;
+    bool hasUserMarkerCommentColumn = false;
     bool hasFirstActiveFieldLineColumn = false;
     bool hasLastActiveFieldLineColumn = false;
     bool hasFirstActiveFrameLineColumn = false;
@@ -284,6 +294,14 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
                 hasNtscPhaseCompensationColumn = true;
             } else if (columnName == "pal_transform_threshold") {
                 hasPalTransformThresholdColumn = true;
+            } else if (columnName == "user_edit_in_selection") {
+                hasUserEditInSelectionColumn = true;
+            } else if (columnName == "user_edit_out_selection") {
+                hasUserEditOutSelectionColumn = true;
+            } else if (columnName == "user_marker_selection") {
+                hasUserMarkerSelectionColumn = true;
+            } else if (columnName == "user_marker_comment") {
+                hasUserMarkerCommentColumn = true;
             } else if (columnName == "first_active_field_line") {
                 hasFirstActiveFieldLineColumn = true;
             } else if (columnName == "last_active_field_line") {
@@ -343,6 +361,18 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
     }
     if (hasPalTransformThresholdColumn) {
         queryStr += ", pal_transform_threshold";
+    }
+    if (hasUserEditInSelectionColumn) {
+        queryStr += ", user_edit_in_selection";
+    }
+    if (hasUserEditOutSelectionColumn) {
+        queryStr += ", user_edit_out_selection";
+    }
+    if (hasUserMarkerSelectionColumn) {
+        queryStr += ", user_marker_selection";
+    }
+    if (hasUserMarkerCommentColumn) {
+        queryStr += ", user_marker_comment";
     }
     queryStr += ", capture_notes FROM capture LIMIT 1";
     
@@ -458,6 +488,26 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
     } else {
         palTransformThreshold = -1.0;
     }
+    if (hasUserEditInSelectionColumn) {
+        userEditInSelection = SqliteValue::toIntOrDefault(query, "user_edit_in_selection");
+    } else {
+        userEditInSelection = -1;
+    }
+    if (hasUserEditOutSelectionColumn) {
+        userEditOutSelection = SqliteValue::toIntOrDefault(query, "user_edit_out_selection");
+    } else {
+        userEditOutSelection = -1;
+    }
+    if (hasUserMarkerSelectionColumn) {
+        userMarkerSelection = SqliteValue::toIntOrDefault(query, "user_marker_selection");
+    } else {
+        userMarkerSelection = -1;
+    }
+    if (hasUserMarkerCommentColumn) {
+        userMarkerComment = query.value("user_marker_comment").toString();
+    } else {
+        userMarkerComment.clear();
+    }
     
     captureNotes = query.value("capture_notes").toString();
 
@@ -494,7 +544,11 @@ static bool ensureCaptureColumns(QSqlDatabase &db)
         {"ntsc_adapt_threshold", "REAL"},
         {"ntsc_chroma_weight", "REAL"},
         {"ntsc_phase_compensation", "INTEGER"},
-        {"pal_transform_threshold", "REAL"}
+        {"pal_transform_threshold", "REAL"},
+        {"user_edit_in_selection", "INTEGER"},
+        {"user_edit_out_selection", "INTEGER"},
+        {"user_marker_selection", "INTEGER"},
+        {"user_marker_comment", "TEXT"}
     };
 
     bool altered = false;
@@ -514,8 +568,8 @@ static bool ensureCaptureColumns(QSqlDatabase &db)
 
     if (altered) {
         QSqlQuery versionQuery(db);
-        if (!versionQuery.exec("PRAGMA user_version = 4")) {
-            qWarning() << "Failed to update SQLite user_version to 4:" << versionQuery.lastError().text();
+        if (!versionQuery.exec("PRAGMA user_version = 5")) {
+            qWarning() << "Failed to update SQLite user_version to 5:" << versionQuery.lastError().text();
         }
     }
 
@@ -777,6 +831,8 @@ int SqliteWriter::writeCaptureMetadata(const QString &system, const QString &dec
                                      const QString &chromaDecoder, double chromaGain, double chromaPhase, double lumaNR,
                                      int ntscAdaptive, double ntscAdaptThreshold, double ntscChromaWeight,
                                      int ntscPhaseCompensation, double palTransformThreshold,
+                                     int userEditInSelection, int userEditOutSelection,
+                                     int userMarkerSelection, const QString &userMarkerComment,
                                      const QString &captureNotes)
 {
     QSqlQuery query(db);
@@ -788,8 +844,9 @@ int SqliteWriter::writeCaptureMetadata(const QString &system, const QString &dec
                  "is_widescreen, white_16b_ire, black_16b_ire, blanking_16b_ire, "
                  "chroma_decoder, chroma_gain, chroma_phase, luma_nr, "
                  "ntsc_adaptive, ntsc_adapt_threshold, ntsc_chroma_weight, ntsc_phase_compensation, "
-                 "pal_transform_threshold, capture_notes) "
-                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                 "pal_transform_threshold, user_edit_in_selection, user_edit_out_selection, "
+                 "user_marker_selection, user_marker_comment, capture_notes) "
+                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
     query.addBindValue(system);
     query.addBindValue(decoder);
@@ -822,6 +879,10 @@ int SqliteWriter::writeCaptureMetadata(const QString &system, const QString &dec
     query.addBindValue(ntscChromaWeight);
     query.addBindValue(ntscPhaseCompensation);
     query.addBindValue(palTransformThreshold);
+    query.addBindValue(userEditInSelection);
+    query.addBindValue(userEditOutSelection);
+    query.addBindValue(userMarkerSelection);
+    query.addBindValue(userMarkerComment.isEmpty() ? QVariant() : userMarkerComment);
     query.addBindValue(captureNotes.isEmpty() ? QVariant() : captureNotes);
 
     if (!query.exec()) {
@@ -844,6 +905,8 @@ bool SqliteWriter::updateCaptureMetadata(int captureId, const QString &system, c
                                        const QString &chromaDecoder, double chromaGain, double chromaPhase, double lumaNR,
                                        int ntscAdaptive, double ntscAdaptThreshold, double ntscChromaWeight,
                                        int ntscPhaseCompensation, double palTransformThreshold,
+                                       int userEditInSelection, int userEditOutSelection,
+                                       int userMarkerSelection, const QString &userMarkerComment,
                                        const QString &captureNotes)
 {
     if (!ensureCaptureColumns(db)) {
@@ -858,7 +921,8 @@ bool SqliteWriter::updateCaptureMetadata(int captureId, const QString &system, c
                  "is_widescreen=?, white_16b_ire=?, black_16b_ire=?, blanking_16b_ire=?, "
                  "chroma_decoder=?, chroma_gain=?, chroma_phase=?, luma_nr=?, "
                  "ntsc_adaptive=?, ntsc_adapt_threshold=?, ntsc_chroma_weight=?, ntsc_phase_compensation=?, "
-                 "pal_transform_threshold=?, capture_notes=? "
+                 "pal_transform_threshold=?, user_edit_in_selection=?, user_edit_out_selection=?, "
+                 "user_marker_selection=?, user_marker_comment=?, capture_notes=? "
                  "WHERE capture_id=?");
 
     query.addBindValue(system);
@@ -892,6 +956,10 @@ bool SqliteWriter::updateCaptureMetadata(int captureId, const QString &system, c
     query.addBindValue(ntscChromaWeight);
     query.addBindValue(ntscPhaseCompensation);
     query.addBindValue(palTransformThreshold);
+    query.addBindValue(userEditInSelection);
+    query.addBindValue(userEditOutSelection);
+    query.addBindValue(userMarkerSelection);
+    query.addBindValue(userMarkerComment.isEmpty() ? QVariant() : userMarkerComment);
     query.addBindValue(captureNotes.isEmpty() ? QVariant() : captureNotes);
     query.addBindValue(captureId);
 

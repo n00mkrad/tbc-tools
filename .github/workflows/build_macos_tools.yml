@@ -47,6 +47,14 @@ jobs:
         env:
           NIX_FIRST_BUILD_UID: 401
           NIX_BUILD_USER_NAME_TEMPLATE: _nixbld_ci_%d
+      - name: Restore and save Nix store cache
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ matrix.arch }}-
+            nix-${{ runner.os }}-
+          gc-max-store-size-macos: 8G
 
       - name: Build with Nix
         run: |

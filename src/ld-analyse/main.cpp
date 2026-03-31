@@ -230,7 +230,7 @@ int main(int argc, char *argv[])
 
     // Set application name and version
     QCoreApplication::setApplicationName("ld-analyse");
-    QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
+    QCoreApplication::setApplicationVersion(QString(APP_VERSION));
     QCoreApplication::setOrganizationDomain("github.com");
 
     // Set desktop file name for proper GNOME integration

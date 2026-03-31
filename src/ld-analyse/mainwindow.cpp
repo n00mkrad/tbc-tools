@@ -36,6 +36,7 @@
 #include <QStringList>
 #include <QTextStream>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QFileOpenEvent>
 #include <QMimeData>
 #include <QScreen>
@@ -821,8 +822,13 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     metadataStatusDialog = new MetadataStatusDialog(this);
     exportDialog = new ExportDialog(this);
     ui->mainTabWidget->addTab(exportDialog, tr("Export"));
+    exportDialog->setGenerateProxyEnabledPreference(configuration.getGenerateProxyEnabled());
     connect(exportDialog, &ExportDialog::userEditRangeSelectionChanged,
             this, &MainWindow::exportRangeSelectionChangedSignalHandler);
+    connect(exportDialog, &ExportDialog::proxyGenerationPreferenceChanged, this, [this](bool enabled) {
+        configuration.setGenerateProxyEnabled(enabled);
+        configuration.writeConfiguration();
+    });
 
     // Add a status bar to show the state of the source video file
     ui->statusBar->addWidget(&sourceVideoStatus);
@@ -3738,6 +3744,21 @@ void MainWindow::on_actionField_timing_scope_triggered()
         fieldTimingDialog->show();
         fieldTimingDialog->raise();
         fieldTimingDialog->activateWindow();
+    }
+}
+
+// Open the TBC Tools Wiki page
+void MainWindow::on_actionTBC_Tools_Wiki_triggered()
+{
+    const QUrl wikiUrl(QStringLiteral("https://github.com/harrypm/tbc-tools/wiki"));
+    if (!QDesktopServices::openUrl(wikiUrl)) {
+        QMessageBox::warning(this, tr("Warning"),
+                             tr("Could not open TBC Tools Wiki URL:\n%1").arg(wikiUrl.toString()));
+        return;
+    }
+
+    if (statusBar()) {
+        statusBar()->showMessage(tr("Opened TBC Tools Wiki."), 4000);
     }
 }
 

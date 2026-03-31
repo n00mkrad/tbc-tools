@@ -231,7 +231,7 @@ int main(int argc, char *argv[])
     // Set application name and version
     QCoreApplication::setApplicationName("ld-analyse");
     QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
-    QCoreApplication::setOrganizationDomain("domesday86.com");
+    QCoreApplication::setOrganizationDomain("github.com");
 
     // Set desktop file name for proper GNOME integration
     // This must match the installed .desktop file name (without .desktop extension)
@@ -250,7 +250,7 @@ int main(int argc, char *argv[])
     // Set up the command line parser
     QCommandLineParser parser;
     parser.setApplicationDescription(
-        "ld-analyse - analysis & adjustmnet tool for the decode projects 4fsc TBC format\n"
+        "ld-analyse - analysis & adjustment tool for the decode projects 4fsc TBC format\n"
         "\n"
         "(c)2018-2025 Simon Inns\n"
         "(c)2020-2022 Adam Sampson\n"

@@ -72,6 +72,7 @@ void Configuration::writeConfiguration(void)
     // View options
     configuration->beginGroup("viewOptions");
     configuration->setValue("toggleChromaDuringSeek", settings.viewOptions.toggleChromaDuringSeek);
+    configuration->setValue("generateProxyEnabled", settings.viewOptions.generateProxyEnabled);
     configuration->setValue("resizeFrameWithWindow", settings.viewOptions.resizeFrameWithWindow);
     configuration->setValue("showExportBoundary", settings.viewOptions.showExportBoundary);
     configuration->setValue("exportBoundaryThickness", settings.viewOptions.exportBoundaryThickness);
@@ -114,6 +115,7 @@ void Configuration::readConfiguration(void)
     // View options
     configuration->beginGroup("viewOptions");
     settings.viewOptions.toggleChromaDuringSeek = configuration->value("toggleChromaDuringSeek", false).toBool();
+    settings.viewOptions.generateProxyEnabled = configuration->value("generateProxyEnabled", false).toBool();
     settings.viewOptions.resizeFrameWithWindow = configuration->value("resizeFrameWithWindow", true).toBool();
     settings.viewOptions.showExportBoundary = configuration->value("showExportBoundary", true).toBool();
     settings.viewOptions.exportBoundaryThickness = configuration->value("exportBoundaryThickness", 4).toInt();
@@ -147,6 +149,7 @@ void Configuration::setDefault(void)
 
     // View options
     settings.viewOptions.toggleChromaDuringSeek = false;
+    settings.viewOptions.generateProxyEnabled = false;
     settings.viewOptions.resizeFrameWithWindow = true;
     settings.viewOptions.showExportBoundary = true;
     settings.viewOptions.exportBoundaryThickness = 4;
@@ -308,6 +311,16 @@ void Configuration::setToggleChromaDuringSeek(bool toggleChromaDuringSeek)
 bool Configuration::getToggleChromaDuringSeek(void)
 {
     return settings.viewOptions.toggleChromaDuringSeek;
+}
+
+void Configuration::setGenerateProxyEnabled(bool generateProxyEnabled)
+{
+    settings.viewOptions.generateProxyEnabled = generateProxyEnabled;
+}
+
+bool Configuration::getGenerateProxyEnabled(void)
+{
+    return settings.viewOptions.generateProxyEnabled;
 }
 
 void Configuration::setResizeFrameWithWindow(bool resizeFrameWithWindow)

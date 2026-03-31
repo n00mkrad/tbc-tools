@@ -1013,7 +1013,10 @@ qint32 TbcSource::startOfChapter(qint32 currentFrameNumber)
 void TbcSource::resetState()
 {
     // Default frame image options
-    chromaOn = false;
+    chromaOn = true;
+    chromaDecodeMode = HYBRID_CHROMA_MODE;
+    outputConfiguration.trimToActiveRegion = false;
+    outputConfiguration.fullFrameDecode = false;
     dropoutsOn = false;
     viewMode = ViewMode::FRAME_VIEW;
     reverseFoOn = false;

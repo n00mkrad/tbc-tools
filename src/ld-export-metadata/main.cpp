@@ -30,6 +30,7 @@
 #include "audacity.h"
 #include "csv.h"
 #include "ffmetadata.h"
+#include "vitcffmetadata.h"
 #include "closedcaptions.h"
 #include "metadataexportdialog.h"
 
@@ -43,6 +44,8 @@ struct ExportCommandLineOptions {
     QCommandLineOption writeVbiCsvOption;
     QCommandLineOption writeAudacityLabelsOption;
     QCommandLineOption writeFfmetadataOption;
+    QCommandLineOption writeFfmpegVitcOption;
+    QCommandLineOption ffmetadataNoVitcTimecodeOption;
     QCommandLineOption ffmetadataStartOption;
     QCommandLineOption ffmetadataLengthOption;
     QCommandLineOption writeClosedCaptionsOption;
@@ -65,6 +68,11 @@ struct ExportCommandLineOptions {
         writeFfmetadataOption("ffmetadata",
                               QCoreApplication::translate("main", "Write navigation information as FFMETADATA1"),
                               QCoreApplication::translate("main", "file")),
+        writeFfmpegVitcOption("ffmpeg-vitc",
+                              QCoreApplication::translate("main", "Write FFmpeg metadata=print-style VITC text"),
+                              QCoreApplication::translate("main", "file")),
+        ffmetadataNoVitcTimecodeOption("ffmetadata-no-vitc-timecode",
+                                       QCoreApplication::translate("main", "Disable FFmpeg-style VITC timecode output in FFMETADATA")),
         ffmetadataStartOption("start",
                               QCoreApplication::translate("main", "FFMETADATA export start frame (1-based)"),
                               QCoreApplication::translate("main", "frame")),
@@ -85,6 +93,8 @@ struct ExportCommandLineOptions {
         parser.addOption(writeVbiCsvOption);
         parser.addOption(writeAudacityLabelsOption);
         parser.addOption(writeFfmetadataOption);
+        parser.addOption(writeFfmpegVitcOption);
+        parser.addOption(ffmetadataNoVitcTimecodeOption);
         parser.addOption(ffmetadataStartOption);
         parser.addOption(ffmetadataLengthOption);
         parser.addOption(writeClosedCaptionsOption);
@@ -186,6 +196,8 @@ int main(int argc, char *argv[])
         initialOptions.exportVbiCsv = parser.isSet(options.writeVbiCsvOption);
         initialOptions.exportAudacityLabels = parser.isSet(options.writeAudacityLabelsOption);
         initialOptions.exportFfmetadata = parser.isSet(options.writeFfmetadataOption);
+        initialOptions.exportFfmpegVitc = parser.isSet(options.writeFfmpegVitcOption);
+        initialOptions.exportFfmetadataVitcTimecode = !parser.isSet(options.ffmetadataNoVitcTimecodeOption);
         initialOptions.exportClosedCaptions = parser.isSet(options.writeClosedCaptionsOption);
         parsePositiveOption(parser, options.ffmetadataStartOption, &initialOptions.ffmetadataStart, nullptr);
         parsePositiveOption(parser, options.ffmetadataLengthOption, &initialOptions.ffmetadataLength, nullptr);
@@ -275,13 +287,21 @@ int main(int argc, char *argv[])
         const QString &fileName = parser.value(options.writeFfmetadataOption);
         qint32 startFrame = -1;
         qint32 lengthFrames = -1;
+        const bool includeVitcTimecode = !parser.isSet(options.ffmetadataNoVitcTimecodeOption);
         QString errorMessage;
         if (!parsePositiveOption(parser, options.ffmetadataStartOption, &startFrame, &errorMessage)
             || !parsePositiveOption(parser, options.ffmetadataLengthOption, &lengthFrames, &errorMessage)) {
             qCritical() << errorMessage;
             return 1;
         }
-        if (!writeFfmetadata(metaData, fileName, startFrame, lengthFrames)) {
+        if (!writeFfmetadata(metaData, fileName, startFrame, lengthFrames, includeVitcTimecode)) {
+            qCritical() << "Failed to write output file:" << fileName;
+            return 1;
+        }
+    }
+    if (parser.isSet(options.writeFfmpegVitcOption)) {
+        const QString &fileName = parser.value(options.writeFfmpegVitcOption);
+        if (!writeVitcFfmetadataText(metaData, fileName)) {
             qCritical() << "Failed to write output file:" << fileName;
             return 1;
         }

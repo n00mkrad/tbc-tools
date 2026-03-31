@@ -31,6 +31,8 @@ public:
         bool exportVbiCsv = false;
         bool exportAudacityLabels = false;
         bool exportFfmetadata = false;
+        bool exportFfmpegVitc = false;
+        bool exportFfmetadataVitcTimecode = true;
         bool exportClosedCaptions = false;
         qint32 ffmetadataStart = -1;
         qint32 ffmetadataLength = -1;
@@ -59,7 +61,7 @@ private:
     QString inputBaseName(const QString &inputPath) const;
     bool isJsonPath(const QString &path) const;
     bool isSupportedInputPath(const QString &path) const;
-    void updateFfmetadataRangeEnabled();
+    void updateFfmetadataControlsEnabled();
 
     Ui::MetadataExportDialog *ui;
     QString sourceDirectory;

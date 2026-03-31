@@ -5,6 +5,7 @@ This application reads an ld-decode JSON metadata file, typically as produced by
 - Per-frame LaserDisc VBI control signals, as CSV
 - LaserDisc navigation information, as Audacity labels
 - LaserDisc navigation information, as FFMETADATA1 (which FFmpeg can use to add chapter navigation to a video file, including VITC `timecode` when available)
+- FFmpeg readvitc filter style VITC text, as `lavfi.readvitc.*` key lines for every frame
 - Closed Captions, as SCC format (which tools like [ttconv](https://github.com/sandflow/ttconv) can read)
 
 Syntax:
@@ -22,6 +23,7 @@ Options:
   --vbi-csv <file>          Write VBI information as CSV
   --audacity-labels <file>  Write navigation information as Audacity labels
   --ffmetadata <file>       Write navigation information as FFMETADATA1 (includes VITC timecode when available)
+  --ffmpeg-vitc <file>      Write FFmpeg readvitc filter style VITC text (lavfi.readvitc.*)
   --closed-captions <file>  Write closed captions as Scenarist SCC V1.0 format
 
 Arguments:

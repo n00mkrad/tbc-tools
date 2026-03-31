@@ -34,6 +34,7 @@ public:
     ~ExportDialog();
 
     void setSource(TbcSource *source);
+    void setGenerateProxyEnabledPreference(bool enabled);
     void setInPoint(int frameNumber);
     void setOutPoint(int frameNumber);
     void loadAudioTracksForExport(const QStringList &trackFiles,
@@ -41,6 +42,7 @@ public:
     void refreshResolutionOptions();
 signals:
     void userEditRangeSelectionChanged(int inPoint, int outPoint, bool clearMetadataValues);
+    void proxyGenerationPreferenceChanged(bool enabled);
 
 private slots:
     void on_outputBrowseButton_clicked();
@@ -84,6 +86,7 @@ private:
     bool findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const;
     QString selectedMainCodecId() const;
     QString selectedMainContainerId() const;
+    QString selectedMetadataTargetId() const;
     int selectedMainBitDepth() const;
     QString selectedExportProfileName() const;
     QString proxyExportProfileName(const QString &proxyCodecId) const;
@@ -99,7 +102,7 @@ private:
                                     const QString &proxyOutputPath,
                                     const QString &proxyCodecId,
                                     bool overwriteExisting) const;
-    bool startProxyExport(QString *errorMessage);
+    bool startProxyExport(QString *errorMessage, bool forceOverwrite = false);
     void clearRunState();
     bool prepareTrimmedAudioTracks(int zeroBasedStartFrame, int rangeLengthFrames,
                                    QStringList *audioTracks, QString *errorMessage);

@@ -3,6 +3,7 @@ add_executable(ld-export-metadata
     closedcaptions.cpp
     csv.cpp
     ffmetadata.cpp
+    vitcffmetadata.cpp
     metadataexportdialog.cpp
     metadataexportdialog.ui
     main.cpp

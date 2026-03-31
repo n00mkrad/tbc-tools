@@ -15,6 +15,8 @@ ld-export-metadata exports and converts metadata from TBC files into various hum
 - `--vbi-csv <file>`: Write VBI information as CSV  
 - `--audacity-labels <file>`: Write navigation information as Audacity labels
 - `--ffmetadata <file>`: Write navigation information as FFMETADATA1 (includes VITC `timecode` when available)
+- `--ffmpeg-vitc <file>`: Write FFmpeg readvitc filter style VITC text (`lavfi.readvitc.*`) for all frames
+- `--ffmetadata-no-vitc-timecode`: Disable writing FFmpeg-style VITC `timecode` in FFMETADATA output
 - `--closed-captions <file>`: Write closed captions as Scenarist SCC V1.0 format
 
 ### Data Categories
@@ -52,6 +54,8 @@ ld-export-metadata [options] <input.tbc>
 - `--vbi-csv <file>`: Write VBI information as CSV
 - `--audacity-labels <file>`: Write navigation information as Audacity labels
 - `--ffmetadata <file>`: Write navigation information as FFMETADATA1 (includes VITC `timecode` when available)
+- `--ffmpeg-vitc <file>`: Write FFmpeg readvitc filter style VITC text (`lavfi.readvitc.*`) for all frames
+- `--ffmetadata-no-vitc-timecode`: Disable writing FFmpeg-style VITC `timecode` in FFMETADATA output
 - `--closed-captions <file>`: Write closed captions as Scenarist SCC V1.0 format
 
 #### Arguments
@@ -72,6 +76,11 @@ ld-export-metadata --vits-csv vits.csv input.tbc.sqlite
 #### Export FFmpeg Metadata for Chapter Marks
 ```bash
 ld-export-metadata --ffmetadata chapters.txt input.tbc.sqlite
+```
+
+#### Export FFmpeg-style VITC Text for Every Frame
+```bash
+ld-export-metadata --ffmpeg-vitc vitc.txt input.tbc
 ```
 
 #### Export Closed Captions

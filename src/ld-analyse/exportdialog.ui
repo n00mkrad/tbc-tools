@@ -254,12 +254,49 @@
         </widget>
        </item>
        <item>
+        <widget class="QLabel" name="metadataTargetLabel">
+         <property name="text">
+          <string>Metadata target</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="metadataTargetComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>160</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QCheckBox" name="disableMetadataEmbeddingCheckBox">
          <property name="text">
           <string>Disable metadata embedding</string>
          </property>
         </widget>
        </item>
+      <item>
+       <widget class="QCheckBox" name="letterboxCropCheckBox">
+        <property name="toolTip">
+         <string>Adjust active lines for letterbox crop output.</string>
+        </property>
+        <property name="text">
+         <string>Letterbox crop</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="forceAnamorphicCheckBox">
+        <property name="toolTip">
+         <string>Force widescreen display aspect ratio metadata.</string>
+        </property>
+        <property name="text">
+         <string>Force anamorphic</string>
+        </property>
+       </widget>
+      </item>
        <item>
         <spacer name="optionsSpacer">
          <property name="orientation">

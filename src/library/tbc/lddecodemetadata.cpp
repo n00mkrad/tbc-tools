@@ -20,8 +20,6 @@
 #include <QFileInfo>
 #include <fstream>
 #include <QDebug>
-#include <QMap>
-#include <QMultiMap>
 #include <QStringList>
 #include <QVariant>
 #include "tbc/logging.h"
@@ -1202,65 +1200,35 @@ void LdDecodeMetaData::readFields(SqliteReader &reader, int captureId)
 
     // Pre-read all optional field data in bulk for performance
     QSqlQuery vitsQuery, vbiQuery, vitcQuery, ccQuery, dropoutsQuery;
-    reader.readAllFieldVitsMetrics(captureId, vitsQuery);
-    reader.readAllFieldVbi(captureId, vbiQuery);
-    reader.readAllFieldVitc(captureId, vitcQuery);
-    reader.readAllFieldClosedCaptions(captureId, ccQuery);
-    reader.readAllFieldDropouts(captureId, dropoutsQuery);
+    const bool hasVitsTable = reader.readAllFieldVitsMetrics(captureId, vitsQuery);
+    const bool hasVbiTable = reader.readAllFieldVbi(captureId, vbiQuery);
+    const bool hasVitcTable = reader.readAllFieldVitc(captureId, vitcQuery);
+    const bool hasCcTable = reader.readAllFieldClosedCaptions(captureId, ccQuery);
+    const bool hasDropoutsTable = reader.readAllFieldDropouts(captureId, dropoutsQuery);
 
-    // Create lookup maps for fast field data retrieval
-    QMap<int, QPair<double, double>> vitsMap;
-    QMap<int, QVector<int>> vbiMap, vitcMap, ccMap;
-    QMultiMap<int, QVector<int>> dropoutsMap;
+    bool hasVitsRow = hasVitsTable && vitsQuery.next();
+    bool hasVbiRow = hasVbiTable && vbiQuery.next();
+    bool hasVitcRow = hasVitcTable && vitcQuery.next();
+    bool hasCcRow = hasCcTable && ccQuery.next();
+    bool hasDropoutRow = hasDropoutsTable && dropoutsQuery.next();
 
-    // Populate VITS metrics map
-    while (vitsQuery.next()) {
-        int fieldId = vitsQuery.value("field_id").toInt();
-        double wSnr = vitsQuery.value("w_snr").toDouble();
-        double bPsnr = vitsQuery.value("b_psnr").toDouble();
-        vitsMap[fieldId] = qMakePair(wSnr, bPsnr);
+    fields.clear();
+    if (videoParameters.numberOfSequentialFields > 0) {
+        fields.reserve(videoParameters.numberOfSequentialFields);
     }
 
-    // Populate VBI map
-    while (vbiQuery.next()) {
-        int fieldId = vbiQuery.value("field_id").toInt();
-        QVector<int> vbiData = {vbiQuery.value("vbi0").toInt(), 
-                               vbiQuery.value("vbi1").toInt(), 
-                               vbiQuery.value("vbi2").toInt()};
-        vbiMap[fieldId] = vbiData;
-    }
-
-    // Populate VITC map
-    while (vitcQuery.next()) {
-        int fieldId = vitcQuery.value("field_id").toInt();
-        QVector<int> vitcData;
-        for (int i = 0; i < 8; i++) {
-            vitcData.append(vitcQuery.value(QString("vitc%1").arg(i)).toInt());
+    const auto advanceToField = [](QSqlQuery &query, bool *hasRow, int targetFieldId) {
+        if (!hasRow) {
+            return;
         }
-        vitcMap[fieldId] = vitcData;
-    }
-
-    // Populate closed captions map
-    while (ccQuery.next()) {
-        int fieldId = ccQuery.value("field_id").toInt();
-        QVector<int> ccData = {ccQuery.value("data0").toInt(), 
-                              ccQuery.value("data1").toInt()};
-        ccMap[fieldId] = ccData;
-    }
-
-    // Populate dropouts map
-    while (dropoutsQuery.next()) {
-        int fieldId = dropoutsQuery.value("field_id").toInt();
-        QVector<int> dropoutData = {dropoutsQuery.value("startx").toInt(),
-                                   dropoutsQuery.value("endx").toInt(),
-                                   dropoutsQuery.value("field_line").toInt()};
-        dropoutsMap.insert(fieldId, dropoutData);
-    }
+        while (*hasRow && query.value(0).toInt() < targetFieldId) {
+            *hasRow = query.next();
+        }
+    };
 
     // Process main field records and apply cached data
     while (fieldsQuery.next()) {
         Field field;
-        
         // Note: field_id in database is 0-indexed, but seqNo should be 1-indexed
         int fieldId = fieldsQuery.value("field_id").toInt();
         field.seqNo = fieldId + 1;
@@ -1283,43 +1251,62 @@ void LdDecodeMetaData::readFields(SqliteReader &reader, int captureId)
         field.ntsc.videoIdData = fieldsQuery.value("ntsc_video_id_data").toInt();
         field.ntsc.whiteFlag = fieldsQuery.value("ntsc_white_flag").toInt() == 1;
         field.ntsc.inUse = field.ntsc.isFmCodeDataValid || field.ntsc.isVideoIdDataValid;
-
-        // Apply cached optional field data
-        if (vitsMap.contains(fieldId)) {
-            field.vitsMetrics.wSNR = vitsMap[fieldId].first;
-            field.vitsMetrics.bPSNR = vitsMap[fieldId].second;
+        // Apply optional VITS metrics row (if present for this field)
+        advanceToField(vitsQuery, &hasVitsRow, fieldId);
+        if (hasVitsRow && vitsQuery.value(0).toInt() == fieldId) {
+            field.vitsMetrics.wSNR = vitsQuery.value(1).toDouble();
+            field.vitsMetrics.bPSNR = vitsQuery.value(2).toDouble();
             field.vitsMetrics.inUse = true;
+            do {
+                hasVitsRow = vitsQuery.next();
+            } while (hasVitsRow && vitsQuery.value(0).toInt() == fieldId);
         }
 
-        if (vbiMap.contains(fieldId)) {
-            QVector<int> vbiData = vbiMap[fieldId];
-            field.vbi.vbiData[0] = vbiData[0];
-            field.vbi.vbiData[1] = vbiData[1]; 
-            field.vbi.vbiData[2] = vbiData[2];
+        // Apply optional VBI row
+        advanceToField(vbiQuery, &hasVbiRow, fieldId);
+        if (hasVbiRow && vbiQuery.value(0).toInt() == fieldId) {
+            field.vbi.vbiData[0] = vbiQuery.value(1).toInt();
+            field.vbi.vbiData[1] = vbiQuery.value(2).toInt();
+            field.vbi.vbiData[2] = vbiQuery.value(3).toInt();
             field.vbi.inUse = true;
+            do {
+                hasVbiRow = vbiQuery.next();
+            } while (hasVbiRow && vbiQuery.value(0).toInt() == fieldId);
         }
 
-        if (vitcMap.contains(fieldId)) {
-            QVector<int> vitcData = vitcMap[fieldId];
-            for (int i = 0; i < 8 && i < vitcData.size(); i++) {
-                field.vitc.vitcData[i] = vitcData[i];
+        // Apply optional VITC row
+        advanceToField(vitcQuery, &hasVitcRow, fieldId);
+        if (hasVitcRow && vitcQuery.value(0).toInt() == fieldId) {
+            for (int i = 0; i < 8; i++) {
+                field.vitc.vitcData[i] = vitcQuery.value(i + 1).toInt();
             }
             field.vitc.inUse = true;
+            do {
+                hasVitcRow = vitcQuery.next();
+            } while (hasVitcRow && vitcQuery.value(0).toInt() == fieldId);
         }
 
-        if (ccMap.contains(fieldId)) {
-            QVector<int> ccData = ccMap[fieldId];
-            field.closedCaption.data0 = ccData[0];
-            field.closedCaption.data1 = ccData[1];
+        // Apply optional closed-caption row
+        advanceToField(ccQuery, &hasCcRow, fieldId);
+        if (hasCcRow && ccQuery.value(0).toInt() == fieldId) {
+            field.closedCaption.data0 = ccQuery.value(1).toInt();
+            field.closedCaption.data1 = ccQuery.value(2).toInt();
             field.closedCaption.inUse = true;
+            do {
+                hasCcRow = ccQuery.next();
+            } while (hasCcRow && ccQuery.value(0).toInt() == fieldId);
         }
 
-        if (dropoutsMap.contains(fieldId)) {
+        // Apply optional dropout rows
+        advanceToField(dropoutsQuery, &hasDropoutRow, fieldId);
+        if (hasDropoutRow && dropoutsQuery.value(0).toInt() == fieldId) {
             field.dropOuts.clear();
-            auto dropouts = dropoutsMap.values(fieldId);
-            for (const auto& dropout : dropouts) {
-                field.dropOuts.append(dropout[0], dropout[1], dropout[2]);
-            }
+            do {
+                field.dropOuts.append(dropoutsQuery.value(1).toInt(),
+                                      dropoutsQuery.value(2).toInt(),
+                                      dropoutsQuery.value(3).toInt());
+                hasDropoutRow = dropoutsQuery.next();
+            } while (hasDropoutRow && dropoutsQuery.value(0).toInt() == fieldId);
         }
 
         fields.push_back(field);

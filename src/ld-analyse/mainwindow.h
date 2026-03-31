@@ -75,6 +75,7 @@ private slots:
     void on_actionLine_scope_triggered();
     void on_actionVectorscope_triggered();
     void on_actionField_timing_scope_triggered();
+    void on_actionTBC_Tools_Wiki_triggered();
     void on_actionAbout_ld_analyse_triggered();
     void on_actionVBI_triggered();
     void on_actionDropout_analysis_triggered();

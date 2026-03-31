@@ -223,7 +223,8 @@ void insertMarkerChapterWithoutOverlap(std::vector<FfmetadataChapter> *chapters,
 bool writeFfmetadata(LdDecodeMetaData &metaData,
                      const QString &fileName,
                      qint32 startFrameOneBased,
-                     qint32 lengthFrames)
+                     qint32 lengthFrames,
+                     bool includeVitcTimecode)
 {
     const auto videoParameters = metaData.getVideoParameters();
 
@@ -240,9 +241,11 @@ bool writeFfmetadata(LdDecodeMetaData &metaData,
         tbcDebug(QStringLiteral("writeFfmetadata: Could not resolve export start/length range"));
         return false;
     }
-    const QString vitcTimecode = firstValidVitcTimecodeInRange(metaData,
-                                                                exportStartField,
-                                                                exportEndFieldExclusive);
+    const QString vitcTimecode = includeVitcTimecode
+                                     ? firstValidVitcTimecodeInRange(metaData,
+                                                                     exportStartField,
+                                                                     exportEndFieldExclusive)
+                                     : QString();
 
     // Extract navigation information
     const NavigationInfo navInfo(metaData);

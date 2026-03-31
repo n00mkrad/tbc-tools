@@ -979,15 +979,6 @@ QString normalizedProxyCodecId(const QString &proxyCodecId)
     return QStringLiteral("h264");
 }
 
-QString proxyCodecSuffix(const QString &proxyCodecId)
-{
-    const QString normalized = normalizedProxyCodecId(proxyCodecId);
-    if (normalized == QStringLiteral("hevc")) {
-        return QStringLiteral("h265");
-    }
-    return normalized;
-}
-
 QString proxyCodecDisplayName(const QString &proxyCodecId)
 {
     const QString normalized = normalizedProxyCodecId(proxyCodecId);
@@ -1089,6 +1080,67 @@ bool isLikelyVideoContainerExtension(const QString &extension)
         QStringLiteral("webm")
     };
     return videoExtensions.contains(extension.trimmed().toLower());
+}
+
+QString formatVitcTimecodeForFfmpeg(const VitcDecoder::Vitc &vitc)
+{
+    if (!vitc.isValid) {
+        return QString();
+    }
+    const QChar separator = vitc.isDropFrame ? QLatin1Char(';') : QLatin1Char(':');
+    return QStringLiteral("%1:%2:%3%4%5")
+        .arg(vitc.hour, 2, 10, QLatin1Char('0'))
+        .arg(vitc.minute, 2, 10, QLatin1Char('0'))
+        .arg(vitc.second, 2, 10, QLatin1Char('0'))
+        .arg(separator)
+        .arg(vitc.frame, 2, 10, QLatin1Char('0'));
+}
+
+QString firstValidVitcTimecodeForRange(const QString &metadataSnapshotPath,
+                                       int startFrameOneBased,
+                                       int lengthFrames)
+{
+    if (metadataSnapshotPath.trimmed().isEmpty()) {
+        return QString();
+    }
+
+    LdDecodeMetaData metadata;
+    if (!metadata.read(metadataSnapshotPath)) {
+        return QString();
+    }
+
+    const int totalFrames = metadata.getNumberOfFrames();
+    if (totalFrames < 1) {
+        return QString();
+    }
+
+    const int clampedStartFrame = qBound(1, qMax(1, startFrameOneBased), totalFrames);
+    const int maxLength = qMax(1, totalFrames - clampedStartFrame + 1);
+    const int clampedLength = qBound(1, qMax(1, lengthFrames), maxLength);
+    const int clampedEndFrame = qBound(clampedStartFrame,
+                                       clampedStartFrame + clampedLength - 1,
+                                       totalFrames);
+
+    const int startFieldOneBased = metadata.getFirstFieldNumber(clampedStartFrame);
+    const int endFieldOneBased = metadata.getSecondFieldNumber(clampedEndFrame);
+    if (startFieldOneBased < 1 || endFieldOneBased < startFieldOneBased) {
+        return QString();
+    }
+
+    const VideoSystem system = metadata.getVideoParameters().system;
+    for (int fieldNumber = startFieldOneBased; fieldNumber <= endFieldOneBased; ++fieldNumber) {
+        const LdDecodeMetaData::Vitc &fieldVitc = metadata.getFieldVitc(fieldNumber);
+        if (!fieldVitc.inUse) {
+            continue;
+        }
+        const VitcDecoder::Vitc decoded = VitcDecoder::decode(fieldVitc.vitcData, system);
+        const QString timecode = formatVitcTimecodeForFfmpeg(decoded);
+        if (!timecode.isEmpty()) {
+            return timecode;
+        }
+    }
+
+    return QString();
 }
 
 }
@@ -1230,6 +1282,18 @@ ExportDialog::ExportDialog(QWidget *parent) :
                 [updateDropoutFieldModeControls](int) { updateDropoutFieldModeControls(); });
     }
     updateDropoutFieldModeControls();
+    if (ui->letterboxCropCheckBox) {
+        ui->letterboxCropCheckBox->setChecked(false);
+        connect(ui->letterboxCropCheckBox, &QCheckBox::toggled, this, [this](bool) {
+            updateProfileDependentControls();
+        });
+    }
+    if (ui->forceAnamorphicCheckBox) {
+        ui->forceAnamorphicCheckBox->setChecked(false);
+        connect(ui->forceAnamorphicCheckBox, &QCheckBox::toggled, this, [this](bool) {
+            updateProfileDependentControls();
+        });
+    }
     if (ui->resolutionModeComboBox) {
         connect(ui->resolutionModeComboBox,
                 static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
@@ -1261,9 +1325,24 @@ ExportDialog::ExportDialog(QWidget *parent) :
     }
     if (ui->generateProxyCheckBox) {
         ui->generateProxyCheckBox->setChecked(false);
-        connect(ui->generateProxyCheckBox, &QCheckBox::toggled, this, [this](bool) {
+        connect(ui->generateProxyCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
             updateProfileDependentControls();
+            emit proxyGenerationPreferenceChanged(checked);
         });
+    }
+    if (ui->metadataTargetLabel) {
+        ui->metadataTargetLabel->setToolTip(
+            tr("Select which metadata/VITC export source is injected into the output container."));
+    }
+    if (ui->metadataTargetComboBox) {
+        ui->metadataTargetComboBox->clear();
+        ui->metadataTargetComboBox->setToolTip(
+            tr("Select which metadata/VITC export source is injected into the output container."));
+        ui->metadataTargetComboBox->addItem(tr("TBC Metadata"), QStringLiteral("tbc"));
+        ui->metadataTargetComboBox->addItem(tr("FFmpeg Metadata"), QStringLiteral("ffmpeg"));
+        ui->metadataTargetComboBox->addItem(tr("All Metadata"), QStringLiteral("all"));
+        const int defaultIndex = ui->metadataTargetComboBox->findData(QStringLiteral("all"));
+        ui->metadataTargetComboBox->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
     }
     const auto configureRangeTimecodeLineEdit = [this](QLineEdit *lineEdit) {
         if (!lineEdit) {
@@ -1484,6 +1563,16 @@ void ExportDialog::setSource(TbcSource *source)
     updateFromSource();
     refreshResolutionOptions();
     refreshProfiles();
+    updateProfileDependentControls();
+}
+void ExportDialog::setGenerateProxyEnabledPreference(bool enabled)
+{
+    if (!ui || !ui->generateProxyCheckBox) {
+        return;
+    }
+
+    const QSignalBlocker blocker(ui->generateProxyCheckBox);
+    ui->generateProxyCheckBox->setChecked(enabled);
     updateProfileDependentControls();
 }
 
@@ -2107,6 +2196,30 @@ void ExportDialog::updateProfileDependentControls()
         ui->proxyCodecComboBox->setVisible(proxyRequested);
         ui->proxyCodecComboBox->setEnabled(canEdit && proxyRequested);
     }
+    const QString resolutionMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
+    const bool letterboxCropAllowed = resolutionMode == QStringLiteral("active_area");
+    if (ui->letterboxCropCheckBox && !letterboxCropAllowed && ui->letterboxCropCheckBox->isChecked()) {
+        const QSignalBlocker blocker(ui->letterboxCropCheckBox);
+        ui->letterboxCropCheckBox->setChecked(false);
+    }
+    const bool letterboxRequested = ui
+                                    && ui->letterboxCropCheckBox
+                                    && ui->letterboxCropCheckBox->isChecked();
+    if (ui->forceAnamorphicCheckBox
+        && letterboxRequested
+        && ui->forceAnamorphicCheckBox->isChecked()) {
+        const QSignalBlocker blocker(ui->forceAnamorphicCheckBox);
+        ui->forceAnamorphicCheckBox->setChecked(false);
+    }
+    const bool anamorphicRequested = ui
+                                     && ui->forceAnamorphicCheckBox
+                                     && ui->forceAnamorphicCheckBox->isChecked();
+    if (ui->letterboxCropCheckBox) {
+        ui->letterboxCropCheckBox->setEnabled(canEdit && letterboxCropAllowed && !anamorphicRequested);
+    }
+    if (ui->forceAnamorphicCheckBox) {
+        ui->forceAnamorphicCheckBox->setEnabled(canEdit && !letterboxRequested);
+    }
 }
 
 
@@ -2478,6 +2591,14 @@ void ExportDialog::on_exportButton_clicked()
     const int startFrameOneBased = inPoint;
     const int zeroBasedStartForAudioTrim = qMax(0, startFrameOneBased - 1);
     const int rangeLength = outPoint - inPoint + 1;
+    const QString vitcFfmpegTimecode = firstValidVitcTimecodeForRange(metadataSnapshotPath,
+                                                                       startFrameOneBased,
+                                                                       rangeLength);
+    if (!vitcFfmpegTimecode.isEmpty()) {
+        appendLog(tr("VITC start timecode (FFmpeg style): %1").arg(vitcFfmpegTimecode));
+    } else {
+        appendLog(tr("VITC start timecode (FFmpeg style): unavailable for selected range."));
+    }
     const QString selectedDropoutMode = ui->dropoutModeComboBox
                                             ? ui->dropoutModeComboBox->currentData().toString()
                                             : QStringLiteral("basic");
@@ -2790,14 +2911,26 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
             return;
         }
         if (parallelProxyFinished && !parallelProxySucceeded) {
-            const QString proxyCombinedOutput = parallelProxyStdout + QStringLiteral("\n") + parallelProxyStderr;
+            appendLog(tr("Parallel proxy export failed; attempting post-export proxy transcoding fallback."));
+            generateProxyForCurrentRun = true;
+            QString proxyFallbackError;
+            if (startProxyExport(&proxyFallbackError, true)) {
+                return;
+            }
+            const QString proxyCombinedOutput = parallelProxyStdout
+                                                + QStringLiteral("\n")
+                                                + parallelProxyStderr
+                                                + QStringLiteral("\n")
+                                                + proxyFallbackError;
             setBusy(false);
             appendStatus(tr("Export complete (proxy failed)."));
-            appendLog(tr("Parallel proxy export failed."));
+            appendLog(proxyFallbackError.isEmpty()
+                          ? tr("Parallel proxy export failed and fallback proxy generation could not be started.")
+                          : proxyFallbackError);
             showExportFailureNotification(tr("Proxy generation failed"),
                                           tr("Main export completed, but proxy generation failed."),
                                           proxyCombinedOutput,
-                                          tr("Parallel proxy export reported failure."));
+                                          tr("Parallel proxy export failed, and fallback proxy generation could not be started."));
             clearRunState();
             return;
         }
@@ -2831,8 +2964,8 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
         parallelProxyProcess->kill();
     }
     parallelProxyRunning = false;
-
     setBusy(false);
+
     if (wasCancelRequested) {
         appendStatus(tr("Export cancelled."));
         appendLog(tr("Export cancelled."));
@@ -3018,22 +3151,35 @@ void ExportDialog::handleParallelProxyProcessFinished(int exitCode, QProcess::Ex
     if (!mainExportFinished || !mainExportSucceeded) {
         return;
     }
-
-    setBusy(false);
     if (parallelProxySucceeded) {
+        setBusy(false);
         appendStatus(tr("Export complete."));
         appendLog(tr("Export complete."));
         clearRunState();
         return;
     }
 
+    appendLog(tr("Parallel proxy export failed after main export completion; attempting post-export proxy transcoding fallback."));
+    generateProxyForCurrentRun = true;
+    QString proxyFallbackError;
+    if (startProxyExport(&proxyFallbackError, true)) {
+        return;
+    }
+
+    setBusy(false);
     appendStatus(tr("Export complete (proxy failed)."));
-    appendLog(tr("Parallel proxy export failed after main export completion."));
-    const QString detailedOutput = parallelProxyStdout + QStringLiteral("\n") + parallelProxyStderr;
+    appendLog(proxyFallbackError.isEmpty()
+                  ? tr("Parallel proxy export failed and fallback proxy generation could not be started.")
+                  : proxyFallbackError);
+    const QString detailedOutput = parallelProxyStdout
+                                   + QStringLiteral("\n")
+                                   + parallelProxyStderr
+                                   + QStringLiteral("\n")
+                                   + proxyFallbackError;
     showExportFailureNotification(tr("Proxy generation failed"),
                                   tr("Main export completed, but proxy generation failed."),
                                   detailedOutput,
-                                  tr("Parallel proxy export reported failure."));
+                                  tr("Parallel proxy export failed, and fallback proxy generation could not be started."));
     clearRunState();
 }
 
@@ -3051,17 +3197,29 @@ void ExportDialog::handleParallelProxyProcessError(QProcess::ProcessError)
         return;
     }
 
+    appendLog(tr("Parallel proxy export failed to start after main export completion; attempting post-export proxy transcoding fallback."));
+    generateProxyForCurrentRun = true;
+    QString proxyFallbackError;
+    if (startProxyExport(&proxyFallbackError, true)) {
+        return;
+    }
+
     setBusy(false);
     appendStatus(tr("Export complete (proxy failed)."));
     const QString detailedOutput = parallelProxyStdout
                                    + QStringLiteral("\n")
                                    + parallelProxyStderr
                                    + QStringLiteral("\n")
-                                   + errorText;
+                                   + errorText
+                                   + QStringLiteral("\n")
+                                   + proxyFallbackError;
+    appendLog(proxyFallbackError.isEmpty()
+                  ? tr("Parallel proxy export failed to start and fallback proxy generation could not be started.")
+                  : proxyFallbackError);
     showExportFailureNotification(tr("Proxy generation failed"),
                                   tr("Main export completed, but proxy generation failed to start."),
                                   detailedOutput,
-                                  tr("Parallel proxy export failed to start."));
+                                  tr("Parallel proxy export failed to start, and fallback proxy generation could not be started."));
     clearRunState();
 }
 void ExportDialog::resetProcessStats()
@@ -3206,6 +3364,12 @@ void ExportDialog::setBusy(bool busy)
     }
     if (ui->disableMetadataEmbeddingCheckBox) {
         ui->disableMetadataEmbeddingCheckBox->setEnabled(enabled);
+    }
+    if (ui->metadataTargetLabel) {
+        ui->metadataTargetLabel->setEnabled(enabled);
+    }
+    if (ui->metadataTargetComboBox) {
+        ui->metadataTargetComboBox->setEnabled(enabled);
     }
     if (ui->ffv1SlicesLabel) {
         ui->ffv1SlicesLabel->setEnabled(enabled);
@@ -3377,6 +3541,14 @@ QString ExportDialog::selectedMainContainerId() const
     const QString selectedId = ui->mainContainerComboBox->currentData().toString().trimmed().toLower();
     return selectedId.isEmpty() ? QStringLiteral("mkv") : selectedId;
 }
+QString ExportDialog::selectedMetadataTargetId() const
+{
+    if (!ui || !ui->metadataTargetComboBox) {
+        return QStringLiteral("all");
+    }
+    const QString selectedId = ui->metadataTargetComboBox->currentData().toString().trimmed().toLower();
+    return selectedId.isEmpty() ? QStringLiteral("all") : selectedId;
+}
 
 int ExportDialog::selectedMainBitDepth() const
 {
@@ -3521,7 +3693,8 @@ QString ExportDialog::proxyOutputPath(const QString &outputBase, const QString &
     if (sanitizedBase.isEmpty()) {
         return QString();
     }
-    return QStringLiteral("%1_%2_Proxy.mp4").arg(sanitizedBase, proxyCodecSuffix(proxyCodecId));
+    Q_UNUSED(proxyCodecId);
+    return QStringLiteral("%1_Proxy.mp4").arg(sanitizedBase);
 }
 
 QString ExportDialog::findProxySourceVideoPath(const QString &outputBase, QString *errorMessage) const
@@ -3588,9 +3761,31 @@ QStringList ExportDialog::buildProxyArguments(QString *errorMessage,
         }
         return args;
     }
+    const QFileInfo sourceInfo(sourceVideoPath);
+    if (!sourceInfo.exists() || !sourceInfo.isFile()) {
+        if (errorMessage) {
+            *errorMessage = tr("Proxy source video is missing: %1").arg(sourceVideoPath);
+        }
+        return args;
+    }
     if (proxyOutputPathValue.isEmpty()) {
         if (errorMessage) {
             *errorMessage = tr("Invalid proxy output path.");
+        }
+        return args;
+    }
+    const QFileInfo proxyOutputInfo(proxyOutputPathValue);
+    if (sourceInfo.absoluteFilePath().compare(proxyOutputInfo.absoluteFilePath(), Qt::CaseInsensitive) == 0) {
+        if (errorMessage) {
+            *errorMessage = tr("Proxy output path conflicts with the main export output.");
+        }
+        return args;
+    }
+    QDir proxyOutputDir = proxyOutputInfo.absoluteDir();
+    if (!proxyOutputDir.exists() && !proxyOutputDir.mkpath(QStringLiteral("."))) {
+        if (errorMessage) {
+            *errorMessage = tr("Could not create proxy output directory: %1")
+                                .arg(proxyOutputDir.absolutePath());
         }
         return args;
     }
@@ -3630,6 +3825,7 @@ QStringList ExportDialog::buildProxyArguments(QString *errorMessage,
          << QStringLiteral("-map") << QStringLiteral("0:a?")
          << QStringLiteral("-map_metadata") << QStringLiteral("0")
          << QStringLiteral("-map_chapters") << QStringLiteral("0")
+         << QStringLiteral("-max_muxing_queue_size") << QStringLiteral("4096")
          << QStringLiteral("-vf") << QStringLiteral("scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos:interl=1")
          << QStringLiteral("-c:v") << selectedEncoder;
 
@@ -3668,7 +3864,7 @@ QStringList ExportDialog::buildProxyArguments(QString *errorMessage,
     return args;
 }
 
-bool ExportDialog::startProxyExport(QString *errorMessage)
+bool ExportDialog::startProxyExport(QString *errorMessage, bool forceOverwrite)
 {
     if (errorMessage) {
         errorMessage->clear();
@@ -3708,13 +3904,15 @@ bool ExportDialog::startProxyExport(QString *errorMessage)
         return false;
     }
 
+    const bool overwriteProxyOutput = overwriteExistingForCurrentRun || forceOverwrite;
+
     QString proxyArgumentsError;
     const QStringList proxyArguments = buildProxyArguments(&proxyArgumentsError,
                                                            ffmpegPath,
                                                            sourceVideoPath,
                                                            targetProxyPath,
                                                            proxyCodecForCurrentRun,
-                                                           overwriteExistingForCurrentRun);
+                                                           overwriteProxyOutput);
     if (proxyArguments.isEmpty()) {
         if (errorMessage) {
             *errorMessage = proxyArgumentsError;
@@ -3731,7 +3929,7 @@ bool ExportDialog::startProxyExport(QString *errorMessage)
     const QString proxyCommand = formatCommand(ffmpegPath, proxyArguments);
     appendLog(tr("Proxy command: %1").arg(proxyCommand));
     appendStatus(tr("Generating proxy MP4..."));
-    appendLog(tr("Generating proxy MP4 using %1.").arg(proxyCodecDisplayName(proxyCodecForCurrentRun)));
+    appendLog(tr("Generating proxy MP4..."));
 
     ExportProcessStat stat;
     stat.process = QStringLiteral("ffmpeg");
@@ -4013,6 +4211,10 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     args << QStringLiteral("--start") << QString::number(startFrameOneBased);
     args << QStringLiteral("--length") << QString::number(rangeLength);
     args << QStringLiteral("--export-metadata");
+    const QString metadataTarget = selectedMetadataTargetId();
+    if (!metadataTarget.isEmpty()) {
+        args << QStringLiteral("--metadata-target") << metadataTarget;
+    }
 
     const bool usingProfileOverride = !profileOverride.trimmed().isEmpty();
     const QString profile = usingProfileOverride
@@ -4162,6 +4364,52 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     const bool forwardActiveLines = hasAnyNonDefaultVerticalFraming(videoParameters);
     const bool hasCustomActiveLineFraming = resolutionMode == QStringLiteral("user_defined")
                                             || forwardActiveLines;
+    const bool letterboxCropRequested = ui->letterboxCropCheckBox
+                                        && ui->letterboxCropCheckBox->isChecked();
+    const bool forceAnamorphicRequested = ui->forceAnamorphicCheckBox
+                                          && ui->forceAnamorphicCheckBox->isChecked();
+    auto unsupportedOptionError = [this, &exportPath](const QString &featureLabel, const QString &optionName) {
+        if (exportPath.isEmpty()) {
+            return tr("%1 requires tbc-video-export option %2, but no export executable was found.")
+                .arg(featureLabel)
+                .arg(optionName);
+        }
+        return tr("%1 requires tbc-video-export option %2. Detected export tool does not support it: %3")
+            .arg(featureLabel)
+            .arg(optionName)
+            .arg(exportPath);
+    };
+    if (letterboxCropRequested && forceAnamorphicRequested) {
+        if (errorMessage) {
+            *errorMessage = tr("Force anamorphic cannot be used with letterbox crop.");
+        }
+        return QStringList();
+    }
+    if (letterboxCropRequested) {
+        if (resolutionMode != QStringLiteral("active_area") || hasCustomActiveLineFraming) {
+            if (errorMessage) {
+                *errorMessage = tr("Letterbox crop is only available with default Active Area framing.");
+            }
+            return QStringList();
+        }
+        if (!executableSupportsOption(exportPath, QStringLiteral("--letterbox"))) {
+            if (errorMessage) {
+                *errorMessage = unsupportedOptionError(tr("Letterbox crop"), QStringLiteral("--letterbox"));
+            }
+            return QStringList();
+        }
+        args << QStringLiteral("--letterbox");
+    }
+    if (forceAnamorphicRequested) {
+        if (!executableSupportsOption(exportPath, QStringLiteral("--force-anamorphic"))) {
+            if (errorMessage) {
+                *errorMessage =
+                    unsupportedOptionError(tr("Force anamorphic"), QStringLiteral("--force-anamorphic"));
+            }
+            return QStringList();
+        }
+        args << QStringLiteral("--force-anamorphic");
+    }
     if (isFullFrame4fscResolutionMode(resolutionMode)) {
         const bool supportsFullFrame = executableSupportsOption(exportPath, QStringLiteral("--full-frame"));
         if (supportsFullFrame) {

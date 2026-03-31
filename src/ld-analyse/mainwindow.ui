@@ -538,7 +538,10 @@
               </size>
              </property>
              <property name="toolTip">
-              <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Cycle view mode: Source -&amp;gt; Hybrid -&amp;gt; Chroma (full-frame decode)&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Cycle view mode: Source -&amp;gt; Hybrid -&amp;gt; Chroma (full-frame decode)&lt;/p&gt;&lt;p&gt;Default on open: Hybrid&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+             </property>
+             <property name="statusTip">
+              <string>Default mode on open is Hybrid. Click to cycle Source, Hybrid, and Chroma.</string>
              </property>
              <property name="text">
               <string>Chroma</string>
@@ -768,6 +771,8 @@
     <property name="title">
      <string>Help</string>
     </property>
+    <addaction name="actionTBC_Tools_Wiki"/>
+    <addaction name="separator"/>
     <addaction name="actionAbout_ld_analyse"/>
    </widget>
    <widget class="QMenu" name="menuView">
@@ -811,6 +816,20 @@
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QStatusBar" name="statusBar"/>
+  <action name="actionTBC_Tools_Wiki">
+   <property name="text">
+    <string>TBC Tools Wiki</string>
+   </property>
+   <property name="toolTip">
+    <string>Open the TBC Tools Wiki in your default browser</string>
+   </property>
+   <property name="statusTip">
+    <string>Open documentation: https://github.com/harrypm/tbc-tools/wiki</string>
+   </property>
+   <property name="whatsThis">
+    <string>Opens the TBC Tools Wiki page with usage and workflow documentation.</string>
+   </property>
+  </action>
   <action name="actionAbout_ld_analyse">
    <property name="text">
     <string>About ld-analyse...</string>

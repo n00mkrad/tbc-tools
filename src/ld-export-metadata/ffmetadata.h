@@ -41,12 +41,15 @@
            Pass a value < 1 to export from the first frame.
     @param lengthFrames Optional frame length for range export.
            Pass a value < 1 to export to the end of the input.
+    @param includeVitcTimecode When true, include FFmpeg-style VITC timecode
+           in the output header when available.
 
     Returns true on success, false on failure.
 */
 bool writeFfmetadata(LdDecodeMetaData &metaData,
                      const QString &fileName,
                      qint32 startFrameOneBased = -1,
-                     qint32 lengthFrames = -1);
+                     qint32 lengthFrames = -1,
+                     bool includeVitcTimecode = true);
 
 #endif

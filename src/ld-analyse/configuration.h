@@ -64,6 +64,8 @@ public:
     // Get and set methods - view options
     void setToggleChromaDuringSeek(bool toggleChromaDuringSeek);
     bool getToggleChromaDuringSeek(void);
+    void setGenerateProxyEnabled(bool generateProxyEnabled);
+    bool getGenerateProxyEnabled(void);
     void setResizeFrameWithWindow(bool resizeFrameWithWindow);
     bool getResizeFrameWithWindow(void);
     void setShowExportBoundary(bool showExportBoundary);
@@ -103,6 +105,7 @@ private:
     // View options
     struct ViewOptions {
         bool toggleChromaDuringSeek;
+        bool generateProxyEnabled;
         bool resizeFrameWithWindow;
         bool showExportBoundary;
         qint32 exportBoundaryThickness;

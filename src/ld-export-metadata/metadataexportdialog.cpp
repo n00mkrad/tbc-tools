@@ -127,14 +127,16 @@ MetadataExportDialog::MetadataExportDialog(QWidget *parent) :
     connectStatusClearCheckBox(ui->vbiCsvCheckBox);
     connectStatusClearCheckBox(ui->audacityLabelsCheckBox);
     connectStatusClearCheckBox(ui->ffmetadataCheckBox);
+    connectStatusClearCheckBox(ui->ffmpegVitcCheckBox);
+    connectStatusClearCheckBox(ui->ffmetadataVitcTimecodeCheckBox);
     connectStatusClearCheckBox(ui->closedCaptionsCheckBox);
 
     if (ui->ffmetadataCheckBox) {
         connect(ui->ffmetadataCheckBox, &QCheckBox::toggled, this, [this]() {
-            updateFfmetadataRangeEnabled();
+            updateFfmetadataControlsEnabled();
         });
     }
-    updateFfmetadataRangeEnabled();
+    updateFfmetadataControlsEnabled();
 }
 
 MetadataExportDialog::~MetadataExportDialog()
@@ -156,12 +158,14 @@ void MetadataExportDialog::setInitialOptions(const InitialOptions &options)
     ui->vbiCsvCheckBox->setChecked(options.exportVbiCsv);
     ui->audacityLabelsCheckBox->setChecked(options.exportAudacityLabels);
     ui->ffmetadataCheckBox->setChecked(options.exportFfmetadata);
+    ui->ffmpegVitcCheckBox->setChecked(options.exportFfmpegVitc);
+    ui->ffmetadataVitcTimecodeCheckBox->setChecked(options.exportFfmetadataVitcTimecode);
     ui->closedCaptionsCheckBox->setChecked(options.exportClosedCaptions);
     ui->ffmetadataStartLineEdit->setText(options.ffmetadataStart > 0 ? QString::number(options.ffmetadataStart) : QString());
     ui->ffmetadataLengthLineEdit->setText(options.ffmetadataLength > 0 ? QString::number(options.ffmetadataLength) : QString());
     ui->debugCheckBox->setChecked(options.debug);
     ui->quietCheckBox->setChecked(options.quiet);
-    updateFfmetadataRangeEnabled();
+    updateFfmetadataControlsEnabled();
 
     const QFileInfo inputInfo(ui->inputLineEdit->text());
     if (inputInfo.exists() && inputInfo.isFile()) {
@@ -326,6 +330,7 @@ void MetadataExportDialog::on_exportButton_clicked()
         || !addOutput(ui->vbiCsvCheckBox, QStringLiteral("--vbi-csv"), QStringLiteral("_vbi.csv"))
         || !addOutput(ui->audacityLabelsCheckBox, QStringLiteral("--audacity-labels"), QStringLiteral("_audacity-labels.txt"))
         || !addOutput(ui->ffmetadataCheckBox, QStringLiteral("--ffmetadata"), QStringLiteral("_ffmetadata.txt"))
+        || !addOutput(ui->ffmpegVitcCheckBox, QStringLiteral("--ffmpeg-vitc"), QStringLiteral("_FFmpeg_VITC.txt"))
         || !addOutput(ui->closedCaptionsCheckBox, QStringLiteral("--closed-captions"), QStringLiteral("_closed-captions.scc"))) {
         return;
     }
@@ -337,6 +342,9 @@ void MetadataExportDialog::on_exportButton_clicked()
 
     const bool ffmetadataSelected = ui->ffmetadataCheckBox && ui->ffmetadataCheckBox->isChecked();
     if (ffmetadataSelected) {
+        if (ui->ffmetadataVitcTimecodeCheckBox && !ui->ffmetadataVitcTimecodeCheckBox->isChecked()) {
+            arguments << QStringLiteral("--ffmetadata-no-vitc-timecode");
+        }
         if (!startText.isEmpty()) {
             qint32 startValue = -1;
             if (!parsePositiveInteger(startText, &startValue)) {
@@ -525,11 +533,17 @@ bool MetadataExportDialog::isSupportedInputPath(const QString &path) const
     return isJsonPath(path);
 }
 
-void MetadataExportDialog::updateFfmetadataRangeEnabled()
+void MetadataExportDialog::updateFfmetadataControlsEnabled()
 {
     const bool enabled = ui->ffmetadataCheckBox && ui->ffmetadataCheckBox->isChecked();
     if (ui->ffmetadataRangeLabel) {
         ui->ffmetadataRangeLabel->setEnabled(enabled);
+    }
+    if (ui->ffmetadataVitcTimecodeLabel) {
+        ui->ffmetadataVitcTimecodeLabel->setEnabled(enabled);
+    }
+    if (ui->ffmetadataVitcTimecodeCheckBox) {
+        ui->ffmetadataVitcTimecodeCheckBox->setEnabled(enabled);
     }
     if (ui->ffmetadataStartLineEdit) {
         ui->ffmetadataStartLineEdit->setEnabled(enabled);

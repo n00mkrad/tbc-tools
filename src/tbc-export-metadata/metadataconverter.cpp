@@ -1,6 +1,6 @@
 /******************************************************************************
  * metadataconverter.cpp
- * ld-export-decode-metadata - metadata export tool for ld-decode
+ * tbc-export-metadata - metadata export tool for ld-decode
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  * SPDX-FileCopyrightText: 2025 Simon Inns

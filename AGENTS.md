@@ -58,7 +58,7 @@ rm -rf build
 - **Core Processing**: `ld-process-vbi`, `ld-process-vits`
 - **EFM Decoder Suite**: `efm-decoder-f2`, `efm-decoder-d24`, `efm-decoder-audio`, `efm-decoder-data`, `efm-stacker-f2`
 - **Analysis**: `ld-analyse` (GUI), `ld-discmap`, `ld-dropout-correct`
-- **Export/Conversion**: `ld-chroma-decoder`, `ld-export-metadata`, `ld-lds-converter`, `tbc-metadata-converter`
+- **Export/Conversion**: `ld-chroma-decoder`, `tbc-export-metadata`, `ld-lds-converter`, `tbc-metadata-converter`
 
 ### Build System
 - **CMake-based** with Ninja generator preferred
@@ -83,7 +83,7 @@ rm -rf build
 
 ### Metadata Format
 - **SQLite database** format (internal, subject to change)
-- **Do NOT access directly** - use `ld-export-metadata` instead
+- **Do NOT access directly** - use `tbc-export-metadata` instead
 - **Tables**: `video_parameters`, `fields`, `dropouts`
 
 ## Development Patterns

@@ -1,13 +1,14 @@
 /************************************************************************
 
-    vitcffmetadata.h
+    closedcaptions.cpp
 
-    ld-export-metadata - Export ld-decode metadata into other formats
-    Copyright (C) 2026 Simon Inns
+    tbc-export-metadata - Export ld-decode metadata into other formats
+    Copyright (C) 2019-2020 Adam Sampson
+    Copyright (C) 2021 Simon Inns
 
     This file is part of ld-decode-tools.
 
-    ld-export-metadata is free software: you can redistribute it and/or
+    tbc-export-metadata is free software: you can redistribute it and/or
     modify it under the terms of the GNU General Public License as
     published by the Free Software Foundation, either version 3 of the
     License, or (at your option) any later version.
@@ -22,23 +23,15 @@
 
 ************************************************************************/
 
-#ifndef VITCFFMETADATA_H
-#define VITCFFMETADATA_H
+#ifndef CLOSEDCAPTIONS_H
+#define CLOSEDCAPTIONS_H
 
 #include <QString>
 
 #include "lddecodemetadata.h"
 
-/*!
-    Write all available VITC values in FFmpeg metadata=print style text.
+QString generateTimeStamp(qint32 fieldIndex);
+qint32 sanityCheckData(qint32 dataByte);
+bool writeClosedCaptions(LdDecodeMetaData &metaData, const QString &fileName);
 
-    This mirrors FFmpeg readvitc filter key formatting:
-      - frame / pts / pts_time summary line
-      - lavfi.readvitc.found
-      - lavfi.readvitc.tc_str (when a valid VITC value is available)
-
-    Returns true on success, false on failure.
-*/
-bool writeVitcFfmetadataText(LdDecodeMetaData &metaData, const QString &fileName);
-
-#endif // VITCFFMETADATA_H
+#endif // CLOSEDCAPTIONS_H

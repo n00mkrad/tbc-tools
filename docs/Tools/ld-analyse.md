@@ -378,7 +378,7 @@ The 'Defocus' checkbox blurs the dots on the display a little; this can be usefu
 
 ## Closed Captions
 
-On some NTSC sources closed caption subtitle information is included.  When the closed caption window is open it is possible to scroll through a contiguous sequence of frames (using the next frame button) - if CC information is present it will be typed out into the closed caption window.  Text in the CC window can be cut and pasted into another application if required.  For export of closed-captions from the entire source please see the ld-export-metadata tool.  Note that skipping over more than a single frame will automatically clear the CC output window.
+On some NTSC sources closed caption subtitle information is included.  When the closed caption window is open it is possible to scroll through a contiguous sequence of frames (using the next frame button) - if CC information is present it will be typed out into the closed caption window.  Text in the CC window can be cut and pasted into another application if required.  For export of closed-captions from the entire source please see the tbc-export-metadata tool.  Note that skipping over more than a single frame will automatically clear the CC output window.
 
 The closed captions viewer is as follows:
 

@@ -87,9 +87,7 @@ QString resolveMetadataConverterPath()
     }
 
     const QStringList converterNames = {
-        QStringLiteral("tbc-metadata-converter"),
-        QStringLiteral("metadata-converter"),
-        QStringLiteral("ld-json-converter")
+        QStringLiteral("tbc-metadata-converter")
     };
 
     for (const QString &name : converterNames) {

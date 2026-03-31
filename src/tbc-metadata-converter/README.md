@@ -7,7 +7,7 @@
 tbc-metadata-converter converts TBC metadata between JSON and a relational SQLite database for easier querying and analysis.
 
 > [!WARNING]  
-> The SQLite metadata format is **internal to ld-decode tools only** and subject to change without notice. External tools and scripts should **not** access this database directly. Instead, use `ld-export-metadata` or similar tools to export metadata in stable, documented formats.
+> The SQLite metadata format is **internal to ld-decode tools only** and subject to change without notice. External tools and scripts should **not** access this database directly. Instead, use `tbc-export-metadata` or similar tools to export metadata in stable, documented formats.
 
 ## Usage
 

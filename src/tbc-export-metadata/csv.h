@@ -1,14 +1,13 @@
 /************************************************************************
 
-    closedcaptions.cpp
+    csv.h
 
-    ld-export-metadata - Export ld-decode metadata into other formats
-    Copyright (C) 2019-2020 Adam Sampson
-    Copyright (C) 2021 Simon Inns
+    tbc-export-metadata - Export JSON metadata into other formats
+    Copyright (C) 2018-2019 Simon Inns
 
     This file is part of ld-decode-tools.
 
-    ld-export-metadata is free software: you can redistribute it and/or
+    tbc-export-metadata is free software: you can redistribute it and/or
     modify it under the terms of the GNU General Public License as
     published by the Free Software Foundation, either version 3 of the
     License, or (at your option) any later version.
@@ -23,15 +22,25 @@
 
 ************************************************************************/
 
-#ifndef CLOSEDCAPTIONS_H
-#define CLOSEDCAPTIONS_H
+#ifndef CSV_H
+#define CSV_H
 
 #include <QString>
 
 #include "lddecodemetadata.h"
 
-QString generateTimeStamp(qint32 fieldIndex);
-qint32 sanityCheckData(qint32 dataByte);
-bool writeClosedCaptions(LdDecodeMetaData &metaData, const QString &fileName);
+/*!
+    Write the per-field VITS metrics as a CSV file.
 
-#endif // CLOSEDCAPTIONS_H
+    Returns true on success, false on failure.
+*/
+bool writeVitsCsv(LdDecodeMetaData &metaData, const QString &fileName);
+
+/*!
+    Write the per-frame VBI information as a CSV file.
+
+    Returns true on success, false on failure.
+*/
+bool writeVbiCsv(LdDecodeMetaData &metaData, const QString &fileName);
+
+#endif

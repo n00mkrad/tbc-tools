@@ -432,7 +432,7 @@ Then you can `-map "[left]"` to only include the left channel analog audio chann
 ### Chapters and Subtitles
 
 
-`ld-export-metadata` chapters and subtitles (as SRT) can be embedded in the
+`tbc-export-metadata` chapters and subtitles (as SRT) can be embedded in the
 output file.
 
 Chapters from the `--ffmetadata` option and be included with

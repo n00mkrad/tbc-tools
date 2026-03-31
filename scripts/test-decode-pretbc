@@ -185,13 +185,13 @@ def run_ld_process_vbi(args):
             conn.close()
 
 def run_ld_export_metadata(args):
-    """Run ld-export-metadata."""
+    """Run tbc-export-metadata."""
 
     clean(args, ['.vits.csv', '.vbi.csv', '.ffmetadata'])
 
     cmd = [resolve_tool(
-        os.path.join(build_dir, 'bin', 'ld-export-metadata'),
-        os.path.join(build_dir, 'src', 'ld-export-metadata', 'ld-export-metadata'),
+        os.path.join(build_dir, 'bin', 'tbc-export-metadata'),
+        os.path.join(build_dir, 'src', 'tbc-export-metadata', 'tbc-export-metadata'),
     )]
     cmd += ['--vits-csv', args.output + '.vits.csv']
     cmd += ['--vbi-csv', args.output + '.vbi.csv']
@@ -200,7 +200,7 @@ def run_ld_export_metadata(args):
     run_command(cmd)
 
 def run_ld_export_decode_metadata(args):
-    """Run ld-export-decode-metadata."""
+    """Run tbc-export-metadata decode-export mode."""
 
     json_file = args.output + '.tbc.export.json'
     db_file = args.output + '.tbc.db'
@@ -213,10 +213,10 @@ def run_ld_export_decode_metadata(args):
     clean(args, ['.tbc.export.json'])
 
     cmd = [resolve_tool(
-        os.path.join(build_dir, 'bin', 'ld-export-decode-metadata'),
-        os.path.join(build_dir, 'src', 'ld-export-decode-metadata', 'ld-export-decode-metadata'),
+        os.path.join(build_dir, 'bin', 'tbc-export-metadata'),
+        os.path.join(build_dir, 'src', 'tbc-export-metadata', 'tbc-export-metadata'),
     )]
-    cmd += ['--input-sqlite', db_file]
+    cmd += ['--export-json', '--input-sqlite', db_file, '--output-json', json_file]
     run_command(cmd)
 
     if dry_run:
@@ -479,8 +479,7 @@ def main():
 
     required_tools = [
         os.path.join(build_dir, 'bin', 'ld-process-vbi'),
-        os.path.join(build_dir, 'bin', 'ld-export-metadata'),
-        os.path.join(build_dir, 'bin', 'ld-export-decode-metadata'),
+        os.path.join(build_dir, 'bin', 'tbc-export-metadata'),
         os.path.join(build_dir, 'bin', 'ld-dropout-correct'),
         os.path.join(build_dir, 'bin', 'ld-chroma-decoder'),
     ]

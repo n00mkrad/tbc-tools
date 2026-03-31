@@ -111,9 +111,7 @@ QString metadataConversionDirectionArgument(MetadataConversionDirection directio
 QString resolveMetadataConverterPath()
 {
     const QStringList converterNames = {
-        QStringLiteral("tbc-metadata-converter"),
-        QStringLiteral("metadata-converter"),
-        QStringLiteral("ld-json-converter")
+        QStringLiteral("tbc-metadata-converter")
     };
 
     return resolveToolPath(converterNames);
@@ -156,7 +154,7 @@ QString defaultMetadataOutputPath(const QString &inputFilename, MetadataConversi
 QString resolveExportDecodeMetadataPath()
 {
     const QStringList toolNames = {
-        QStringLiteral("ld-export-decode-metadata")
+        QStringLiteral("tbc-export-metadata")
     };
 
     return resolveToolPath(toolNames);
@@ -255,7 +253,7 @@ bool runExportDecodeMetadata(const QString &inputFilename,
     const QString toolPath = resolveExportDecodeMetadataPath();
     if (toolPath.isEmpty()) {
         if (errorMessage) {
-            *errorMessage = QObject::tr("ld-export-decode-metadata not found in PATH or alongside the application.");
+            *errorMessage = QObject::tr("tbc-export-metadata not found in PATH or alongside the application.");
         }
         return false;
     }
@@ -274,7 +272,7 @@ bool runExportDecodeMetadata(const QString &inputFilename,
     process.start(toolPath, arguments);
     if (!process.waitForFinished(-1)) {
         if (errorMessage) {
-            *errorMessage = QObject::tr("ld-export-decode-metadata did not finish.");
+            *errorMessage = QObject::tr("tbc-export-metadata did not finish.");
         }
         return false;
     }
@@ -285,7 +283,7 @@ bool runExportDecodeMetadata(const QString &inputFilename,
         if (errorMessage) {
             *errorMessage = stdErr.isEmpty() ? stdOut : stdErr;
             if (errorMessage->isEmpty()) {
-                *errorMessage = QObject::tr("ld-export-decode-metadata failed with exit code %1.").arg(process.exitCode());
+                *errorMessage = QObject::tr("tbc-export-metadata failed with exit code %1.").arg(process.exitCode());
             }
         }
         return false;

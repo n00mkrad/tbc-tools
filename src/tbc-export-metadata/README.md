@@ -1,16 +1,18 @@
-# ld-export-metadata
+# tbc-export-metadata
 
 **TBC Metadata Export and Conversion Tool**
 
 ## Overview
 
-ld-export-metadata exports and converts metadata from TBC files into various human-readable and machine-readable formats. It provides access to detailed field-level information, VBI data, dropout statistics, and quality metrics.
+tbc-export-metadata exports and converts metadata from TBC files into various human-readable and machine-readable formats. It provides access to detailed field-level information, VBI data, dropout statistics, and quality metrics.
 
 **Note**: This is the **recommended tool for external scripts and applications** to access ld-decode metadata. The internal SQLite metadata format is subject to change without notice and should not be accessed directly by external tools.
 
 ## Features
 
 ### Export Formats
+- `--export-json`: Write decode export metadata JSON (`<input>.export.json` by default)
+- `--output-json <file>`: Specify decode export metadata JSON output file
 - `--vits-csv <file>`: Write VITS information as CSV
 - `--vbi-csv <file>`: Write VBI information as CSV  
 - `--audacity-labels <file>`: Write navigation information as Audacity labels
@@ -38,7 +40,7 @@ ld-export-metadata exports and converts metadata from TBC files into various hum
 
 ### Basic Syntax
 ```bash
-ld-export-metadata [options] <input.tbc>
+tbc-export-metadata [options] <input>
 ```
 
 ## Options
@@ -48,8 +50,12 @@ ld-export-metadata [options] <input.tbc>
 - `-v, --version`: Display version information
 - `-d, --debug`: Show debug information
 - `-q, --quiet`: Suppress info and warning messages
+- `-g, --gui`: Launch metadata export GUI
+- `--input <file>` / `--input-sqlite <file>`: Specify input metadata file
 
 #### Export Formats
+- `--export-json`: Write decode export metadata JSON (`<input>.export.json` by default)
+- `--output-json <file>`: Specify decode export metadata JSON output file
 - `--vits-csv <file>`: Write VITS information as CSV
 - `--vbi-csv <file>`: Write VBI information as CSV
 - `--audacity-labels <file>`: Write navigation information as Audacity labels
@@ -65,32 +71,32 @@ ld-export-metadata [options] <input.tbc>
 
 #### Export VBI Data as CSV
 ```bash
-ld-export-metadata --vbi-csv vbi.csv input.tbc.sqlite
+tbc-export-metadata --vbi-csv vbi.csv input.tbc.sqlite
 ```
 
 #### Export VITS Data as CSV
 ```bash
-ld-export-metadata --vits-csv vits.csv input.tbc.sqlite
+tbc-export-metadata --vits-csv vits.csv input.tbc.sqlite
 ```
 
 #### Export FFmpeg Metadata for Chapter Marks
 ```bash
-ld-export-metadata --ffmetadata chapters.txt input.tbc.sqlite
+tbc-export-metadata --ffmetadata chapters.txt input.tbc.sqlite
 ```
 
 #### Export FFmpeg-style VITC Text for Every Frame
 ```bash
-ld-export-metadata --ffmpeg-vitc vitc.txt input.tbc
+tbc-export-metadata --ffmpeg-vitc vitc.txt input.tbc
 ```
 
 #### Export Closed Captions
 ```bash
-ld-export-metadata --closed-captions captions.scc input.tbc.sqlite
+tbc-export-metadata --closed-captions captions.scc input.tbc.sqlite
 ```
 
 #### Export Audacity Labels
 ```bash
-ld-export-metadata --audacity-labels labels.txt input.tbc.sqlite
+tbc-export-metadata --audacity-labels labels.txt input.tbc.sqlite
 ```
 
 ## Export Format Details
@@ -183,14 +189,14 @@ print(f"Average length: {df['length'].mean():.1f} samples")
 ### Shell Script Processing
 ```bash
 # Export VBI data and extract frame numbers
-ld-export-metadata --vbi-csv vbi_data.csv input.tbc
+tbc-export-metadata --vbi-csv vbi_data.csv input.tbc
 awk -F',' 'NR>1 {print $1}' vbi_data.csv | sort -u > frames_with_vbi.txt
 ```
 
 ### FFmpeg Chapter Integration
 ```bash
 # Export chapters
-ld-export-metadata --ffmetadata chapters.txt input.tbc
+tbc-export-metadata --ffmetadata chapters.txt input.tbc
 
 # Add to final video
 ffmpeg -i video.mkv -i chapters.txt -map_metadata 1 -codec copy output.mkv

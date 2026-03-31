@@ -125,6 +125,8 @@ class ProcessName(Flag):
 
     def __str__(self) -> str:
         """Return formatted enum name as string."""
+        if self is ProcessName.LD_EXPORT_METADATA:
+            return "tbc-export-metadata"
         return str(self.name).replace("_", "-").lower()
 
 

@@ -2,13 +2,13 @@
 
     main.cpp
 
-    ld-export-metadata - Export ld-decode metadata into other formats
+    tbc-export-metadata - Export ld-decode metadata into other formats
     Copyright (C) 2020-2023 Adam Sampson
     Copyright (C) 2021-2025 Simon Inns
 
     This file is part of ld-decode-tools.
 
-    ld-export-metadata is free software: you can redistribute it and/or
+    tbc-export-metadata is free software: you can redistribute it and/or
     modify it under the terms of the GNU General Public License as
     published by the Free Software Foundation, either version 3 of the
     License, or (at your option) any later version.
@@ -32,6 +32,7 @@
 #include "ffmetadata.h"
 #include "vitcffmetadata.h"
 #include "closedcaptions.h"
+#include "metadataconverter.h"
 #include "metadataexportdialog.h"
 
 #include "tbc/logging.h"
@@ -40,6 +41,8 @@ namespace {
 struct ExportCommandLineOptions {
     QCommandLineOption guiOption;
     QCommandLineOption inputOption;
+    QCommandLineOption exportJsonOption;
+    QCommandLineOption outputJsonOption;
     QCommandLineOption writeVitsCsvOption;
     QCommandLineOption writeVbiCsvOption;
     QCommandLineOption writeAudacityLabelsOption;
@@ -53,9 +56,14 @@ struct ExportCommandLineOptions {
     ExportCommandLineOptions() :
         guiOption(QStringList() << "g" << "gui",
                   QCoreApplication::translate("main", "Launch dedicated metadata export GUI")),
-        inputOption(QStringList() << "input",
+        inputOption(QStringList() << "input" << "input-sqlite",
                     QCoreApplication::translate("main", "Specify input metadata file"),
                     QCoreApplication::translate("main", "file")),
+        exportJsonOption("export-json",
+                         QCoreApplication::translate("main", "Write decode export metadata as JSON (default output: <input>.export.json)")),
+        outputJsonOption("output-json",
+                         QCoreApplication::translate("main", "Specify decode export metadata output JSON file (implies --export-json)"),
+                         QCoreApplication::translate("main", "file")),
         writeVitsCsvOption("vits-csv",
                            QCoreApplication::translate("main", "Write VITS information as CSV"),
                            QCoreApplication::translate("main", "file")),
@@ -89,6 +97,8 @@ struct ExportCommandLineOptions {
     {
         parser.addOption(guiOption);
         parser.addOption(inputOption);
+        parser.addOption(exportJsonOption);
+        parser.addOption(outputJsonOption);
         parser.addOption(writeVitsCsvOption);
         parser.addOption(writeVbiCsvOption);
         parser.addOption(writeAudacityLabelsOption);
@@ -103,6 +113,9 @@ struct ExportCommandLineOptions {
 
 bool wantsGui(int argc, char *argv[])
 {
+    if (argc <= 1) {
+        return true;
+    }
     for (int i = 1; i < argc; ++i) {
         const QString arg = QString::fromLocal8Bit(argv[i]);
         if (arg == QLatin1String("--gui") || arg == QLatin1String("-g")) {
@@ -110,6 +123,13 @@ bool wantsGui(int argc, char *argv[])
         }
     }
     return false;
+}
+QString defaultExportJsonOutputPath(const QString &inputFilename)
+{
+    if (inputFilename.endsWith(QStringLiteral(".db"), Qt::CaseInsensitive)) {
+        return inputFilename.left(inputFilename.length() - 3) + QStringLiteral(".export.json");
+    }
+    return inputFilename + QStringLiteral(".export.json");
 }
 
 QString resolveInputFilename(const QCommandLineParser &parser,
@@ -167,14 +187,14 @@ int main(int argc, char *argv[])
         QApplication a(argc, argv);
 
         // Set application name and version
-        QCoreApplication::setApplicationName("ld-export-metadata");
+        QCoreApplication::setApplicationName("tbc-export-metadata");
         QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
         QCoreApplication::setOrganizationDomain("domesday86.com");
 
         // Set up the command line parser
         QCommandLineParser parser;
         parser.setApplicationDescription(
-                    "ld-export-metadata - Export ld-decode metadata into other formats\n"
+                    "tbc-export-metadata - Export ld-decode metadata into other formats\n"
                     "\n"
                     "(c)2020-2023 Adam Sampson\n"
                     "(c)2021-2025 Simon Inns\n"
@@ -214,14 +234,14 @@ int main(int argc, char *argv[])
     QCoreApplication a(argc, argv);
 
     // Set application name and version
-    QCoreApplication::setApplicationName("ld-export-metadata");
+    QCoreApplication::setApplicationName("tbc-export-metadata");
     QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
     QCoreApplication::setOrganizationDomain("domesday86.com");
 
     // Set up the command line parser
     QCommandLineParser parser;
     parser.setApplicationDescription(
-                "ld-export-metadata - Export ld-decode metadata into other formats\n"
+                "tbc-export-metadata - Export ld-decode metadata into other formats\n"
                 "\n"
                 "(c)2020-2023 Adam Sampson\n"
                 "(c)2021-2025 Simon Inns\n"
@@ -252,6 +272,34 @@ int main(int argc, char *argv[])
     if (inputFileName.isEmpty()) {
         qCritical("You must specify the input metadata file");
         return 1;
+    }
+    const bool exportJsonRequested = parser.isSet(options.exportJsonOption) || parser.isSet(options.outputJsonOption);
+    const bool hasFormatExports = parser.isSet(options.writeVitsCsvOption)
+                                  || parser.isSet(options.writeVbiCsvOption)
+                                  || parser.isSet(options.writeAudacityLabelsOption)
+                                  || parser.isSet(options.writeFfmetadataOption)
+                                  || parser.isSet(options.writeFfmpegVitcOption)
+                                  || parser.isSet(options.writeClosedCaptionsOption);
+
+    if (!exportJsonRequested && !hasFormatExports) {
+        qCritical("You must specify at least one output option");
+        return 1;
+    }
+
+    if (exportJsonRequested) {
+        QString outputJsonFileName = parser.value(options.outputJsonOption).trimmed();
+        if (outputJsonFileName.isEmpty()) {
+            outputJsonFileName = defaultExportJsonOutputPath(inputFileName);
+        }
+        qInfo() << "Beginning SQLite DB to export JSON processing...";
+        MetadataConverter metadataConverter(inputFileName, outputJsonFileName);
+        if (!metadataConverter.process()) {
+            return 1;
+        }
+    }
+
+    if (!hasFormatExports) {
+        return 0;
     }
 
     // Load the source video metadata

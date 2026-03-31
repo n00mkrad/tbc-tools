@@ -198,7 +198,7 @@ ld-lds-converter --raw-to-lds \
 
 **Metadata encoding issues:**
 - Use UTF-8 encoding for metadata files
-- Use `ld-export-metadata` to verify metadata format
+- Use `tbc-export-metadata` to verify metadata format
 - Ensure SQLite metadata database is not corrupted
 
 ## Format Comparison

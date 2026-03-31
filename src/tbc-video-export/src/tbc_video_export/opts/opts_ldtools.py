@@ -421,7 +421,7 @@ def add_ldtool_opts(parent: argparse.ArgumentParser) -> None:
         action="store_true",
         default=False,
         help=(
-            "Run ld-export-metadata before exporting. (default: no)\n\n"
+            "Run tbc-export-metadata before exporting. (default: no)\n\n"
             "  - The generated subtitles and ffmetadata will be muxed when encoding."
             "\n\n"
         ),

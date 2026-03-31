@@ -3348,10 +3348,10 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
         defaultInput.clear();
     }
 
-    const QString toolPath = resolveExternalExecutable({QStringLiteral("ld-export-metadata")});
+    const QString toolPath = resolveExternalExecutable({QStringLiteral("tbc-export-metadata")});
     if (toolPath.isEmpty()) {
         QMessageBox::warning(this, tr("Tool not found"),
-                             tr("ld-export-metadata was not found in PATH or alongside the application."));
+                             tr("tbc-export-metadata was not found in PATH or alongside the application."));
         return;
     }
     QStringList arguments = {QStringLiteral("--gui")};
@@ -3360,7 +3360,7 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
     }
     if (!QProcess::startDetached(toolPath, arguments)) {
         QMessageBox::warning(this, tr("Launch failed"),
-                             tr("Unable to start ld-export-metadata GUI."));
+                             tr("Unable to start tbc-export-metadata GUI."));
         return;
     }
 

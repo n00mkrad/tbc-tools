@@ -1,6 +1,6 @@
 /******************************************************************************
  * metadataexportdialog.cpp
- * ld-export-metadata - Export ld-decode metadata into other formats
+ * tbc-export-metadata - Export ld-decode metadata into other formats
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  * SPDX-FileCopyrightText: 2026 Simon Inns
@@ -392,7 +392,7 @@ void MetadataExportDialog::on_exportButton_clicked()
     if (!process.waitForStarted(5000)) {
         ui->statusLabel->setText(tr("Failed to start export process."));
         QMessageBox::warning(this, tr("Export failed"),
-                             tr("Unable to start ld-export-metadata process."));
+                             tr("Unable to start tbc-export-metadata process."));
         return;
     }
     if (!process.waitForFinished(-1)) {
@@ -400,7 +400,7 @@ void MetadataExportDialog::on_exportButton_clicked()
         process.waitForFinished(1000);
         ui->statusLabel->setText(tr("Export process timed out."));
         QMessageBox::warning(this, tr("Export failed"),
-                             tr("ld-export-metadata did not finish."));
+                             tr("tbc-export-metadata did not finish."));
         return;
     }
 
@@ -409,7 +409,7 @@ void MetadataExportDialog::on_exportButton_clicked()
         ui->statusLabel->setText(tr("Export failed."));
         QMessageBox::warning(this, tr("Export failed"),
                              processOutput.isEmpty()
-                                 ? tr("ld-export-metadata failed with exit code %1.").arg(process.exitCode())
+                                 ? tr("tbc-export-metadata failed with exit code %1.").arg(process.exitCode())
                                  : processOutput);
         return;
     }

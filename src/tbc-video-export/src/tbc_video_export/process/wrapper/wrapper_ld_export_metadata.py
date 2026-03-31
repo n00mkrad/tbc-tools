@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class WrapperLDExportMetadata(Wrapper):
-    """Wrapper for ld-export-metadata."""
+    """Wrapper for tbc-export-metadata."""
 
     def __init__(self, state: ProgramState, config: WrapperConfig[None, None]) -> None:
         super().__init__(state, config)

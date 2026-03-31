@@ -41,7 +41,7 @@ Please see the [releases page](https://github.com/harrypm/tbc-tools/releases/) f
 
 ### Export and Conversion Tools
 
-- **ld-export-metadata**      - Export TBC metadata to external formats
+- **tbc-export-metadata**     - Export TBC metadata to external formats
 - **ld-lds-converter**        - Convert between 10-bit packed and 16-bit data formats for DomesDay Duplicator captures.
 - **tbc-metadata-converter**  - Convert between  JSON & SQLite metadata formats
 - **tbc-video-export**        - Direct to video export task handler for .tbc files. 

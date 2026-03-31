@@ -2,12 +2,12 @@
 
     csv.cpp
 
-    ld-export-metadata - Export JSON metadata into other formats
+    tbc-export-metadata - Export JSON metadata into other formats
     Copyright (C) 2018-2019 Simon Inns
 
     This file is part of ld-decode-tools.
 
-    ld-export-metadata is free software: you can redistribute it and/or
+    tbc-export-metadata is free software: you can redistribute it and/or
     modify it under the terms of the GNU General Public License as
     published by the Free Software Foundation, either version 3 of the
     License, or (at your option) any later version.

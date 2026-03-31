@@ -18,7 +18,7 @@ SCC is the Scenarist Closed Caption format V1.0 and uses .scc as the file extens
 
 To generate an SCC file use a command line such as:
 
-    ld-export-metadata --closed-captions /home/sdi/Decodes/cinder/cindys1.scc /home/sdi/Decodes/cinder/cindys1.tbc.json
+    tbc-export-metadata --closed-captions /home/sdi/Decodes/cinder/cindys1.scc /home/sdi/Decodes/cinder/cindys1.tbc.json
 
 This will create the required SCC file (this file is readable in any text editor if you'd like to view the contents).
 

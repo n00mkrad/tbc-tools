@@ -1,6 +1,7 @@
-## ld-export-metadata
-This application reads an ld-decode JSON metadata file, typically as produced by ld-process-vbi, and exports information in standard formats that other tools can read. At present, it can export:
+## tbc-export-metadata
+This application reads ld-decode metadata (`.db` or `.json`) and exports information in standard formats that other tools can read. It can also write decode-export JSON (`.export.json`) directly from SQLite metadata. At present, it can export:
 
+- Decode export metadata JSON (`--export-json` / `--output-json`)
 - Per-frame signal quality information from the VITS test signals, as CSV
 - Per-frame LaserDisc VBI control signals, as CSV
 - LaserDisc navigation information, as Audacity labels
@@ -10,7 +11,7 @@ This application reads an ld-decode JSON metadata file, typically as produced by
 
 Syntax:
 
-ld-export-metadata \<options> \<input>
+tbc-export-metadata \<options> \<input>
 
 ```
 Options:
@@ -19,6 +20,11 @@ Options:
   -v, --version             Displays version information.
   -d, --debug               Show debug
   -q, --quiet               Suppress info and warning messages
+  -g, --gui                 Launch metadata export GUI
+  --input <file>            Specify input metadata file
+  --input-sqlite <file>     Alias for --input
+  --export-json             Write decode export metadata JSON (<input>.export.json by default)
+  --output-json <file>      Specify decode export metadata JSON output file (implies --export-json)
   --vits-csv <file>         Write VITS information as CSV
   --vbi-csv <file>          Write VBI information as CSV
   --audacity-labels <file>  Write navigation information as Audacity labels
@@ -27,5 +33,5 @@ Options:
   --closed-captions <file>  Write closed captions as Scenarist SCC V1.0 format
 
 Arguments:
-  input                     Specify input JSON file
+  input                     Specify input metadata file
 ```

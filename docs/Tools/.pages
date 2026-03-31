@@ -7,7 +7,7 @@ nav:
   - ld-disc-stacker.md
   - ld-discmap.md
   - ld-dropout-correct.md
-  - ld-export-metadata.md
+  - tbc-export-metadata.md
   - ld-lds-converter.md
   - ld-process-efm.md
   - ld-process-vbi.md

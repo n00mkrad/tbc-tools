@@ -17,7 +17,7 @@ This document tracks the implementation of comprehensive metadata improvements a
 - [ ] Increment schema version and add migration logic
 
 ### Phase 2: JSON Converter Enhancement
-- [ ] Add bidirectional conversion support to `ld-json-converter`
+- [ ] Add bidirectional conversion support to `tbc-metadata-converter`
 - [ ] Implement SQLite → JSON export functionality
 - [ ] Update JSON schema documentation
 - [ ] Add command-line options for conversion direction
@@ -59,7 +59,7 @@ This document tracks the implementation of comprehensive metadata improvements a
 - `src/library/tbc/sqliteio.cpp` - Updated schema and I/O methods with migration logic
 
 ### Tool Changes:
-- `src/ld-json-converter/` - Enhanced for bidirectional conversion
+- `src/tbc-metadata-converter/` - Enhanced for bidirectional conversion
 - `src/ld-analyse/` - Added metadata-only mode and settings persistence
 - `src/ld-chroma-decoder/main.cpp` - Reads metadata defaults
 

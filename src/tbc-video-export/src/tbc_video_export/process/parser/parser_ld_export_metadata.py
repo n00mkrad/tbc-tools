@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class ParserLDExportMetadata(Parser):
-    """Parser for ld-export-metadata process.
+    """Parser for tbc-export-metadata process.
 
     This tool is silent unless there is a problem.
     """

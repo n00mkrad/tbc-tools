@@ -19,6 +19,7 @@ env:
   FLAC_FILE: "flac-1.5.0-win.zip"
   FLAC_PATH: "flac-1.5.0-win"
   FLAC_URL: "https://ftp.osuosl.org/pub/xiph/releases/flac/flac-1.5.0-win.zip"
+  VCPKG_COMMIT: "d30fdf55cfca16e12bc3ad99cbc615997014b61b"
   # Persist vcpkg binary artifacts across runs for faster Windows builds.
   VCPKG_BINARY_CACHE_ROOT: "${{ github.workspace }}\\ci\\cache\\vcpkg"
 
@@ -58,6 +59,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            src/tbc-video-export/pyinstaller/requirements-build-windows.txt
 
       - name: Set up CMake
         uses: jwlawson/actions-setup-cmake@v2
@@ -68,16 +72,16 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.VCPKG_BINARY_CACHE_ROOT }}\\${{ matrix.cache_subdir }}
-          key: ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-binary-cache-${{ hashFiles('vcpkg.json') }}-${{ hashFiles('vcpkg-configuration.json') }}-${{ hashFiles('CMakePresets.json') }}
+          key: ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-binary-cache-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-${{ hashFiles('**/vcpkg-configuration.json') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-binary-cache-${{ hashFiles('vcpkg.json') }}-${{ hashFiles('vcpkg-configuration.json') }}-
-            ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-binary-cache-${{ hashFiles('vcpkg.json') }}-
+            ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-binary-cache-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-
+            ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-binary-cache-${{ env.VCPKG_COMMIT }}-
             ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-binary-cache-
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: "d30fdf55cfca16e12bc3ad99cbc615997014b61b"
+          vcpkgGitCommitId: "${{ env.VCPKG_COMMIT }}"
           # Prevent false-positive "File not found" warnings from broad default log regexes.
           logCollectionRegExps: "a^"
       - name: Initialize repository-contained vcpkg cache
@@ -177,7 +181,8 @@ jobs:
         run: |
           $exporterRoot = "${{ github.workspace }}\\src\\tbc-video-export"
           python -m pip install --upgrade pip
-          python -m pip install pyinstaller pyinstaller-versionfile dunamai
+          python -m pip install -r "$exporterRoot\\pyinstaller\\requirements-build-windows.txt"
+          python -c "import pywintypes, win32file, win32pipe"
           $env:PYTHONPATH = "$exporterRoot\\src"
           Push-Location $exporterRoot
           New-Item -ItemType Directory -Force -Path .\\build | Out-Null

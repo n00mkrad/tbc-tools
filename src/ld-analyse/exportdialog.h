@@ -91,7 +91,6 @@ private:
     bool findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const;
     QString selectedMainCodecId() const;
     QString selectedMainContainerId() const;
-    QString selectedMetadataTargetId() const;
     QString selectedExportProfileConfigPath(QString *errorMessage = nullptr) const;
     int selectedMainBitDepth() const;
     QString selectedExportProfileName() const;

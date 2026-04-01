@@ -43,7 +43,7 @@ jobs:
           dnf install --assumeyes --nogpgcheck https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E %rhel).noarch.rpm
           dnf install --assumeyes --nogpgcheck https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-$(rpm -E %rhel).noarch.rpm https://mirrors.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-$(rpm -E %rhel).noarch.rpm
           FORCE_DNF=1 /usr/bin/crb enable
-          dnf --assumeyes install sudo git file xz ca-certificates patchelf libglvnd-opengl libglvnd-glx libglvnd-egl fftw-devel ffmpeg-devel ffmpeg pkgconf-pkg-config make cmake gcc-c++
+          dnf --assumeyes install sudo git file xz ca-certificates patchelf libglvnd-opengl libglvnd-glx libglvnd-egl fftw-devel ffmpeg-devel ffmpeg pkgconf-pkg-config make cmake gcc-c++ python3
           update-ca-trust
           mkdir -p -m 0755 /nix
           chown root /nix
@@ -264,6 +264,27 @@ jobs:
 
           copy_qt_plugin "iconengines/libqsvgicon.so"
           copy_qt_plugin "imageformats/libqsvg.so"
+          copy_runtime_lib() {
+            local lib_name="$1"
+            local lib_src
+            lib_src="$(find /nix/store -type f -name "$lib_name" | sort | head -n 1 || true)"
+            if [ -z "$lib_src" ]; then
+              echo "Required runtime lib missing from Nix store: $lib_name"
+              exit 1
+            fi
+            cp -Lf "$lib_src" "AppDir/usr/lib/$lib_name"
+            echo "Bundled runtime lib: $lib_name <- $lib_src"
+          }
+          for runtime_lib in \
+            libxcb-cursor.so.0 \
+            libxcb-icccm.so.4 \
+            libxcb-image.so.0 \
+            libxcb-keysyms.so.1 \
+            libxcb-render-util.so.0 \
+            libxkbcommon.so.0 \
+            libxkbcommon-x11.so.0; do
+            copy_runtime_lib "$runtime_lib"
+          done
           cat > AppDir/usr/bin/qt.conf <<'EOF'
           [Paths]
           Plugins = ../plugins
@@ -575,6 +596,27 @@ jobs:
           copy_qt_plugin "sqldrivers/libqsqlite.so"
           copy_qt_plugin "iconengines/libqsvgicon.so"
           copy_qt_plugin "imageformats/libqsvg.so"
+          copy_runtime_lib() {
+            local lib_name="$1"
+            local lib_src
+            lib_src="$(find /nix/store -type f -name "$lib_name" | sort | head -n 1 || true)"
+            if [ -z "$lib_src" ]; then
+              echo "Required runtime lib missing from Nix store: $lib_name"
+              exit 1
+            fi
+            cp -Lf "$lib_src" "release/lib/$lib_name"
+            echo "Bundled runtime lib: $lib_name <- $lib_src"
+          }
+          for runtime_lib in \
+            libxcb-cursor.so.0 \
+            libxcb-icccm.so.4 \
+            libxcb-image.so.0 \
+            libxcb-keysyms.so.1 \
+            libxcb-render-util.so.0 \
+            libxkbcommon.so.0 \
+            libxkbcommon-x11.so.0; do
+            copy_runtime_lib "$runtime_lib"
+          done
           cat > release/bin/qt.conf <<'EOF'
           [Paths]
           Plugins = ../plugins

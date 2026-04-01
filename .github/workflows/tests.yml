@@ -6,6 +6,27 @@ on:
   release:
 
 jobs:
+  ci-guardrails:
+    name: CI guardrails
+    runs-on: ubuntu-22.04
+    steps:
+
+    - uses: actions/checkout@v4
+      with:
+          submodules: true
+          fetch-depth: 0
+
+    - name: Run actionlint
+      run: |
+        mkdir -p "$RUNNER_TEMP/bin"
+        curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- -b "$RUNNER_TEMP/bin"
+        "$RUNNER_TEMP/bin/actionlint" -color
+
+    - name: Validate CI workflow contracts
+      run: python3 ci/check_ci_contracts.py
+
+    - name: Validate CI helper script syntax
+      run: bash -n ci/verify_linux_bundle.sh
   qt6:
     name: Build with Qt 6
     runs-on: ubuntu-22.04

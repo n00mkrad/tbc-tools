@@ -254,26 +254,19 @@
         </widget>
        </item>
        <item>
-        <widget class="QLabel" name="metadataTargetLabel">
+        <widget class="QCheckBox" name="exportMetadataCheckBox">
          <property name="text">
-          <string>Metadata target</string>
+          <string>Include FFmpeg metadata + CC</string>
          </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QComboBox" name="metadataTargetComboBox">
-         <property name="minimumSize">
-          <size>
-           <width>160</width>
-           <height>0</height>
-          </size>
+         <property name="checked">
+          <bool>true</bool>
          </property>
         </widget>
        </item>
        <item>
         <widget class="QCheckBox" name="disableMetadataEmbeddingCheckBox">
          <property name="text">
-          <string>Disable metadata embedding</string>
+          <string>Disable decode JSON attachment</string>
          </property>
         </widget>
        </item>

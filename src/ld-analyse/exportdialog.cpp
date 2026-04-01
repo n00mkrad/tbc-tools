@@ -1363,19 +1363,15 @@ ExportDialog::ExportDialog(QWidget *parent) :
             tr("Eject the default tbc-video-export profile set to an editable JSON file."));
     }
     updateExportProfileConfigPathUi();
-    if (ui->metadataTargetLabel) {
-        ui->metadataTargetLabel->setToolTip(
-            tr("Select which metadata/VITC export source is injected into the output container."));
+    if (ui->exportMetadataCheckBox) {
+        ui->exportMetadataCheckBox->setChecked(true);
+        ui->exportMetadataCheckBox->setToolTip(
+            tr("Include FFmpeg-compatible metadata and closed captions from tbc-export-metadata."));
     }
-    if (ui->metadataTargetComboBox) {
-        ui->metadataTargetComboBox->clear();
-        ui->metadataTargetComboBox->setToolTip(
-            tr("Select which metadata/VITC export source is injected into the output container."));
-        ui->metadataTargetComboBox->addItem(tr("TBC Metadata"), QStringLiteral("tbc"));
-        ui->metadataTargetComboBox->addItem(tr("FFmpeg Metadata"), QStringLiteral("ffmpeg"));
-        ui->metadataTargetComboBox->addItem(tr("All Metadata"), QStringLiteral("all"));
-        const int defaultIndex = ui->metadataTargetComboBox->findData(QStringLiteral("all"));
-        ui->metadataTargetComboBox->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
+    if (ui->disableMetadataEmbeddingCheckBox) {
+        ui->disableMetadataEmbeddingCheckBox->setChecked(false);
+        ui->disableMetadataEmbeddingCheckBox->setToolTip(
+            tr("Disable embedding the decode .tbc.json file as an attachment in supported containers."));
     }
     const auto configureRangeTimecodeLineEdit = [this](QLineEdit *lineEdit) {
         if (!lineEdit) {
@@ -1611,14 +1607,18 @@ void ExportDialog::setGenerateProxyEnabledPreference(bool enabled)
 
 void ExportDialog::setExportProfileConfigPreference(bool enabled, const QString &configPath)
 {
-    exportProfileConfigPath = configPath.trimmed();
-    if (!exportProfileConfigPath.isEmpty()) {
-        exportProfileConfigPath = QFileInfo(exportProfileConfigPath).absoluteFilePath();
+    if (!enabled) {
+        exportProfileConfigPath.clear();
+    } else {
+        exportProfileConfigPath = configPath.trimmed();
+        if (!exportProfileConfigPath.isEmpty()) {
+            exportProfileConfigPath = QFileInfo(exportProfileConfigPath).absoluteFilePath();
+        }
     }
 
     if (ui && ui->exportProfileConfigCheckBox) {
         const QSignalBlocker blocker(ui->exportProfileConfigCheckBox);
-        ui->exportProfileConfigCheckBox->setChecked(enabled && !exportProfileConfigPath.isEmpty());
+        ui->exportProfileConfigCheckBox->setChecked(enabled);
     }
 
     updateExportProfileConfigPathUi();
@@ -1637,8 +1637,12 @@ void ExportDialog::updateExportProfileConfigPathUi()
     ui->exportProfileConfigLineEdit->setText(nativePath);
     ui->exportProfileConfigLineEdit->setCursorPosition(0);
 
+    const bool externalProfilesEnabled = ui->exportProfileConfigCheckBox
+                                         && ui->exportProfileConfigCheckBox->isChecked();
     const QString tooltip = nativePath.isEmpty()
-                                ? tr("Using the default built-in tbc-video-export profile set.")
+                                ? (externalProfilesEnabled
+                                       ? tr("External profile set is enabled but no JSON profile file is selected yet.")
+                                       : tr("Using the default built-in tbc-video-export profile set."))
                                 : tr("Loaded JSON profile set: %1").arg(nativePath);
     ui->exportProfileConfigLineEdit->setToolTip(tooltip);
     if (ui->exportProfileConfigCheckBox) {
@@ -1650,8 +1654,7 @@ void ExportDialog::emitExportProfileConfigPreferenceChanged()
 {
     const bool enabled = ui
                          && ui->exportProfileConfigCheckBox
-                         && ui->exportProfileConfigCheckBox->isChecked()
-                         && !exportProfileConfigPath.trimmed().isEmpty();
+                         && ui->exportProfileConfigCheckBox->isChecked();
     emit exportProfileConfigPreferenceChanged(enabled, exportProfileConfigPath.trimmed());
 }
 
@@ -2275,22 +2278,24 @@ void ExportDialog::updateProfileDependentControls()
         ui->proxyCodecComboBox->setVisible(proxyRequested);
         ui->proxyCodecComboBox->setEnabled(canEdit && proxyRequested);
     }
-    const bool hasProfileConfigPath = !exportProfileConfigPath.trimmed().isEmpty();
+    bool externalProfilesEnabled = ui
+                                   && ui->exportProfileConfigCheckBox
+                                   && ui->exportProfileConfigCheckBox->isChecked();
     if (ui->exportProfileConfigCheckBox) {
-        if (!hasProfileConfigPath && ui->exportProfileConfigCheckBox->isChecked()) {
-            const QSignalBlocker blocker(ui->exportProfileConfigCheckBox);
-            ui->exportProfileConfigCheckBox->setChecked(false);
-        }
         ui->exportProfileConfigCheckBox->setEnabled(canEdit);
     }
+    const bool showExternalProfileControls = externalProfilesEnabled;
     if (ui->exportProfileConfigLineEdit) {
-        ui->exportProfileConfigLineEdit->setEnabled(canEdit);
+        ui->exportProfileConfigLineEdit->setVisible(showExternalProfileControls);
+        ui->exportProfileConfigLineEdit->setEnabled(canEdit && showExternalProfileControls);
     }
     if (ui->exportProfileConfigLoadButton) {
-        ui->exportProfileConfigLoadButton->setEnabled(canEdit);
+        ui->exportProfileConfigLoadButton->setVisible(showExternalProfileControls);
+        ui->exportProfileConfigLoadButton->setEnabled(canEdit && showExternalProfileControls);
     }
     if (ui->exportProfileConfigEjectButton) {
-        ui->exportProfileConfigEjectButton->setEnabled(canEdit);
+        ui->exportProfileConfigEjectButton->setVisible(showExternalProfileControls);
+        ui->exportProfileConfigEjectButton->setEnabled(canEdit && showExternalProfileControls);
     }
     const QString resolutionMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
     const bool letterboxCropAllowed = resolutionMode == QStringLiteral("active_area");
@@ -2404,9 +2409,8 @@ void ExportDialog::on_audio4BrowseButton_clicked()
 
 void ExportDialog::on_exportProfileConfigCheckBox_toggled(bool checked)
 {
-    if (checked && exportProfileConfigPath.trimmed().isEmpty()) {
-        on_exportProfileConfigLoadButton_clicked();
-        return;
+    if (!checked) {
+        exportProfileConfigPath.clear();
     }
     updateExportProfileConfigPathUi();
     updateProfileDependentControls();
@@ -2433,13 +2437,6 @@ void ExportDialog::on_exportProfileConfigLoadButton_clicked()
                                                    startPath,
                                                    tr("JSON Files (*.json);;All Files (*)"));
     if (selectedPath.isEmpty()) {
-        if (ui->exportProfileConfigCheckBox
-            && ui->exportProfileConfigCheckBox->isChecked()
-            && exportProfileConfigPath.trimmed().isEmpty()) {
-            const QSignalBlocker blocker(ui->exportProfileConfigCheckBox);
-            ui->exportProfileConfigCheckBox->setChecked(false);
-            emitExportProfileConfigPreferenceChanged();
-        }
         updateProfileDependentControls();
         return;
     }
@@ -3670,11 +3667,8 @@ void ExportDialog::setBusy(bool busy)
     if (ui->disableMetadataEmbeddingCheckBox) {
         ui->disableMetadataEmbeddingCheckBox->setEnabled(enabled);
     }
-    if (ui->metadataTargetLabel) {
-        ui->metadataTargetLabel->setEnabled(enabled);
-    }
-    if (ui->metadataTargetComboBox) {
-        ui->metadataTargetComboBox->setEnabled(enabled);
+    if (ui->exportMetadataCheckBox) {
+        ui->exportMetadataCheckBox->setEnabled(enabled);
     }
     if (ui->ffv1SlicesLabel) {
         ui->ffv1SlicesLabel->setEnabled(enabled);
@@ -3845,14 +3839,6 @@ QString ExportDialog::selectedMainContainerId() const
     }
     const QString selectedId = ui->mainContainerComboBox->currentData().toString().trimmed().toLower();
     return selectedId.isEmpty() ? QStringLiteral("mkv") : selectedId;
-}
-QString ExportDialog::selectedMetadataTargetId() const
-{
-    if (!ui || !ui->metadataTargetComboBox) {
-        return QStringLiteral("all");
-    }
-    const QString selectedId = ui->metadataTargetComboBox->currentData().toString().trimmed().toLower();
-    return selectedId.isEmpty() ? QStringLiteral("all") : selectedId;
 }
 
 QString ExportDialog::selectedExportProfileConfigPath(QString *errorMessage) const
@@ -4546,11 +4532,13 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     }
     args << QStringLiteral("--start") << QString::number(startFrameOneBased);
     args << QStringLiteral("--length") << QString::number(rangeLength);
-    args << QStringLiteral("--export-metadata");
-    const QString metadataTarget = selectedMetadataTargetId();
-    if (!metadataTarget.isEmpty()) {
-        args << QStringLiteral("--metadata-target") << metadataTarget;
+    const bool includeExportMetadata = !ui
+                                       || !ui->exportMetadataCheckBox
+                                       || ui->exportMetadataCheckBox->isChecked();
+    if (includeExportMetadata) {
+        args << QStringLiteral("--export-metadata");
     }
+    const QString exportPath = resolveVideoExportPath();
 
     const bool usingProfileOverride = !profileOverride.trimmed().isEmpty();
     const QString profile = usingProfileOverride
@@ -4574,7 +4562,6 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
             args << QStringLiteral("--10bit");
         }
     }
-    const QString exportPath = resolveVideoExportPath();
     const QString dropoutMode = ui->dropoutModeComboBox
                                     ? ui->dropoutModeComboBox->currentData().toString()
                                     : QStringLiteral("basic");

@@ -178,6 +178,18 @@ JSON metadata remains JSON throughout this workflow, including temporary and bac
 When exporting from inside ld-analyse, the current in-memory settings are used even if you have not run Save Metadata.
 
 ld-analyse creates a temporary metadata snapshot and passes it to `tbc-video-export`, so export reflects current adjusted values without modifying the on-disk metadata first.
+### Export tab metadata controls
+
+The Export tab exposes two metadata controls that map directly to supported `tbc-video-export` behavior:
+
+* `Include FFmpeg metadata + CC` (enabled by default)
+  * Adds `--export-metadata`.
+  * Generates FFmpeg-compatible metadata and closed captions (SCC) via `tbc-export-metadata` and feeds those into the muxing step when supported by the chosen container/profile.
+* `Disable decode JSON attachment`
+  * Adds `--no-attach-json`.
+  * Only disables embedding the decode `.tbc.json` as an attachment in containers that support attachments (for example MKV).
+
+These controls are independent. Disabling decode JSON attachment does not disable FFmpeg metadata/CC export, and disabling FFmpeg metadata/CC export does not disable normal video/audio export.
 
 ### Export tab dropout and field selection
 

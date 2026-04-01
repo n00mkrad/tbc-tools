@@ -114,6 +114,21 @@ sudo cmake --install build
 
 If you do not want to install system-wide, run tools directly from `build/bin/`.
 
+## Local CI parity checks
+
+To keep local validation aligned with GitHub Actions, run the same guardrails and Qt6 build/test flow locally before pushing:
+
+```bash
+bash ci/run_local_ci_parity.sh
+```
+
+Useful scoped modes:
+
+```bash
+bash ci/run_local_ci_parity.sh --guardrails-only
+bash ci/run_local_ci_parity.sh --qt6-only
+```
+
 ## Important Notes
 
 - **Metadata Formats**: SQLite (`.tbc.db`) is the 2026-present metadata format, JSON metadata (2017-2026) being still supported by the tools and used by many older builds for the decode suite. 

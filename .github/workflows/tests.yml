@@ -16,17 +16,8 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-    - name: Run actionlint
-      run: |
-        mkdir -p "$RUNNER_TEMP/bin"
-        curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- -b "$RUNNER_TEMP/bin"
-        "$RUNNER_TEMP/bin/actionlint" -color
-
-    - name: Validate CI workflow contracts
-      run: python3 ci/check_ci_contracts.py
-
-    - name: Validate CI helper script syntax
-      run: bash -n ci/verify_linux_bundle.sh
+    - name: Run CI guardrails
+      run: bash ci/run_local_ci_parity.sh --guardrails-only
   qt6:
     name: Build with Qt 6
     runs-on: ubuntu-22.04
@@ -50,19 +41,6 @@ jobs:
           nix-${{ runner.os }}-
         gc-max-store-size-linux: 6G
 
-    - name: Show Nix info
-      run: nix --version
-
-    - name: Build (Nix)
+    - name: Build and test Qt6 parity flow
       timeout-minutes: 20
-      run: nix build .#
-
-    - name: Configure, build, and test (Nix dev shell)
-      timeout-minutes: 20
-      run: |
-        nix develop -c bash -lc "
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo &&
-          cmake --build build --verbose &&
-          cmake --install build --prefix /tmp/staging &&
-          ctest --test-dir build --output-on-failure
-        "
+      run: bash ci/run_local_ci_parity.sh --qt6-only

@@ -17,6 +17,7 @@
 #include <QDialog>
 #include <QRect>
 #include <QRadioButton>
+#include <QImage>
 
 #include "componentframe.h"
 #include "lddecodemetadata.h"
@@ -25,6 +26,7 @@
 namespace Ui {
 class VectorscopeDialog;
 }
+class QResizeEvent;
 
 class VectorscopeDialog : public QDialog
 {
@@ -41,6 +43,9 @@ public:
     void setCustomAreaModeSelected(bool selected);
     void setCustomAreaRect(const QRect &areaRect);
 
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+
 signals:
     void scopeChanged();
 
@@ -56,9 +61,11 @@ private:
     Ui::VectorscopeDialog *ui;
 
     QImage getTraceImage(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters);
+    void updateScopeLabelPixmap();
     void initialiseAdvancedControls();
     void updateAreaControlState(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters);
     void applyAreaPreset();
+    QImage cachedTraceImage;
 
     QButtonGroup *renderModeButtonGroup = nullptr;
     QRadioButton *renderModePointsRadioButton = nullptr;

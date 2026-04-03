@@ -27,6 +27,7 @@
 #include <QPainterPath>
 #include <QPalette>
 #include <QVBoxLayout>
+#include <QResizeEvent>
 
 namespace {
 
@@ -264,6 +265,10 @@ VectorscopeDialog::VectorscopeDialog(QWidget *parent) :
 {
     ui->setupUi(this);
     setWindowFlags(Qt::Window);
+    ui->scopeLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    ui->scopeLabel->setMinimumSize(QSize(1, 1));
+    ui->scopeLabel->setAlignment(Qt::AlignCenter);
+    ui->scopeLabel->setScaledContents(false);
 
     // Set up field selection colors
     QColor firstFieldColor = QColor(255, 255, 0);   // Yellow for first field
@@ -318,13 +323,8 @@ void VectorscopeDialog::showTraceImage(const ComponentFrame &componentFrame, con
     updateAreaControlState(componentFrame, videoParameters);
 
     // Draw the image
-    QImage traceImage = getTraceImage(componentFrame, videoParameters);
-
-    // Add the QImage to the QLabel in the dialogue
-    ui->scopeLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    ui->scopeLabel->setAlignment(Qt::AlignCenter);
-    ui->scopeLabel->setScaledContents(true);
-    ui->scopeLabel->setPixmap(QPixmap::fromImage(traceImage));
+    cachedTraceImage = getTraceImage(componentFrame, videoParameters);
+    updateScopeLabelPixmap();
 
     // QT Bug workaround for some macOS versions
     #if defined(Q_OS_MACOS)
@@ -510,6 +510,28 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
     // Return the QImage
     scopePainter.end();
     return scopeImage;
+}
+
+void VectorscopeDialog::updateScopeLabelPixmap()
+{
+    if (!ui || !ui->scopeLabel) {
+        return;
+    }
+    if (cachedTraceImage.isNull()) {
+        ui->scopeLabel->setPixmap(QPixmap());
+        return;
+    }
+
+    const QSize targetSize = ui->scopeLabel->size().expandedTo(QSize(1, 1));
+    const QPixmap scaledPixmap = QPixmap::fromImage(cachedTraceImage).scaled(
+        targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    ui->scopeLabel->setPixmap(scaledPixmap);
+}
+
+void VectorscopeDialog::resizeEvent(QResizeEvent *event)
+{
+    QDialog::resizeEvent(event);
+    updateScopeLabelPixmap();
 }
 
 // GUI signal handlers ------------------------------------------------------------------------------------------------

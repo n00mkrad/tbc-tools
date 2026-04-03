@@ -118,3 +118,4 @@ FIRFilter<double> filter(coefficients);
 - **Nix environment provides all dependencies** - prefer Nix over manual dependency management
 - **Qt6 required** - all tools use Qt framework even for CLI tools
 - **Multi-threading enabled** by default for performance-critical operations
+- **Hard rule: all build/testing work must pass GitHub Actions workflows** - do not treat build verification as complete unless GitHub Actions succeeds

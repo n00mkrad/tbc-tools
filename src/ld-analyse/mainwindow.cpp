@@ -59,6 +59,9 @@
 #if defined(Q_OS_UNIX)
 #include <signal.h>
 #endif
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#endif
 
 #include "metadataconverterutil.h"
 #include "../audio-align/audioalignmentdialog.h"
@@ -3363,10 +3366,29 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
         return;
     }
     QStringList arguments = {QStringLiteral("--gui")};
+#if defined(Q_OS_WIN)
+    if (windowHandle()) {
+        arguments << QStringLiteral("--parent-window-id")
+                  << QString::number(static_cast<qulonglong>(windowHandle()->winId()));
+    }
+    const QPalette currentPalette = QApplication::palette();
+    if (currentPalette.color(QPalette::Window).lightness()
+        < currentPalette.color(QPalette::WindowText).lightness()) {
+        arguments << QStringLiteral("--force-dark-theme");
+    }
+#endif
     if (!defaultInput.isEmpty()) {
         arguments << QStringLiteral("--input") << defaultInput;
     }
-    if (!QProcess::startDetached(toolPath, arguments)) {
+    QProcess metadataExportProcess;
+    metadataExportProcess.setProgram(toolPath);
+    metadataExportProcess.setArguments(arguments);
+#if defined(Q_OS_WIN)
+    metadataExportProcess.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *createArgs) {
+        createArgs->flags |= CREATE_NO_WINDOW;
+    });
+#endif
+    if (!metadataExportProcess.startDetached()) {
         QMessageBox::warning(this, tr("Launch failed"),
                              tr("Unable to start tbc-export-metadata GUI."));
         return;
@@ -3729,8 +3751,12 @@ void MainWindow::on_actionLine_scope_triggered()
 {
     if (tbcSource.getIsSourceLoaded()) {
         // Show the oscilloscope dialogue for the selected scan-line
+        if (!oscilloscopeDialog->isVisible()) {
+            oscilloscopeDialog->show();
+        }
         updateOscilloscopeDialogue();
-        oscilloscopeDialog->show();
+        oscilloscopeDialog->raise();
+        oscilloscopeDialog->activateWindow();
     }
 }
 
@@ -3739,8 +3765,12 @@ void MainWindow::on_actionVectorscope_triggered()
 {
     if (tbcSource.getIsSourceLoaded()) {
         // Show the vectorscope dialogue
+        if (!vectorscopeDialog->isVisible()) {
+            vectorscopeDialog->show();
+        }
         updateVectorscopeDialogue();
-        vectorscopeDialog->show();
+        vectorscopeDialog->raise();
+        vectorscopeDialog->activateWindow();
     }
 }
 
@@ -4861,9 +4891,9 @@ void MainWindow::on_mouseModePushButton_clicked()
         }
         // Show the oscilloscope view if currently hidden
         if (!oscilloscopeDialog->isVisible()) {
-            updateOscilloscopeDialogue();
             oscilloscopeDialog->show();
         }
+        updateOscilloscopeDialogue();
     }
 
     // Update the image viewer to display/hide the indicator line
@@ -4901,8 +4931,10 @@ void MainWindow::scopeCoordsChangedSignalHandler(qint32 xCoord, qint32 yCoord)
     // Show the oscilloscope dialogue for the selected scan-line
     lastScopeDot = xCoord;
     lastScopeLine = yCoord + 1;
+    if (!oscilloscopeDialog->isVisible()) {
+        oscilloscopeDialog->show();
+    }
     updateOscilloscopeDialogue();
-    oscilloscopeDialog->show();
 
     // Update the image viewer
     updateImageViewer();
@@ -5112,9 +5144,11 @@ void MainWindow::mouseScanLineSelect(qint32 oX, qint32 oY)
         // Remember the last line rendered
         lastScopeLine = qBound<qint32>(1, sourceY + 1, tbcSource.getFrameHeight());
         lastScopeDot = sourceX;
+        if (!oscilloscopeDialog->isVisible()) {
+            oscilloscopeDialog->show();
+        }
 
         updateOscilloscopeDialogue();
-        oscilloscopeDialog->show();
 
         // Update the image viewer
         updateImageViewer();

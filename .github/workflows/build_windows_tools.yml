@@ -213,7 +213,7 @@ jobs:
       - name: Copy project license
         run: Copy-Item -Path .\\LICENSE -Destination release\\LICENSES\\copyright-tbc-tools
       - name: Save vcpkg binary cache
-        if: always() && steps.vcpkg-cache.outputs.cache-primary-key != ''
+        if: success() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.VCPKG_BINARY_CACHE_ROOT }}\\${{ matrix.cache_subdir }}

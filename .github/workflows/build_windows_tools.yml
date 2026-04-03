@@ -12,6 +12,7 @@ on:
     types: [created]
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   # External tools to be bundled
   FFMPEG_FILE: "ffmpeg-8.0.1-full_build.zip"
   FFMPEG_PATH: "ffmpeg-8.0.1-full_build"

@@ -295,6 +295,29 @@ jobs:
             libxkbcommon-x11.so.0; do
             copy_runtime_lib "$runtime_lib"
           done
+          ensure_needed_runtime_libs() {
+            local elf="$1"
+            [ -f "$elf" ] || return 0
+            while IFS= read -r needed; do
+              [ -n "$needed" ] || continue
+              [ -e "AppDir/usr/lib/$needed" ] && continue
+              case "$needed" in
+                linux-vdso.so*|ld-linux-*.so*|libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libresolv.so.*|libstdc++.so.*|libgcc_s.so.*)
+                  continue
+                  ;;
+              esac
+              local src
+              src="$(find /nix/store -name "$needed" | sort | head -n 1 || true)"
+              if [ -n "$src" ]; then
+                cp -Lf "$src" "AppDir/usr/lib/$needed"
+                echo "Bundled transitive runtime lib: $needed <- $src"
+              fi
+            done < <(readelf -d "$elf" 2>/dev/null | awk -F'[][]' '/NEEDED/ { print $2 }')
+          }
+          for elf in AppDir/usr/plugins/*/*.so AppDir/usr/lib/*.so*; do
+            [ -f "$elf" ] || continue
+            ensure_needed_runtime_libs "$elf"
+          done
           cat > AppDir/usr/bin/qt.conf <<'EOF'
           [Paths]
           Plugins = ../plugins
@@ -639,6 +662,29 @@ jobs:
             libxkbcommon.so.0 \
             libxkbcommon-x11.so.0; do
             copy_runtime_lib "$runtime_lib"
+          done
+          ensure_needed_runtime_libs() {
+            local elf="$1"
+            [ -f "$elf" ] || return 0
+            while IFS= read -r needed; do
+              [ -n "$needed" ] || continue
+              [ -e "release/lib/$needed" ] && continue
+              case "$needed" in
+                linux-vdso.so*|ld-linux-*.so*|libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libresolv.so.*|libstdc++.so.*|libgcc_s.so.*)
+                  continue
+                  ;;
+              esac
+              local src
+              src="$(find /nix/store -name "$needed" | sort | head -n 1 || true)"
+              if [ -n "$src" ]; then
+                cp -Lf "$src" "release/lib/$needed"
+                echo "Bundled transitive runtime lib: $needed <- $src"
+              fi
+            done < <(readelf -d "$elf" 2>/dev/null | awk -F'[][]' '/NEEDED/ { print $2 }')
+          }
+          for elf in release/plugins/*/*.so release/lib/*.so*; do
+            [ -f "$elf" ] || continue
+            ensure_needed_runtime_libs "$elf"
           done
           cat > release/bin/qt.conf <<'EOF'
           [Paths]

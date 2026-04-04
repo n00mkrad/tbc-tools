@@ -4,35 +4,77 @@ permissions:
   actions: write
 
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag name for release'
+        description: "Tag name for release (example: v7.3.0)"
         required: true
         type: string
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  resolve-tag:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
+    steps:
+      - name: Resolve and validate release tag
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_TAG="${{ github.event.inputs.tag_name }}"
+          else
+            RAW_TAG="${{ github.ref_name }}"
+          fi
+          RELEASE_TAG="${RAW_TAG#refs/tags/}"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid tag '$RELEASE_TAG'. Expected vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          if ! git ls-remote --exit-code --tags "https://github.com/${{ github.repository }}.git" "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag refs/tags/${RELEASE_TAG} does not exist on origin."
+            exit 1
+          fi
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=refs/tags/${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
   build-linux:
     name: Build Linux binaries
     uses: ./.github/workflows/build_linux_tools.yml
+    needs: resolve-tag
+    with:
+      checkout_ref: ${{ needs.resolve-tag.outputs.checkout_ref }}
+    secrets: inherit
     
   build-windows:
-    name: Build Windows binaries  
+    name: Build Windows binaries
     uses: ./.github/workflows/build_windows_tools.yml
+    needs: resolve-tag
+    with:
+      checkout_ref: ${{ needs.resolve-tag.outputs.checkout_ref }}
+    secrets: inherit
     
   build-macos:
     name: Build macOS binaries
     uses: ./.github/workflows/build_macos_tools.yml
+    needs: resolve-tag
+    with:
+      checkout_ref: ${{ needs.resolve-tag.outputs.checkout_ref }}
+      release_tag: ${{ needs.resolve-tag.outputs.release_tag }}
+    secrets: inherit
 
   upload-release-assets:
     name: Upload release assets
-    needs: [build-linux, build-windows, build-macos]
+    needs: [resolve-tag, build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
+    env:
+      RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+      GITHUB_TOKEN: ${{ github.token }}
     
     steps:
       - name: Download Linux artifacts
@@ -70,28 +112,40 @@ jobs:
         with:
           name: tbc-tools_macos_arm64
           path: ./artifacts/
+      - name: Download macOS universal artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: tbc-tools_macos_universal
+          path: ./artifacts/
 
-      - name: Create Windows release archive
+      - name: Build versioned release assets
         run: |
+          mkdir -p artifacts/release
+
+          mv ./artifacts/tbc-tools_linux_x86_64.tar.xz "./artifacts/release/tbc-tools_${RELEASE_TAG}_linux_x86_64.tar.xz"
+          mv ./artifacts/tbc-tools_linux_arm64.tar.xz "./artifacts/release/tbc-tools_${RELEASE_TAG}_linux_arm64.tar.xz"
+
           cd artifacts/windows
-          zip -r ../tbc-tools_windows_x86_64.zip .
+          zip -r "../release/tbc-tools_${RELEASE_TAG}_windows_x86_64.zip" .
+          cd ../windows-arm
+          zip -r "../release/tbc-tools_${RELEASE_TAG}_windows_arm64.zip" .
           cd ../..
 
-      - name: Create Windows ARM64 release archive
+          mv ./artifacts/tbc-tools_x86_64.dmg "./artifacts/release/tbc-tools_${RELEASE_TAG}_macos_x86_64.dmg"
+          mv ./artifacts/tbc-tools_arm64.dmg "./artifacts/release/tbc-tools_${RELEASE_TAG}_macos_arm64.dmg"
+          mv ./artifacts/tbc-tools_universal.dmg "./artifacts/release/tbc-tools_${RELEASE_TAG}_macos_universal.dmg"
+
+      - name: Ensure GitHub release exists
         run: |
-          cd artifacts/windows-arm
-          zip -r ../tbc-tools_windows_arm64.zip .
-          cd ../..
+          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists."
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              --title "$RELEASE_TAG" \
+              --generate-notes
+          fi
 
       - name: Upload release assets
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          cp ./artifacts/tbc-tools_x86_64.dmg ./artifacts/tbc-tools_macos_x86_64.dmg
-          cp ./artifacts/tbc-tools_arm64.dmg ./artifacts/tbc-tools_macos_arm64.dmg
-          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_linux_x86_64.tar.xz --repo "${{ github.repository }}" --clobber
-          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_linux_arm64.tar.xz --repo "${{ github.repository }}" --clobber
-          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_windows_x86_64.zip --repo "${{ github.repository }}" --clobber
-          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_windows_arm64.zip --repo "${{ github.repository }}" --clobber
-          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_macos_x86_64.dmg --repo "${{ github.repository }}" --clobber
-          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_macos_arm64.dmg --repo "${{ github.repository }}" --clobber
+          gh release upload "$RELEASE_TAG" ./artifacts/release/* --repo "${{ github.repository }}" --clobber

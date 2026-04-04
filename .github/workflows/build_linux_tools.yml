@@ -8,8 +8,6 @@ on:
         description: "Git ref to checkout when invoked as a reusable workflow"
         required: false
         type: string
-  release:
-    types: [created]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -253,7 +251,7 @@ jobs:
           # linuxdeploy-plugin-qt cannot find some plugins, e.g. qtsvg split packages).
           copy_qt_plugin() {
             plugin_rel="$1"
-            plugin_src="$(find /nix/store -type f -path "*/plugins/${plugin_rel}" | sort | head -n 1 || true)"
+            plugin_src="$(find /nix/store -path "*/plugins/${plugin_rel}" | sort | head -n 1 || true)"
             if [ -z "$plugin_src" ]; then
               echo "Required Qt plugin missing from Nix store: ${plugin_rel}"
               exit 1
@@ -272,7 +270,7 @@ jobs:
           copy_runtime_lib() {
             local lib_name="$1"
             local lib_src
-            lib_src="$(find /nix/store -type f -name "$lib_name" | sort | head -n 1 || true)"
+            lib_src="$(find /nix/store -name "$lib_name" | sort | head -n 1 || true)"
             if [ -z "$lib_src" ]; then
               echo "Required runtime lib missing from Nix store: $lib_name"
               exit 1
@@ -585,7 +583,7 @@ jobs:
           # Bundle required Qt runtime plugins explicitly for portable GUI operation.
           copy_qt_plugin() {
             plugin_rel="$1"
-            plugin_src="$(find /nix/store -type f -path "*/plugins/${plugin_rel}" | sort | head -n 1 || true)"
+            plugin_src="$(find /nix/store -path "*/plugins/${plugin_rel}" | sort | head -n 1 || true)"
             if [ -z "$plugin_src" ]; then
               echo "Required Qt plugin missing from Nix store: ${plugin_rel}"
               exit 1
@@ -604,7 +602,7 @@ jobs:
           copy_runtime_lib() {
             local lib_name="$1"
             local lib_src
-            lib_src="$(find /nix/store -type f -name "$lib_name" | sort | head -n 1 || true)"
+            lib_src="$(find /nix/store -name "$lib_name" | sort | head -n 1 || true)"
             if [ -z "$lib_src" ]; then
               echo "Required runtime lib missing from Nix store: $lib_name"
               exit 1

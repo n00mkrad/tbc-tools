@@ -8,8 +8,6 @@ on:
         description: "Git ref to checkout when invoked as a reusable workflow"
         required: false
         type: string
-  release:
-    types: [created]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"

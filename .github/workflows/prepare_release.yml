@@ -1,4 +1,4 @@
-name: "Prepare Release Draft"
+name: "Prepare Release Tag"
 
 on:
   workflow_dispatch:
@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 concurrency:
   group: prepare-release-${{ github.ref }}
@@ -20,10 +19,8 @@ env:
 
 jobs:
   prepare-release:
-    name: Bump versions, tag, and create draft release
+    name: Bump versions and push release tag
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
 
     steps:
       - name: Checkout repository
@@ -118,106 +115,7 @@ jobs:
           TAG_NAME="${{ steps.version.outputs.tag }}"
           git tag -a "${TAG_NAME}" -m "Release ${TAG_NAME}"
           git push origin "${TAG_NAME}"
-
-      - name: Create draft release
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Release pipeline handoff
         run: |
-          TAG_NAME="${{ steps.version.outputs.tag }}"
-
-          gh release create "${TAG_NAME}" \
-            --repo "${{ github.repository }}" \
-            --title "${TAG_NAME}" \
-            --draft \
-            --generate-notes
-
-  build-linux:
-    name: Build Linux binaries
-    needs: prepare-release
-    uses: ./.github/workflows/build_linux_tools.yml
-    with:
-      checkout_ref: refs/tags/${{ needs.prepare-release.outputs.tag }}
-    secrets: inherit
-
-  build-windows:
-    name: Build Windows binaries
-    needs: prepare-release
-    uses: ./.github/workflows/build_windows_tools.yml
-    with:
-      checkout_ref: refs/tags/${{ needs.prepare-release.outputs.tag }}
-    secrets: inherit
-
-  build-macos:
-    name: Build macOS binaries
-    needs: prepare-release
-    uses: ./.github/workflows/build_macos_tools.yml
-    with:
-      checkout_ref: refs/tags/${{ needs.prepare-release.outputs.tag }}
-      release_tag: ${{ needs.prepare-release.outputs.tag }}
-    secrets: inherit
-
-  upload-release-assets:
-    name: Upload release assets to draft
-    needs: [prepare-release, build-linux, build-windows, build-macos]
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
-      GITHUB_TOKEN: ${{ github.token }}
-
-    steps:
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: tbc-tools_linux_x86_64
-          path: ./artifacts/
-
-      - name: Download Linux ARM64 artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: tbc-tools_linux_arm64
-          path: ./artifacts/
-
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: tbc-tools_windows_x86_64
-          path: ./artifacts/windows/
-
-      - name: Download Windows ARM64 artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: tbc-tools_windows_arm64
-          path: ./artifacts/windows-arm/
-
-      - name: Download macOS x86_64 artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: tbc-tools_macos_x86_64
-          path: ./artifacts/
-
-      - name: Download macOS arm64 artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: tbc-tools_macos_arm64
-          path: ./artifacts/
-
-      - name: Create Windows release archive
-        run: |
-          cd artifacts/windows
-          zip -r ../tbc-tools_windows_x86_64.zip .
-          cd ../..
-
-      - name: Create Windows ARM64 release archive
-        run: |
-          cd artifacts/windows-arm
-          zip -r ../tbc-tools_windows_arm64.zip .
-          cd ../..
-
-      - name: Upload assets to draft release
-        run: |
-          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_linux_x86_64.tar.xz --repo "${{ github.repository }}" --clobber
-          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_linux_arm64.tar.xz --repo "${{ github.repository }}" --clobber
-          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_windows_x86_64.zip --repo "${{ github.repository }}" --clobber
-          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_windows_arm64.zip --repo "${{ github.repository }}" --clobber
-          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_x86_64.dmg --repo "${{ github.repository }}" --clobber
-          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_arm64.dmg --repo "${{ github.repository }}" --clobber
+          echo "Created and pushed ${{ steps.version.outputs.tag }}."
+          echo "The Release workflow will build artifacts and publish/upload the release assets."

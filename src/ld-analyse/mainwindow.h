@@ -308,6 +308,8 @@ private:
     void applyThemeStyle(const QString &styleName);
     void mouseScanLineSelect(qint32 oX, qint32 oY);
 	void resizeEvent(QResizeEvent *event);
+    void requestSourceOpen(const QString &inputFileName);
+    void processPendingSourceOpenRequest();
     bool runExternalToolWithProgress(const QString &program, const QStringList &arguments,
                                      const QString &toolDisplayName, QString *errorMessage);
     void queueAnalysisRefreshPreservingUserState(const QString &processedInputFile);
@@ -319,6 +321,8 @@ private:
     QPushButton *vectorscopeSelectionPushButton = nullptr;
     UiStateSnapshot pendingUiStateSnapshot;
     bool restoreUiStateAfterReload = false;
+    QString pendingSourceOpenFilename;
+    bool sourceOperationInProgress = false;
 };
 
 #endif // MAINWINDOW_H

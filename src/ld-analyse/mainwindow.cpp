@@ -105,6 +105,7 @@ QString chromaDecoderNameFromConfig(VideoSystem system,
     return QString();
 }
 
+
 QString sanitizedFileToken(const QString &value)
 {
     QString token = value.trimmed().toLower();
@@ -1155,11 +1156,7 @@ bool MainWindow::event(QEvent *event)
         }
 
         if (!filePath.isEmpty() && isSupportedInputExtension(filePath)) {
-            lastFilename = filePath;
-            const QString queuedFilePath = filePath;
-            QTimer::singleShot(0, this, [this, queuedFilePath]() {
-                loadTbcFile(queuedFilePath);
-            });
+            requestSourceOpen(filePath);
             return true;
         }
     }
@@ -1348,9 +1345,45 @@ void MainWindow::dropEvent(QDropEvent *event)
 
     lastFilename = droppedFile;
     event->acceptProposedAction();
-    const QString queuedDroppedFile = droppedFile;
-    QTimer::singleShot(0, this, [this, queuedDroppedFile]() {
-        loadTbcFile(queuedDroppedFile);
+    requestSourceOpen(droppedFile);
+}
+
+void MainWindow::requestSourceOpen(const QString &inputFileName)
+{
+    const QString normalizedInputFileName = QDir::cleanPath(inputFileName.trimmed());
+    if (normalizedInputFileName.isEmpty()) {
+        return;
+    }
+
+    lastFilename = normalizedInputFileName;
+    const bool busy = sourceOperationInProgress
+                      || (busyDialog && busyDialog->isVisible())
+                      || !isEnabled();
+    if (busy) {
+        pendingSourceOpenFilename = normalizedInputFileName;
+        return;
+    }
+
+    loadTbcFile(normalizedInputFileName);
+}
+
+void MainWindow::processPendingSourceOpenRequest()
+{
+    if (pendingSourceOpenFilename.isEmpty()) {
+        return;
+    }
+
+    const bool busy = sourceOperationInProgress
+                      || (busyDialog && busyDialog->isVisible())
+                      || !isEnabled();
+    if (busy) {
+        return;
+    }
+
+    const QString queuedInputFile = pendingSourceOpenFilename;
+    pendingSourceOpenFilename.clear();
+    QTimer::singleShot(0, this, [this, queuedInputFile]() {
+        requestSourceOpen(queuedInputFile);
     });
 }
 
@@ -3295,8 +3328,7 @@ void MainWindow::on_actionOpen_TBC_file_triggered()
 
     // Was a filename specified?
     if (!inputFileName.isEmpty() && !inputFileName.isNull()) {
-        lastFilename = inputFileName;
-        loadTbcFile(inputFileName);
+        requestSourceOpen(inputFileName);
     }
 }
 
@@ -3305,7 +3337,7 @@ void MainWindow::on_actionReload_TBC_triggered()
 {
     // Reload the current TBC file
     if (!lastFilename.isEmpty() && !lastFilename.isNull()) {
-        loadTbcFile(lastFilename);
+        requestSourceOpen(lastFilename);
     }
 }
 
@@ -4922,9 +4954,11 @@ void MainWindow::on_vectorscopeSelectionPushButton_toggled(bool checked)
     if (checked && ui->mouseModePushButton && ui->mouseModePushButton->isChecked()) {
         ui->mouseModePushButton->setChecked(false);
     }
-
-    if (checked && vectorscopeDialog) {
-        vectorscopeDialog->setCustomAreaModeSelected(true);
+    if (vectorscopeDialog) {
+        vectorscopeDialog->setCustomAreaModeSelected(checked);
+    }
+    if (tbcSource.getIsSourceLoaded()) {
+        updateVectorscopeDialogue();
     }
 
     updateImageViewer();
@@ -4956,10 +4990,21 @@ void MainWindow::scopeCoordsChangedSignalHandler(qint32 xCoord, qint32 yCoord)
 void MainWindow::vectorscopeChangedSignalHandler()
 {
     tbcDebugStream() << "MainWindow::vectorscopeChangedSignalHandler(): Called";
+    if (vectorscopeDialog && vectorscopeSelectionPushButton) {
+        const bool customAreaSelected = vectorscopeDialog->isCustomAreaModeSelected();
+        if (vectorscopeSelectionPushButton->isChecked() != customAreaSelected) {
+            const QSignalBlocker blocker(vectorscopeSelectionPushButton);
+            vectorscopeSelectionPushButton->setChecked(customAreaSelected);
+        }
+        if (!customAreaSelected) {
+            vectorscopeSelectionDragging = false;
+        }
+    }
 
     if (tbcSource.getIsSourceLoaded()) {
         // Update the vectorscope
         updateVectorscopeDialogue();
+        updateImageViewer();
     }
 }
 
@@ -5292,6 +5337,7 @@ void MainWindow::on_busy(QString infoMessage)
 {
     setPlaybackRunning(false);
     tbcDebugStream() << "MainWindow::on_busy(): Got signal with message" << infoMessage;
+    sourceOperationInProgress = true;
     // Set the busy message and centre the dialog in the parent window
     busyDialog->setMessage(infoMessage);
     busyDialog->move(this->geometry().center() - busyDialog->rect().center());
@@ -5310,6 +5356,7 @@ void MainWindow::on_finishedLoading(bool success)
 {
     tbcDebugStream() << "MainWindow::on_finishedLoading(): Called";
     setPlaybackRunning(false);
+    sourceOperationInProgress = false;
 
     // Hide the busy dialogue
     busyDialog->hide();
@@ -5374,12 +5421,14 @@ void MainWindow::on_finishedLoading(bool success)
 
     // Enable the main window
     this->setEnabled(true);
+    processPendingSourceOpenRequest();
 }
 
 // Signal handler for finishedSaving signal from TbcSource class
 void MainWindow::on_finishedSaving(bool success)
 {
     tbcDebugStream() << "MainWindow::on_finishedSaving(): Called";
+    sourceOperationInProgress = false;
 
     // Hide the busy dialogue
     busyDialog->hide();
@@ -5397,6 +5446,7 @@ void MainWindow::on_finishedSaving(bool success)
 
     // Enable the main window
     this->setEnabled(true);
+    processPendingSourceOpenRequest();
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)

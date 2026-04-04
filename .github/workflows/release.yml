@@ -9,9 +9,14 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
+      create_release:
+        description: "Create a GitHub release and upload built assets"
+        required: false
+        default: false
+        type: boolean
       tag_name:
-        description: "Existing release tag (example: v3.0.0 or 3.0.0)"
-        required: true
+        description: "Tag to release when manually dispatched (example: v0.6.0)"
+        required: false
         type: string
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -23,31 +28,50 @@ jobs:
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
+      publish_release: ${{ steps.resolve.outputs.publish_release }}
     steps:
       - name: Resolve and validate release tag
         id: resolve
         run: |
+          PUBLISH_RELEASE="true"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW_TAG="${{ github.event.inputs.tag_name }}"
+            if [ "${{ github.event.inputs.create_release }}" = "true" ]; then
+              RAW_TAG="${{ github.event.inputs.tag_name }}"
+              if [ -z "$RAW_TAG" ]; then
+                echo "tag_name is required when Create a GitHub release and upload built assets is enabled."
+                exit 1
+              fi
+            else
+              PUBLISH_RELEASE="false"
+              RAW_TAG="${{ github.ref }}"
+            fi
           else
             RAW_TAG="${{ github.ref_name }}"
           fi
-          RAW_TAG="${RAW_TAG#refs/tags/}"
-          if [[ "$RAW_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            RAW_TAG="v${RAW_TAG}"
-          fi
-          RELEASE_TAG="${RAW_TAG#refs/tags/}"
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid tag '$RELEASE_TAG'. Expected vMAJOR.MINOR.PATCH"
-            exit 1
-          fi
-          if ! git ls-remote --exit-code --tags "https://github.com/${{ github.repository }}.git" "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "Tag refs/tags/${RELEASE_TAG} does not exist on origin."
-            echo "Create it first via Prepare Release Draft, then re-run Release for that tag."
-            exit 1
+
+          if [ "$PUBLISH_RELEASE" = "true" ]; then
+            RAW_TAG="${RAW_TAG#refs/tags/}"
+            if [[ "$RAW_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              RAW_TAG="v${RAW_TAG}"
+            fi
+            RELEASE_TAG="${RAW_TAG#refs/tags/}"
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Invalid tag '$RELEASE_TAG'. Expected vMAJOR.MINOR.PATCH"
+              exit 1
+            fi
+            if ! git ls-remote --exit-code --tags "https://github.com/${{ github.repository }}.git" "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+              echo "Tag refs/tags/${RELEASE_TAG} does not exist on origin."
+              echo "Create it first via Prepare Release Draft, then re-run Release for that tag."
+              exit 1
+            fi
+            CHECKOUT_REF="refs/tags/${RELEASE_TAG}"
+          else
+            RELEASE_TAG=""
+            CHECKOUT_REF="${{ github.ref }}"
           fi
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "checkout_ref=refs/tags/${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=${CHECKOUT_REF}" >> "$GITHUB_OUTPUT"
+          echo "publish_release=${PUBLISH_RELEASE}" >> "$GITHUB_OUTPUT"
   build-linux:
     name: Build Linux binaries
     uses: ./.github/workflows/build_linux_tools.yml
@@ -76,6 +100,7 @@ jobs:
   upload-release-assets:
     name: Upload release assets
     needs: [resolve-tag, build-linux, build-windows, build-macos]
+    if: ${{ needs.resolve-tag.outputs.publish_release == 'true' }}
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}

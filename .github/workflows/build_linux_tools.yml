@@ -69,7 +69,12 @@ jobs:
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
           echo "/root/.nix-profile/bin" >> "$GITHUB_PATH"
           echo "$HOME/.nix-profile/bin" >> "$GITHUB_PATH"
-          echo "NIX_CONFIG=experimental-features = nix-command flakes" >> "$GITHUB_ENV"
+          {
+            echo "NIX_CONFIG<<EOF"
+            echo "experimental-features = nix-command flakes"
+            echo "access-tokens = github.com=${{ github.token }}"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
           echo "NIX_PATH=nixpkgs=channel:nixos-unstable" >> "$GITHUB_ENV"
           echo "NIX_SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt" >> "$GITHUB_ENV"
       - name: Restore and save Nix store cache
@@ -455,6 +460,14 @@ jobs:
         uses: cachix/install-nix-action@v27
         with:
           nix_path: nixpkgs=channel:nixos-unstable
+      - name: Configure Nix authenticated GitHub fetches
+        run: |
+          {
+            echo "NIX_CONFIG<<EOF"
+            echo "experimental-features = nix-command flakes"
+            echo "access-tokens = github.com=${{ github.token }}"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
       - name: Restore and save Nix store cache
         uses: nix-community/cache-nix-action@v7
         with:

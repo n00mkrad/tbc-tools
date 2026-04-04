@@ -498,6 +498,18 @@ void PlotWidget::mouseReleaseEvent(QMouseEvent *event)
 bool PlotWidget::eventFilter(QObject *obj, QEvent *event)
 {
     if (obj == m_view->viewport()) {
+        if (event->type() == QEvent::MouseButtonDblClick) {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->button() == Qt::LeftButton) {
+                const QPointF scenePos = m_view->mapToScene(mouseEvent->pos());
+                if (m_plotRect.contains(scenePos)) {
+                    m_isDragging = false;
+                    m_isPanning = false;
+                    resetZoom();
+                    return true;
+                }
+            }
+        }
         if (event->type() == QEvent::Wheel) {
             QWheelEvent *wheelEvent = static_cast<QWheelEvent*>(event);
             if (!m_zoomEnabled) {

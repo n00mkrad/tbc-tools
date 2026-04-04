@@ -284,6 +284,7 @@ jobs:
             echo "Bundled runtime lib: $lib_name <- $lib_src"
           }
           for runtime_lib in \
+            libQt6XcbQpa.so.6 \
             libxcb-cursor.so.0 \
             libxcb-icccm.so.4 \
             libxcb-image.so.0 \
@@ -627,6 +628,7 @@ jobs:
             echo "Bundled runtime lib: $lib_name <- $lib_src"
           }
           for runtime_lib in \
+            libQt6XcbQpa.so.6 \
             libxcb-cursor.so.0 \
             libxcb-icccm.so.4 \
             libxcb-image.so.0 \

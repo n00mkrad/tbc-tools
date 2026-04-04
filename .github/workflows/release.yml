@@ -7,6 +7,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Existing release tag (example: v3.0.0 or 3.0.0)"
+        required: true
+        type: string
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -21,7 +27,15 @@ jobs:
       - name: Resolve and validate release tag
         id: resolve
         run: |
-          RAW_TAG="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_TAG="${{ github.event.inputs.tag_name }}"
+          else
+            RAW_TAG="${{ github.ref_name }}"
+          fi
+          RAW_TAG="${RAW_TAG#refs/tags/}"
+          if [[ "$RAW_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            RAW_TAG="v${RAW_TAG}"
+          fi
           RELEASE_TAG="${RAW_TAG#refs/tags/}"
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid tag '$RELEASE_TAG'. Expected vMAJOR.MINOR.PATCH"
@@ -29,6 +43,7 @@ jobs:
           fi
           if ! git ls-remote --exit-code --tags "https://github.com/${{ github.repository }}.git" "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
             echo "Tag refs/tags/${RELEASE_TAG} does not exist on origin."
+            echo "Create it first via Prepare Release Draft, then re-run Release for that tag."
             exit 1
           fi
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"

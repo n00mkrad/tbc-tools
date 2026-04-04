@@ -49,6 +49,62 @@ class TBCJsonHelper:
             and self._json_data["videoParameters"]["isWidescreen"]
         )
 
+    def _get_video_parameter(self, key: str) -> str | None:
+        """Return a string value from videoParameters when available."""
+        video_parameters = self._json_data.get("videoParameters", {})
+        if not isinstance(video_parameters, dict):
+            return None
+        value = video_parameters.get(key)
+        if value is None:
+            return None
+        value_str = str(value).strip()
+        return value_str if value_str else None
+
+    @cached_property
+    def git_branch(self) -> str | None:
+        """Return decode git branch from videoParameters when available."""
+        return self._get_video_parameter("gitBranch")
+
+    @cached_property
+    def git_commit(self) -> str | None:
+        """Return decode git commit from videoParameters when available."""
+        return self._get_video_parameter("gitCommit")
+
+    @cached_property
+    def chroma_decoder(self) -> str | None:
+        """Return source chroma decoder from videoParameters when available."""
+        return self._get_video_parameter("chromaDecoder")
+
+    @cached_property
+    def black_16b_ire(self) -> str | None:
+        """Return source black level from videoParameters when available."""
+        return self._get_video_parameter("black16bIre")
+
+    @cached_property
+    def white_16b_ire(self) -> str | None:
+        """Return source white level from videoParameters when available."""
+        return self._get_video_parameter("white16bIre")
+
+    @cached_property
+    def blanking_16b_ire(self) -> str | None:
+        """Return source blanking level from videoParameters when available."""
+        return self._get_video_parameter("blanking16bIre")
+
+    @cached_property
+    def chroma_gain(self) -> str | None:
+        """Return source chroma gain from videoParameters when available."""
+        return self._get_video_parameter("chromaGain")
+
+    @cached_property
+    def chroma_phase(self) -> str | None:
+        """Return source chroma phase from videoParameters when available."""
+        return self._get_video_parameter("chromaPhase")
+
+    @cached_property
+    def luma_nr(self) -> str | None:
+        """Return source luma NR from videoParameters when available."""
+        return self._get_video_parameter("lumaNR")
+
     @cached_property
     def video_system(self) -> VideoSystem:
         """Return VideoSystem from TBC json."""

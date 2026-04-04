@@ -70,6 +70,36 @@ class TestTBCJson:
         tbc_json = TBCJsonHelper(None, json_data)
         assert tbc_json.is_widescreen
 
+    def test_optional_decode_metadata(self) -> None:  # noqa: D102
+        json_data = (
+            '{"videoParameters":{"gitBranch":"dev","gitCommit":"abc123",'
+            '"chromaDecoder":"pal2d","black16bIre":15041,"white16bIre":54016,'
+            '"blanking16bIre":16000,"chromaGain":1.25,"chromaPhase":2.5,'
+            '"lumaNR":3.5}}'
+        )
+        tbc_json = TBCJsonHelper(None, json_data)
+        assert tbc_json.git_branch == "dev"
+        assert tbc_json.git_commit == "abc123"
+        assert tbc_json.chroma_decoder == "pal2d"
+        assert tbc_json.black_16b_ire == "15041"
+        assert tbc_json.white_16b_ire == "54016"
+        assert tbc_json.blanking_16b_ire == "16000"
+        assert tbc_json.chroma_gain == "1.25"
+        assert tbc_json.chroma_phase == "2.5"
+        assert tbc_json.luma_nr == "3.5"
+
+        json_data = '{"videoParameters":{}}'
+        tbc_json = TBCJsonHelper(None, json_data)
+        assert tbc_json.git_branch is None
+        assert tbc_json.git_commit is None
+        assert tbc_json.chroma_decoder is None
+        assert tbc_json.black_16b_ire is None
+        assert tbc_json.white_16b_ire is None
+        assert tbc_json.blanking_16b_ire is None
+        assert tbc_json.chroma_gain is None
+        assert tbc_json.chroma_phase is None
+        assert tbc_json.luma_nr is None
+
     vitc_data = [
         ("[1,8,7,8,1,0,1,0]", "NTSC", "01:01:07:01"),
         ("[0,0,0,0,0,0,0,0]", "PAL", "00:00:00:00"),

@@ -602,8 +602,13 @@ class WrapperFFmpeg(Wrapper):
 
     def _get_metadata_opts(self) -> FlatList:
         """Return opts for metadata."""
-        # custom metadata
         metadata_opts = FlatList(
+            ("-metadata", f"{key}={value}")
+            for key, value in self._get_automatic_metadata().items()
+        )
+
+        # custom metadata
+        metadata_opts.append(
             ("-metadata", f"{data[0]}={data[1]}") for data in self._state.opts.metadata
         )
 
@@ -630,6 +635,104 @@ class WrapperFFmpeg(Wrapper):
             )
 
         return metadata_opts
+
+    def _get_automatic_metadata(self) -> dict[str, str]:
+        """Return default metadata fields added to encoded outputs."""
+        metadata: dict[str, str] = {
+            "tbc_tools_application": consts.APPLICATION_NAME,
+            "tbc_tools_version": consts.PROJECT_VERSION,
+            "tbc_export_mode": self._config.export_mode.name.lower(),
+            "tbc_export_chroma_decoder": self._get_export_chroma_decoder_metadata(),
+        }
+
+        if source_chroma_decoder := self._state.tbc_json.chroma_decoder:
+            metadata["tbc_source_chroma_decoder"] = source_chroma_decoder
+
+        if source_black_level := self._state.tbc_json.black_16b_ire:
+            metadata["tbc_source_black_16b_ire"] = source_black_level
+
+        if source_white_level := self._state.tbc_json.white_16b_ire:
+            metadata["tbc_source_white_16b_ire"] = source_white_level
+
+        if source_blanking_level := self._state.tbc_json.blanking_16b_ire:
+            metadata["tbc_source_blanking_16b_ire"] = source_blanking_level
+
+        if source_chroma_gain := self._state.tbc_json.chroma_gain:
+            metadata["tbc_source_chroma_gain"] = source_chroma_gain
+
+        if source_chroma_phase := self._state.tbc_json.chroma_phase:
+            metadata["tbc_source_chroma_phase"] = source_chroma_phase
+
+        if source_luma_nr := self._state.tbc_json.luma_nr:
+            metadata["tbc_source_luma_nr"] = source_luma_nr
+
+        if decode_git_branch := self._state.tbc_json.git_branch:
+            metadata["tbc_decode_git_branch"] = decode_git_branch
+
+        if decode_git_commit := self._state.tbc_json.git_commit:
+            metadata["tbc_decode_git_commit"] = decode_git_commit
+
+        if decode_version := self._get_decode_version_metadata():
+            metadata["tbc_decode_version"] = decode_version
+
+        if self._state.opts.force_black_level is not None:
+            metadata["tbc_export_force_black_level"] = ",".join(
+                str(v) for v in self._state.opts.force_black_level
+            )
+
+        if self._state.opts.chroma_gain is not None:
+            metadata["tbc_export_chroma_gain"] = str(self._state.opts.chroma_gain)
+
+        if self._state.opts.chroma_phase is not None:
+            metadata["tbc_export_chroma_phase"] = str(self._state.opts.chroma_phase)
+
+        if self._state.opts.luma_nr is not None:
+            metadata["tbc_export_luma_nr"] = str(self._state.opts.luma_nr)
+
+        if self._state.opts.chroma_nr is not None:
+            metadata["tbc_export_chroma_nr"] = str(self._state.opts.chroma_nr)
+
+        if self._state.opts.transform_threshold is not None:
+            metadata["tbc_export_transform_threshold"] = str(
+                self._state.opts.transform_threshold
+            )
+
+        if self._state.opts.transform_thresholds is not None:
+            metadata["tbc_export_transform_thresholds"] = str(
+                self._state.opts.transform_thresholds
+            )
+
+        if self._state.opts.ntsc_phase_comp is not None:
+            metadata["tbc_export_ntsc_phase_compensation"] = str(
+                self._state.opts.ntsc_phase_comp
+            ).lower()
+
+        return metadata
+
+    def _get_decode_version_metadata(self) -> str | None:
+        """Return a combined decode version from source metadata branch/commit."""
+        decode_git_branch = self._state.tbc_json.git_branch
+        decode_git_commit = self._state.tbc_json.git_commit
+        if decode_git_branch and decode_git_commit:
+            return f"{decode_git_branch}@{decode_git_commit}"
+        return decode_git_branch or decode_git_commit
+
+    def _get_export_chroma_decoder_metadata(self) -> str:
+        """Return the chroma decoder metadata value for the current export mode."""
+        match self._config.export_mode:
+            case ExportMode.CHROMA_MERGE:
+                return (
+                    f"{self._state.decoder_luma.value}"
+                    f"+{self._state.decoder_chroma.value}"
+                )
+            case ExportMode.CHROMA_COMBINED | ExportMode.CHROMA_COMBINED_LD:
+                return self._state.decoder_chroma.value
+            case ExportMode.LUMA | ExportMode.LUMA_EXTRACTED:
+                return self._state.decoder_luma.value
+            case ExportMode.LUMA_4FSC:
+                return "none"
+            case _:
+                return "unknown"
 
     def _get_output_opt(self) -> FlatList:
         """Output opts for ffmpeg."""

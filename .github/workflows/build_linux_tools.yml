@@ -422,7 +422,10 @@ jobs:
 
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool-x86_64.AppImage AppDir release/tbc-tools-x86_64.AppImage
       - name: Validate x86_64 AppImage bundle
-        run: bash ci/verify_linux_bundle.sh x86-appimage release/tbc-tools-x86_64.AppImage
+        run: |
+          PYTHON_RUNTIME="$(nix build nixpkgs#python311 --no-link --print-out-paths | tail -n 1)"
+          export PATH="$PYTHON_RUNTIME/bin:$PATH"
+          bash ci/verify_linux_bundle.sh x86-appimage release/tbc-tools-x86_64.AppImage
 
       - name: Copy scripts
         run: find scripts -maxdepth 1 -type f -executable -exec cp {} release/ \; || true

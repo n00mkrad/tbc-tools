@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,26 +12,49 @@ from tbc_video_export.common.utils.metadata import get_url_from_metadata
 if TYPE_CHECKING:
     from typing import Final
 
+# substituted by poetry-dynamic-versioning when doing pyinstaller builds
+__version__ = "0.0.0"
 
-def _load_metadata():
+
+def _clean_vendored_value(env_name: str) -> str:
+    value = os.environ.get(env_name, "").strip()
+    if value.startswith("@") and value.endswith("@"):
+        return ""
+    return value
+
+
+def _runtime_vendored_version() -> str:
+    version = _clean_vendored_value("TBC_VIDEO_EXPORT_VENDOR_VERSION")
+    if not version:
+        return ""
+    commit = _clean_vendored_value("TBC_VIDEO_EXPORT_VENDOR_COMMIT")
+    if commit and commit != "0.0.0":
+        return f"{version}+{commit}"
+    branch = _clean_vendored_value("TBC_VIDEO_EXPORT_VENDOR_BRANCH")
+    if branch:
+        return f"{version}+{branch}"
+    return version
+
+
+def _load_metadata(default_version: str):
     try:
         return importlib.metadata.metadata("tbc-video-export")
     except importlib.metadata.PackageNotFoundError:
         return {
             "Name": "tbc-video-export",
-            "Version": __version__,
+            "Version": default_version,
             "Summary": "Tool for exporting S-Video and CVBS-type TBCs to video files.",
             "Home-Page": "https://github.com/JuniorIsAJitterbug/tbc-video-export",
         }
 
-# substituted by poetry-dynamic-versioning when doing pyinstaller builds
-__version__ = "0.0.0"
-
-_metadata = _load_metadata()
+_metadata_default_version = _runtime_vendored_version() or __version__
+_metadata = _load_metadata(_metadata_default_version)
 
 APPLICATION_NAME: Final = _metadata.get("Name", "tbc-video-export")
 PROJECT_VERSION: Final = (
-    _metadata.get("Version", __version__) if __version__ == "0.0.0" else __version__
+    _metadata.get("Version", _metadata_default_version)
+    if __version__ == "0.0.0"
+    else __version__
 )
 PROJECT_CREDITS: Final = (
     "Credits:\n"

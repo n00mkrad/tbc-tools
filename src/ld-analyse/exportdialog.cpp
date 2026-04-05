@@ -398,6 +398,8 @@ bool isWebProfileName(const QString &profileName)
            || normalized == QStringLiteral("x264_web")
            || normalized == QStringLiteral("x265_web")
            || normalized == QStringLiteral("av1_web")
+           || normalized.startsWith(QStringLiteral("h264_web_"))
+           || normalized.startsWith(QStringLiteral("h265_web_"))
            || normalized.startsWith(QStringLiteral("x264_web_"))
            || normalized.startsWith(QStringLiteral("x265_web_"));
 }
@@ -666,12 +668,18 @@ OutputResamplePlan outputResamplePlanForModes(int system,
     return plan;
 }
 
-QString outputResampleFilter(const OutputResamplePlan &plan)
+QString outputResampleFilter(const OutputResamplePlan &plan, bool interlacedScaling)
 {
     if (!plan.enabled || plan.width < 1 || plan.height < 1) {
         return QString();
     }
-    return QStringLiteral("scale=%1:%2:flags=lanczos:interl=1,setsar=%3")
+    if (interlacedScaling) {
+        return QStringLiteral("scale=%1:%2:flags=lanczos:interl=1,setsar=%3")
+            .arg(plan.width)
+            .arg(plan.height)
+            .arg(plan.sampleAspectRatio);
+    }
+    return QStringLiteral("scale=%1:%2:flags=lanczos,setsar=%3")
         .arg(plan.width)
         .arg(plan.height)
         .arg(plan.sampleAspectRatio);
@@ -2739,6 +2747,7 @@ void ExportDialog::on_exportButton_clicked()
         const LdDecodeMetaData::VideoParameters &previewVideoParameters = tbcSource->getVideoParameters();
         const bool hasCustomActiveLineFraming = resolutionMode == QStringLiteral("user_defined")
                                                 || hasAnyNonDefaultVerticalFraming(previewVideoParameters);
+        const bool deinterlacedOutputProfile = isWebProfileName(selectedProfile);
         if (dropoutMode == QStringLiteral("heavy")
             && !executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
             appendLog(tr("Dropout mode 'Heavy' selected, but --overcorrect is not supported by the detected tbc-video-export. Falling back to basic dropout correction."));
@@ -2762,6 +2771,7 @@ void ExportDialog::on_exportButton_clicked()
         const bool useD1OutputSizing = outputResamplePlan.enabled
                                        && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
                                        && supportsD1OutputSizing
+                                       && !deinterlacedOutputProfile
                                        && !hasCustomActiveLineFraming;
         if (outputResamplePlan.enabled) {
             if (useD1OutputSizing) {
@@ -3909,36 +3919,36 @@ QString ExportDialog::selectedExportProfileName() const
                                      ? ui->webCodecComboBox->currentData().toString().trimmed().toLower()
                                      : QStringLiteral("h264");
         if (webCodec == QStringLiteral("hevc")) {
-            return QStringLiteral("x265_web");
+            return QStringLiteral("h265_web");
         }
         if (webCodec == QStringLiteral("av1")) {
             return QStringLiteral("av1_web");
         }
-        return QStringLiteral("x264_web");
+        return QStringLiteral("h264_web");
     }
     if (mainCodecId == QStringLiteral("avc")) {
         const QString avcRange = ui && ui->avcRangeComboBox
                                      ? ui->avcRangeComboBox->currentData().toString().trimmed().toLower()
                                      : QStringLiteral("standard");
         if (avcRange == QStringLiteral("lossless")) {
-            return QStringLiteral("x264_lossless");
+            return QStringLiteral("h264_lossless");
         }
         if (avcRange == QStringLiteral("web")) {
-            return QStringLiteral("x264_web");
+            return QStringLiteral("h264_web");
         }
-        return QStringLiteral("x264");
+        return QStringLiteral("h264");
     }
     if (mainCodecId == QStringLiteral("hevc")) {
         const QString hevcRange = ui && ui->hevcRangeComboBox
                                       ? ui->hevcRangeComboBox->currentData().toString().trimmed().toLower()
                                       : QStringLiteral("standard");
         if (hevcRange == QStringLiteral("lossless")) {
-            return QStringLiteral("x265_lossless");
+            return QStringLiteral("h265_lossless");
         }
         if (hevcRange == QStringLiteral("web")) {
-            return QStringLiteral("x265_web");
+            return QStringLiteral("h265_web");
         }
-        return QStringLiteral("x265");
+        return QStringLiteral("h265");
     }
     return QStringLiteral("ffv1");
 }
@@ -3947,12 +3957,12 @@ QString ExportDialog::proxyExportProfileName(const QString &proxyCodecId) const
 {
     const QString normalizedCodec = normalizedProxyCodecId(proxyCodecId);
     if (normalizedCodec == QStringLiteral("hevc")) {
-        return QStringLiteral("x265_web");
+        return QStringLiteral("h265_web");
     }
     if (normalizedCodec == QStringLiteral("av1")) {
         return QStringLiteral("av1_web");
     }
-    return QStringLiteral("x264_web");
+    return QStringLiteral("h264_web");
 }
 
 QString ExportDialog::sanitizeOutputBaseName(const QString &path) const
@@ -4113,17 +4123,26 @@ QStringList ExportDialog::buildProxyArguments(QString *errorMessage,
     }
 
     const QString normalizedCodec = normalizedProxyCodecId(proxyCodecId);
+    const QString proxyProfileName = proxyExportProfileName(normalizedCodec);
+    const bool deinterlacedProxyMode = isWebProfileName(proxyProfileName);
+
     QStringList preferredEncoders;
     if (normalizedCodec == QStringLiteral("hevc")) {
-        preferredEncoders << QStringLiteral("libx265")
-                          << QStringLiteral("hevc_videotoolbox");
+        preferredEncoders << QStringLiteral("libx265");
+        if (deinterlacedProxyMode) {
+            preferredEncoders << QStringLiteral("hevc_videotoolbox");
+        }
     } else if (normalizedCodec == QStringLiteral("av1")) {
         preferredEncoders << QStringLiteral("libsvtav1")
-                          << QStringLiteral("libaom-av1")
-                          << QStringLiteral("av1_videotoolbox");
+                          << QStringLiteral("libaom-av1");
+        if (deinterlacedProxyMode) {
+            preferredEncoders << QStringLiteral("av1_videotoolbox");
+        }
     } else {
-        preferredEncoders << QStringLiteral("libx264")
-                          << QStringLiteral("h264_videotoolbox");
+        preferredEncoders << QStringLiteral("libx264");
+        if (deinterlacedProxyMode) {
+            preferredEncoders << QStringLiteral("h264_videotoolbox");
+        }
     }
 
     const QStringList availableEncoders = ffmpegEncoderNames(ffmpegPath);
@@ -4139,6 +4158,16 @@ QStringList ExportDialog::buildProxyArguments(QString *errorMessage,
         return args;
     }
 
+    QStringList filterChain;
+    if (deinterlacedProxyMode) {
+        filterChain << QStringLiteral("bwdif=mode=send_frame:parity=auto:deint=all")
+                    << QStringLiteral("pad=ceil(iw/2)*2:ceil(ih/2)*2:(ow-iw)/2:(oh-ih)/2");
+    } else if (selectedEncoder == QStringLiteral("libx264")) {
+        filterChain << QStringLiteral("pad=ceil(iw/2)*2:ceil(ih/4)*4:(ow-iw)/2:(oh-ih)/2");
+    } else {
+        filterChain << QStringLiteral("pad=ceil(iw/2)*2:ceil(ih/2)*2:(ow-iw)/2:(oh-ih)/2");
+    }
+
     args << QStringLiteral("-hide_banner")
          << QStringLiteral("-nostdin")
          << (overwriteExisting ? QStringLiteral("-y") : QStringLiteral("-n"))
@@ -4148,15 +4177,22 @@ QStringList ExportDialog::buildProxyArguments(QString *errorMessage,
          << QStringLiteral("-map_metadata") << QStringLiteral("0")
          << QStringLiteral("-map_chapters") << QStringLiteral("0")
          << QStringLiteral("-max_muxing_queue_size") << QStringLiteral("4096")
-         << QStringLiteral("-vf") << QStringLiteral("scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos:interl=1")
+         << QStringLiteral("-vf") << filterChain.join(QStringLiteral(","))
          << QStringLiteral("-c:v") << selectedEncoder;
 
     if (selectedEncoder == QStringLiteral("libx264")) {
         args << QStringLiteral("-preset") << QStringLiteral("medium")
              << QStringLiteral("-crf") << QStringLiteral("21");
+        if (!deinterlacedProxyMode) {
+            args << QStringLiteral("-flags") << QStringLiteral("+ildct+ilme")
+                 << QStringLiteral("-x264opts") << QStringLiteral("interlaced=1");
+        }
     } else if (selectedEncoder == QStringLiteral("libx265")) {
         args << QStringLiteral("-preset") << QStringLiteral("medium")
              << QStringLiteral("-crf") << QStringLiteral("26");
+        if (!deinterlacedProxyMode) {
+            args << QStringLiteral("-x265-params") << QStringLiteral("interlace=1");
+        }
     } else if (selectedEncoder == QStringLiteral("libsvtav1")) {
         args << QStringLiteral("-preset") << QStringLiteral("8")
              << QStringLiteral("-crf") << QStringLiteral("35");
@@ -4544,6 +4580,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     const QString profile = usingProfileOverride
                                 ? profileOverride.trimmed()
                                 : selectedExportProfileName();
+    const bool deinterlacedOutputProfile = isWebProfileName(profile);
     if (!configFileOverride.isEmpty()) {
         args << QStringLiteral("--config-file") << configFileOverride;
     }
@@ -4776,12 +4813,14 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         const bool useD1OutputSizing = outputResamplePlan.enabled
                                        && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
                                        && executableSupportsD1OutputSizing(exportPath)
+                                       && !deinterlacedOutputProfile
                                        && !hasCustomActiveLineFraming;
         if (useD1OutputSizing) {
             args << QStringLiteral("--d1");
         } else if (outputResamplePlan.enabled
                    && executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"))) {
-            const QString filterExpr = outputResampleFilter(outputResamplePlan);
+            const QString filterExpr = outputResampleFilter(outputResamplePlan,
+                                                            !deinterlacedOutputProfile);
             if (!filterExpr.isEmpty()) {
                 args << QStringLiteral("--append-video-filter") << filterExpr;
             }

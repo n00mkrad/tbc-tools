@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "${SCRIPT_PATH}" ]]; do
+    SCRIPT_DIR="$(cd -P -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)"
+    SCRIPT_PATH="$(readlink -- "${SCRIPT_PATH}")"
+    if [[ "${SCRIPT_PATH}" != /* ]]; then
+        SCRIPT_PATH="${SCRIPT_DIR}/${SCRIPT_PATH}"
+    fi
+done
+
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PYTHONPATH_ENTRY="${ROOT_DIR}/share/tbc-video-export/src"
+
+if [[ -n "${PYTHONPATH:-}" ]]; then
+    export PYTHONPATH="${PYTHONPATH_ENTRY}:${PYTHONPATH}"
+else
+    export PYTHONPATH="${PYTHONPATH_ENTRY}"
+fi
+
+export TBC_VIDEO_EXPORT_VENDOR_VERSION="@APP_VERSION@"
+export TBC_VIDEO_EXPORT_VENDOR_COMMIT="@APP_COMMIT@"
+export TBC_VIDEO_EXPORT_VENDOR_BRANCH="@APP_BRANCH@"
+
+exec python3 "${PYTHONPATH_ENTRY}/tbc_video_export/__main__.py" "$@"

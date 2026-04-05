@@ -351,12 +351,28 @@ QRect VectorscopeDialog::customAreaRect() const
 
 void VectorscopeDialog::setCustomAreaModeSelected(bool selected)
 {
-    if (!areaModeCustomRadioButton || areaModeCustomRadioButton->isChecked() == selected) {
+    if (!areaModeCustomRadioButton) {
         return;
     }
+    const bool wasCustomSelected = areaModeCustomRadioButton->isChecked();
+    if (selected) {
+        if (!wasCustomSelected) {
+            areaModeCustomRadioButton->setChecked(true);
+        }
+    } else if (wasCustomSelected) {
+        if (areaModeActiveRadioButton) {
+            areaModeActiveRadioButton->setChecked(true);
+        } else if (areaModeFullRadioButton) {
+            areaModeFullRadioButton->setChecked(true);
+        } else {
+            areaModeCustomRadioButton->setChecked(false);
+        }
+        applyAreaPreset();
+    }
 
-    areaModeCustomRadioButton->setChecked(selected);
-    emit scopeChanged();
+    if (areaModeCustomRadioButton->isChecked() != wasCustomSelected) {
+        emit scopeChanged();
+    }
 }
 
 void VectorscopeDialog::setCustomAreaRect(const QRect &areaRect)

@@ -47,6 +47,9 @@ jobs:
           dnf clean metadata
           dnf makecache --refresh
           dnf --assumeyes --refresh install sudo git file xz ca-certificates patchelf libglvnd-opengl libglvnd-glx libglvnd-egl fftw-devel ffmpeg-devel ffmpeg pkgconf-pkg-config make cmake gcc-c++ python3
+          CI_USER="$(id -un)"
+          echo "${CI_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ci-nopasswd
+          chmod 0440 /etc/sudoers.d/ci-nopasswd
           update-ca-trust
           mkdir -p -m 0755 /nix
           chown root /nix

@@ -87,6 +87,10 @@ jobs:
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-x86_64-
             nix-${{ runner.os }}-
+          # In this containerized job, cache-nix-action's save-phase cleanup
+          # runs a sudo command that emits a warning annotation even on success.
+          # Keep restore behavior but skip save to keep CI warning-free.
+          save: false
           gc-max-store-size-linux: 8G
 
       - name: Create release directory

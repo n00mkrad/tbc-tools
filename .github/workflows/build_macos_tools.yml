@@ -435,9 +435,19 @@ jobs:
             echo "Missing vendored exporter package payload: dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export"
             exit 1
           fi
+          export PYTHONDONTWRITEBYTECODE=1
           if ! dist/tbc-tools.app/Contents/MacOS/tbc-video-export --version >/tmp/tbc-video-export-version.log 2>&1; then
             echo "Vendored exporter tool failed launch smoke test."
             sed -n '1,80p' /tmp/tbc-video-export-version.log || true
+            exit 1
+          fi
+          if find dist/tbc-tools.app/Contents/share/tbc-video-export -type d -name "__pycache__" | grep -q .; then
+            echo "Bytecode caches were generated inside signed app payload."
+            find dist/tbc-tools.app/Contents/share/tbc-video-export -type d -name "__pycache__"
+            exit 1
+          fi
+          if ! codesign --verify --deep --strict --verbose=2 "dist/tbc-tools.app"; then
+            echo "Codesign verification failed after vendored exporter smoke test."
             exit 1
           fi
           echo "\nMain executable dependencies:"

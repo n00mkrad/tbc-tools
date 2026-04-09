@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd -P -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 PYTHONPATH_ENTRY="${ROOT_DIR}/share/tbc-video-export/src"
 export TBC_VIDEO_EXPORT_RUNTIME_FILE="${SCRIPT_PATH}"
+export PYTHONDONTWRITEBYTECODE=1
 
 if [[ -n "${PYTHONPATH:-}" ]]; then
     export PYTHONPATH="${PYTHONPATH_ENTRY}:${PYTHONPATH}"
@@ -77,5 +78,4 @@ if [[ -z "${PYTHON_BIN}" ]]; then
     exit 127
 fi
 
-exec "${PYTHON_BIN}" "${PYTHONPATH_ENTRY}/tbc_video_export/__main__.py" "$@"
-exec python3 "${PYTHONPATH_ENTRY}/tbc_video_export/__main__.py" "$@"
+exec "${PYTHON_BIN}" -B "${PYTHONPATH_ENTRY}/tbc_video_export/__main__.py" "$@"

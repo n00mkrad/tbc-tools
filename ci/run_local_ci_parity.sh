@@ -60,7 +60,7 @@ resolve_actionlint_version() {
 
   local latest_json latest_version
   latest_json="$(curl -fsSL --retry 3 --retry-delay 1 --retry-connrefused https://api.github.com/repos/rhysd/actionlint/releases/latest || true)"
-  latest_version="$(printf "%s\n" "$latest_json" | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/' || true)"
+  latest_version="$(printf "%s\n" "$latest_json" | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/p' | head -n 1 || true)"
 
   if [[ -n "$latest_version" ]]; then
     printf "%s" "$latest_version"

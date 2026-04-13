@@ -128,6 +128,8 @@ pkg_check_modules(FFTW REQUIRED IMPORTED_TARGET fftw3)
 set(FFTW_INCLUDE_DIR ${FFTW_INCLUDE_DIRS})
 set(FFTW_LIBRARY PkgConfig::FFTW)
 
+find_package(onnxruntime CONFIG REQUIRED)
+
 # Build metadata (set by Nix or other build systems)
 set(APP_BRANCH "nix" CACHE STRING "Build source identifier")
 set(APP_COMMIT "0.0.0" CACHE STRING "Build version identifier")

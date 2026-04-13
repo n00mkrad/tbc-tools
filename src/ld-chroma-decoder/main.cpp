@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
 
     // Option to select which decoder to use (-f)
     QCommandLineOption decoderOption(QStringList() << "f" << "decoder",
-                                     QCoreApplication::translate("main", "Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, mono; default automatic)"),
+                                     QCoreApplication::translate("main", "Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, nntransform3d, ntsc3dnoadapt, mono; default automatic)"),
                                      QCoreApplication::translate("main", "decoder"));
     parser.addOption(decoderOption);
 
@@ -580,7 +580,7 @@ int main(int argc, char *argv[])
         decoderName = parser.value(decoderOption);
     } else if (!videoParameters.chromaDecoder.isEmpty()) {
         const QString metadataDecoder = videoParameters.chromaDecoder.toLower();
-        const QStringList validDecoders = { "pal2d", "transform2d", "transform3d", "ntsc1d", "ntsc2d", "ntsc3d", "mono" };
+        const QStringList validDecoders = { "pal2d", "transform2d", "transform3d", "ntsc1d", "ntsc2d", "ntsc3d", "nntransform3d", "nntsc3d", "mono" };
         if (validDecoders.contains(metadataDecoder)) {
             decoderName = metadataDecoder;
         } else {
@@ -636,6 +636,10 @@ int main(int argc, char *argv[])
         decoder = std::make_unique<NtscDecoder>(combConfig);
     } else if (decoderName == "ntsc3d") {
         combConfig.dimensions = 3;
+        decoder = std::make_unique<NtscDecoder>(combConfig);
+    } else if (decoderName == "nntransform3d" || decoderName == "nntsc3d") {
+        combConfig.dimensions = 3;
+        combConfig.nnTransform3D = true;
         decoder = std::make_unique<NtscDecoder>(combConfig);
     } else if (decoderName == "ntsc3dnoadapt") {
         combConfig.dimensions = 3;

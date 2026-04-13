@@ -34,9 +34,20 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <dlfcn.h>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <utility>
 #include <vector>
+
+#include <fftw3.h>
+#include <onnxruntime_cxx_api.h>
+#include <QCoreApplication>
+#include <QEventLoop>
+
+#include "chroma_net_v2_onnx_data.h"
 #include "tbc/logging.h"
 
 // Indexes for the candidates considered in 3D adaptive mode
@@ -79,11 +90,223 @@ constexpr double cos4fsc(const qint32 i) {
     return sin4fsc(i + 1);
 }
 
+#ifndef IDX3
+#define IDX3(t, y, x, Nt, Ny, Nx) ((t) * (Ny) * (Nx) + (y) * (Nx) + (x))
+#endif
+
+namespace {
+constexpr const char *kNnProviderEnvVar = "LDDECODE_NNTRANSFORM3D_PROVIDER";
+constexpr const char *kNnThreadsEnvVar = "LDDECODE_NNTRANSFORM3D_THREADS";
+
+enum class NnExecutionProviderPreference {
+    Auto,
+    Cpu,
+    Cuda
+};
+
+NnExecutionProviderPreference getNnExecutionProviderPreference()
+{
+    const QString provider = qEnvironmentVariable(kNnProviderEnvVar).trimmed().toLower();
+    if (provider.isEmpty() || provider == "auto") {
+        return NnExecutionProviderPreference::Auto;
+    }
+    if (provider == "cpu") {
+        return NnExecutionProviderPreference::Cpu;
+    }
+    if (provider == "cuda" || provider == "gpu") {
+        return NnExecutionProviderPreference::Cuda;
+    }
+
+    qWarning() << "Unknown" << kNnProviderEnvVar << "value:" << provider << "- using auto";
+    return NnExecutionProviderPreference::Auto;
+}
+
+QString providerPreferenceToString(NnExecutionProviderPreference preference)
+{
+    switch (preference) {
+    case NnExecutionProviderPreference::Auto:
+        return QStringLiteral("auto");
+    case NnExecutionProviderPreference::Cpu:
+        return QStringLiteral("cpu");
+    case NnExecutionProviderPreference::Cuda:
+        return QStringLiteral("cuda");
+    }
+    return QStringLiteral("auto");
+}
+
+qint32 getNnIntraOpThreads()
+{
+    bool isSet = false;
+    const qint32 value = qEnvironmentVariableIntValue(kNnThreadsEnvVar, &isSet);
+    if (!isSet) {
+        return 0; // Let ONNX Runtime choose a default.
+    }
+    if (value < 0) {
+        qWarning() << "Ignoring negative" << kNnThreadsEnvVar << "value:" << value;
+        return 0;
+    }
+    return value;
+}
+bool ensureCudaDriverLoaded(QString &errorMessage)
+{
+#ifdef __linux__
+    static std::once_flag cudaDriverLoadOnce;
+    static bool cudaDriverReady = false;
+    static QString cudaDriverError;
+
+    std::call_once(cudaDriverLoadOnce, []() {
+        auto tryLoad = [](const char *path, QString &capturedError) -> bool {
+            dlerror(); // Clear any stale state first.
+            void *handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+            if (handle != nullptr) {
+                return true;
+            }
+            const char *message = dlerror();
+            if (message != nullptr) {
+                capturedError = QString::fromUtf8(message);
+            }
+            return false;
+        };
+
+        QString libcudaError;
+        if (!(tryLoad("libcuda.so.1", libcudaError) ||
+              tryLoad("/lib/x86_64-linux-gnu/libcuda.so.1", libcudaError) ||
+              tryLoad("/usr/lib/x86_64-linux-gnu/libcuda.so.1", libcudaError))) {
+            if (libcudaError.isEmpty()) {
+                libcudaError = QStringLiteral("unable to locate libcuda.so.1");
+            }
+            cudaDriverError = QStringLiteral("CUDA driver load failed: %1").arg(libcudaError);
+            return;
+        }
+
+        QString ptxJitError;
+        if (!(tryLoad("libnvidia-ptxjitcompiler.so.1", ptxJitError) ||
+              tryLoad("/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1", ptxJitError) ||
+              tryLoad("/usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1", ptxJitError))) {
+            if (ptxJitError.isEmpty()) {
+                ptxJitError = QStringLiteral("unable to locate libnvidia-ptxjitcompiler.so.1");
+            }
+            cudaDriverError = QStringLiteral("CUDA PTX JIT compiler load failed: %1").arg(ptxJitError);
+            return;
+        }
+
+        cudaDriverReady = true;
+    });
+
+    if (!cudaDriverReady) {
+        errorMessage = QStringLiteral("CUDA driver library load failed: %1").arg(cudaDriverError);
+        return false;
+    }
+#else
+    Q_UNUSED(errorMessage)
+#endif
+    return true;
+}
+
+bool appendCudaExecutionProvider(Ort::SessionOptions &options, QString &errorMessage)
+{
+    if (!ensureCudaDriverLoaded(errorMessage)) {
+        return false;
+    }
+
+    const auto &ortApi = Ort::GetApi();
+    OrtCUDAProviderOptionsV2 *cudaOptions = nullptr;
+    OrtStatus *status = ortApi.CreateCUDAProviderOptions(&cudaOptions);
+    if (status != nullptr) {
+        errorMessage = QStringLiteral("CreateCUDAProviderOptions failed: %1")
+                           .arg(QString::fromUtf8(ortApi.GetErrorMessage(status)));
+        ortApi.ReleaseStatus(status);
+        return false;
+    }
+
+    auto releaseCudaOptions = [&]() {
+        if (cudaOptions != nullptr) {
+            ortApi.ReleaseCUDAProviderOptions(cudaOptions);
+            cudaOptions = nullptr;
+        }
+    };
+
+    auto updateCudaProviderOptions = [&](const std::vector<std::pair<const char *, const char *>> &entries,
+                                         QString &updateError) -> bool {
+        std::vector<const char *> keys;
+        std::vector<const char *> values;
+        keys.reserve(entries.size());
+        values.reserve(entries.size());
+        for (const auto &entry : entries) {
+            keys.push_back(entry.first);
+            values.push_back(entry.second);
+        }
+
+        OrtStatus *updateStatus = ortApi.UpdateCUDAProviderOptions(
+            cudaOptions,
+            keys.data(),
+            values.data(),
+            keys.size()
+        );
+        if (updateStatus != nullptr) {
+            updateError = QString::fromUtf8(ortApi.GetErrorMessage(updateStatus));
+            ortApi.ReleaseStatus(updateStatus);
+            return false;
+        }
+        return true;
+    };
+
+    const std::vector<std::pair<const char *, const char *>> preferredEntries = {
+        { "device_id", "0" },
+        { "cudnn_conv_algo_search", "EXHAUSTIVE" },
+        { "cudnn_conv_use_max_workspace", "0" },
+        { "do_copy_in_default_stream", "1" },
+        { "tunable_op_enable", "0" },
+        { "tunable_op_tuning_enable", "0" },
+        { "use_tf32", "0" },
+        { "prefer_nhwc", "0" },
+        { "fuse_conv_bias", "0" },
+    };
+
+    const std::vector<std::pair<const char *, const char *>> compatibilityEntries = {
+        { "device_id", "0" },
+        { "cudnn_conv_algo_search", "EXHAUSTIVE" },
+        { "cudnn_conv_use_max_workspace", "0" },
+        { "do_copy_in_default_stream", "1" },
+        { "tunable_op_enable", "0" },
+        { "tunable_op_tuning_enable", "0" },
+    };
+
+    QString updateError;
+    if (!updateCudaProviderOptions(preferredEntries, updateError)) {
+        qWarning() << "Unable to apply preferred CUDA provider options for nnTransform3D; retrying with compatibility set:"
+                   << updateError;
+        if (!updateCudaProviderOptions(compatibilityEntries, updateError)) {
+            errorMessage = QStringLiteral("UpdateCUDAProviderOptions failed: %1").arg(updateError);
+            releaseCudaOptions();
+            return false;
+        }
+    }
+
+    status = ortApi.SessionOptionsAppendExecutionProvider_CUDA_V2(options, cudaOptions);
+    if (status != nullptr) {
+        errorMessage = QStringLiteral("SessionOptionsAppendExecutionProvider_CUDA_V2 failed: %1")
+                           .arg(QString::fromUtf8(ortApi.GetErrorMessage(status)));
+        ortApi.ReleaseStatus(status);
+        releaseCudaOptions();
+        return false;
+    }
+
+    releaseCudaOptions();
+    return true;
+}
+}
+
 // Public methods -----------------------------------------------------------------------------------------------------
 
 Comb::Comb()
     : configurationSet(false)
 {
+}
+
+void Comb::requestNnTransform3DCancel()
+{
+    nnTransform3DCancelEpoch.fetch_add(1, std::memory_order_relaxed);
 }
 
 qint32 Comb::Configuration::getLookBehind() const {
@@ -97,8 +320,8 @@ qint32 Comb::Configuration::getLookBehind() const {
 
 qint32 Comb::Configuration::getLookAhead() const {
     if (dimensions == 3) {
-        // ... and also the next frame
-        return 1;
+        // nnTransform3D requires one extra future frame for overlap-add accumulation.
+        return nnTransform3D ? 2 : 1;
     }
 
     return 0;
@@ -139,6 +362,62 @@ void Comb::decodeFrames(const QVector<SourceField> &inputFields, qint32 startInd
 {
     assert(configurationSet);
     assert((componentFrames.size() * 2) == (endIndex - startIndex));
+
+    if (configuration.dimensions == 3 && configuration.nnTransform3D) {
+        const quint64 decodeEpoch = nnTransform3DCancelEpoch.load(std::memory_order_relaxed);
+        std::map<qint32, std::shared_ptr<FrameBuffer>> frameBuffers;
+        const qint32 frameCount = (endIndex - startIndex) / 2;
+
+        auto getFrameBuffer = [&](qint32 frameIndex) -> std::shared_ptr<FrameBuffer> {
+            auto existing = frameBuffers.find(frameIndex);
+            if (existing != frameBuffers.end()) {
+                return existing->second;
+            }
+
+            auto frameBuffer = std::make_shared<FrameBuffer>(videoParameters, configuration);
+            const qint32 fieldIndex = startIndex + (frameIndex * 2);
+
+            if (fieldIndex >= 0 && (fieldIndex + 1) < inputFields.size()) {
+                frameBuffer->loadFields(inputFields[fieldIndex], inputFields[fieldIndex + 1]);
+                frameBuffer->split1D();
+                frameBuffer->split2D();
+            }
+
+            frameBuffers[frameIndex] = frameBuffer;
+            return frameBuffer;
+        };
+
+        for (qint32 frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+            auto currentFrameBuffer = getFrameBuffer(frameIndex);
+            auto nextFrameBuffer = getFrameBuffer(frameIndex + 1);
+            const bool nnCompleted = currentFrameBuffer->split3DnnTransform(
+                *nextFrameBuffer, frameIndex, nnTransform3DCancelEpoch, decodeEpoch
+            );
+
+            componentFrames[frameIndex].init(videoParameters);
+            currentFrameBuffer->setComponentFrame(componentFrames[frameIndex]);
+            currentFrameBuffer->copyRawToLuma();
+            if (nnCompleted) {
+                currentFrameBuffer->finalizeNnTransform3D();
+            } else {
+                currentFrameBuffer->fallbackNnTransform3DTo2D();
+            }
+
+            if (configuration.phaseCompensation) {
+                currentFrameBuffer->splitIQlocked();
+            } else {
+                currentFrameBuffer->splitIQ();
+                currentFrameBuffer->adjustY();
+            }
+            currentFrameBuffer->filterIQ();
+            currentFrameBuffer->doCNR();
+            currentFrameBuffer->doYNR();
+            currentFrameBuffer->transformIQ(configuration.chromaGain, configuration.chromaPhase);
+
+            frameBuffers.erase(frameIndex);
+        }
+        return;
+    }
 
     // Buffers for the next, current and previous frame.
     // Because we only need three of these, we allocate them upfront then
@@ -225,6 +504,340 @@ Comb::FrameBuffer::FrameBuffer(const LdDecodeMetaData::VideoParameters &videoPar
 
     // Set the IRE scale
     irescale = (videoParameters.white16bIre - videoParameters.black16bIre) / 100;
+
+    rawbuffer.fill(videoParameters.black16bIre, frameHeight * videoParameters.fieldWidth);
+    nnAccChroma = QVector<QVector<double>>(frameHeight, QVector<double>(videoParameters.fieldWidth, 0.0));
+    nnWeightSum = QVector<QVector<double>>(frameHeight, QVector<double>(videoParameters.fieldWidth, 0.0));
+
+    for (qint32 buf = 0; buf < 3; buf++) {
+        for (qint32 y = 0; y < MAX_HEIGHT; y++) {
+            for (qint32 x = 0; x < MAX_WIDTH; x++) {
+                clpbuffer[buf].pixel[y][x] = 0.0;
+            }
+        }
+    }
+}
+
+bool Comb::FrameBuffer::split3DnnTransform(FrameBuffer &nextFrame, qint32 frameIndex,
+                                           const std::atomic<quint64> &cancelEpoch, quint64 decodeEpoch)
+{
+    Q_UNUSED(frameIndex)
+
+    static constexpr qint32 Nx = 16;
+    static constexpr qint32 Ny = 16;
+    static constexpr qint32 Nt = 4;
+    static constexpr qint32 StepX = 8;
+    static constexpr qint32 StepY = 8;
+
+    static thread_local fftw_plan forwardPlan = nullptr;
+    static thread_local fftw_plan inversePlan = nullptr;
+    if (!forwardPlan || !inversePlan) {
+        auto *planIn = reinterpret_cast<fftw_complex *>(fftw_malloc(sizeof(fftw_complex) * Nt * Ny * Nx));
+        auto *planOut = reinterpret_cast<fftw_complex *>(fftw_malloc(sizeof(fftw_complex) * Nt * Ny * Nx));
+        forwardPlan = fftw_plan_dft_3d(Nt, Ny, Nx, planIn, planOut, FFTW_FORWARD, FFTW_ESTIMATE);
+        inversePlan = fftw_plan_dft_3d(Nt, Ny, Nx, planOut, planIn, FFTW_BACKWARD, FFTW_ESTIMATE);
+        fftw_free(planIn);
+        fftw_free(planOut);
+    }
+
+    static thread_local fftw_complex tileInput[Nt * Ny * Nx];
+    static thread_local fftw_complex tileSpectrum[Nt * Ny * Nx];
+    auto *in = tileInput;
+    auto *out = tileSpectrum;
+
+    static double winX[Nx];
+    static double winY[Ny];
+    static double winT[Nt];
+    static std::once_flag windowInitOnce;
+    std::call_once(windowInitOnce, []() {
+        for (qint32 i = 0; i < Nx; i++) {
+            winX[i] = sin(M_PI * (static_cast<double>(i) + 0.5) / static_cast<double>(Nx));
+            winY[i] = winX[i];
+        }
+        for (qint32 i = 0; i < Nt; i++) {
+            winT[i] = sin(M_PI * (static_cast<double>(i) + 0.5) / static_cast<double>(Nt));
+        }
+    });
+
+    static std::once_flag onnxInitOnce;
+    static bool onnxReady = false;
+    static std::unique_ptr<Ort::Env> ortEnv;
+    static std::unique_ptr<Ort::Session> ortSession;
+    std::call_once(onnxInitOnce, []() {
+        try {
+            ortEnv = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "LdDecodeToolsNnTransform3D");
+            const NnExecutionProviderPreference providerPreference = getNnExecutionProviderPreference();
+            const qint32 intraOpThreads = getNnIntraOpThreads();
+            const QString intraOpDescription = (intraOpThreads > 0)
+                ? QString::number(intraOpThreads)
+                : QStringLiteral("default");
+
+            auto configureSessionOptions = [intraOpThreads](Ort::SessionOptions &options) {
+                if (intraOpThreads > 0) {
+                    options.SetIntraOpNumThreads(intraOpThreads);
+                }
+                options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+            };
+
+            auto tryCreateSession = [&](Ort::SessionOptions &options, const QString &providerName) -> bool {
+                try {
+                    ortSession = std::make_unique<Ort::Session>(
+                        *ortEnv,
+                        static_cast<const void *>(kChromaNetV2OnnxData),
+                        kChromaNetV2OnnxDataSize,
+                        options
+                    );
+                    onnxReady = true;
+                    qInfo() << "nnTransform3D ONNX provider:" << providerName
+                            << "(intra-op threads:" << intraOpDescription << ")";
+                    return true;
+                } catch (const std::exception &e) {
+                    qWarning() << "Failed to initialize nnTransform3D ONNX session with"
+                               << providerName << "provider:" << e.what();
+                    return false;
+                }
+            };
+
+            const bool allowCuda = providerPreference != NnExecutionProviderPreference::Cpu;
+
+            if (allowCuda) {
+                Ort::SessionOptions cudaOptions;
+                configureSessionOptions(cudaOptions);
+
+                QString appendError;
+                if (appendCudaExecutionProvider(cudaOptions, appendError)) {
+                    tryCreateSession(cudaOptions, QStringLiteral("CUDA"));
+                } else {
+                    qWarning() << "Unable to enable nnTransform3D CUDA provider:" << appendError;
+                }
+            }
+
+            if (!onnxReady) {
+                Ort::SessionOptions cpuOptions;
+                configureSessionOptions(cpuOptions);
+                tryCreateSession(cpuOptions, QStringLiteral("CPU"));
+            }
+
+            if (!onnxReady) {
+                qCritical() << "Failed to initialize nnTransform3D ONNX session using provider preference:"
+                            << providerPreferenceToString(providerPreference);
+            }
+        } catch (const std::exception &e) {
+            qCritical() << "Failed to initialize nnTransform3D ONNX runtime:" << e.what();
+            onnxReady = false;
+        }
+    });
+
+    if (!onnxReady || !forwardPlan || !inversePlan) {
+        static std::once_flag nnUnavailableWarningOnce;
+        std::call_once(nnUnavailableWarningOnce, []() {
+            qCritical() << "nnTransform3D unavailable; falling back to 2D chroma";
+        });
+        for (qint32 lineNumber = videoParameters.firstActiveFrameLine; lineNumber < videoParameters.lastActiveFrameLine; lineNumber++) {
+            for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
+                nnAccChroma[lineNumber][h] = clpbuffer[1].pixel[lineNumber][h];
+                nnWeightSum[lineNumber][h] = 1.0;
+            }
+        }
+        return true;
+    }
+
+    static thread_local float modelInput[2 * Nt * Ny * Nx];
+    static thread_local float magnitudes[Nt * Ny * Nx];
+    static thread_local Ort::MemoryInfo modelMemoryInfo =
+        Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+
+    FrameBuffer *frames[2] = { this, &nextFrame };
+
+    const qint32 startY = videoParameters.firstActiveFrameLine - (Ny / 2);
+    const qint32 endY = videoParameters.lastActiveFrameLine;
+    const qint32 startX = videoParameters.activeVideoStart - (Nx / 2);
+    const qint32 endX = videoParameters.activeVideoEnd;
+    qint32 tileCounter = 0;
+
+    for (qint32 y = startY; y < endY; y += StepY) {
+        for (qint32 x = startX; x < endX; x += StepX) {
+            if (cancelEpoch.load(std::memory_order_relaxed) != decodeEpoch) {
+                return false;
+            }
+            tileCounter++;
+            if ((tileCounter & 0x3F) == 0) {
+                if (QCoreApplication::instance() != nullptr) {
+                    QCoreApplication::processEvents(
+                        QEventLoop::ExcludeUserInputEvents | QEventLoop::ExcludeSocketNotifiers,
+                        1
+                    );
+                }
+            }
+            memset(in, 0, sizeof(fftw_complex) * Nt * Ny * Nx);
+
+            double blockDc = 0.0;
+            qint32 sampleCount = 0;
+
+            for (qint32 frameOffset = 0; frameOffset < 2; frameOffset++) {
+                for (qint32 subField = 0; subField < 2; subField++) {
+                    const qint32 t = (frameOffset * 2) + subField;
+                    const bool oddField = (t % 2) != 0;
+
+                    for (qint32 dy = 0; dy < Ny; dy++) {
+                        const qint32 absY = y + dy;
+                        const bool yActive = absY >= videoParameters.firstActiveFrameLine
+                                             && absY < videoParameters.lastActiveFrameLine;
+                        const bool oddLine = (absY % 2) != 0;
+                        if (!yActive || (oddLine != oddField)) {
+                            continue;
+                        }
+
+                        const quint16 *lineData = frames[frameOffset]->rawbuffer.constData()
+                                                  + (absY * videoParameters.fieldWidth);
+                        for (qint32 dx = 0; dx < Nx; dx++) {
+                            const qint32 absX = x + dx;
+                            const bool xActive = absX >= videoParameters.activeVideoStart
+                                                 && absX < videoParameters.activeVideoEnd;
+                            if (!xActive) {
+                                continue;
+                            }
+
+                            const qint32 index = IDX3(t, dy, dx, Nt, Ny, Nx);
+                            const double value = static_cast<double>(lineData[absX]);
+                            in[index][0] = value;
+                            in[index][1] = 0.0;
+                            blockDc += value;
+                            sampleCount++;
+                        }
+                    }
+                }
+            }
+
+            if (sampleCount == 0) {
+                continue;
+            }
+
+            blockDc /= static_cast<double>(sampleCount);
+
+            for (qint32 t = 0; t < Nt; t++) {
+                const bool oddField = (t % 2) != 0;
+                for (qint32 dy = 0; dy < Ny; dy++) {
+                    const qint32 absY = y + dy;
+                    const bool yActive = absY >= videoParameters.firstActiveFrameLine
+                                         && absY < videoParameters.lastActiveFrameLine;
+                    const bool oddLine = (absY % 2) != 0;
+                    for (qint32 dx = 0; dx < Nx; dx++) {
+                        const qint32 absX = x + dx;
+                        const bool xActive = absX >= videoParameters.activeVideoStart
+                                             && absX < videoParameters.activeVideoEnd;
+                        const qint32 index = IDX3(t, dy, dx, Nt, Ny, Nx);
+
+                        if (yActive && xActive && (oddLine == oddField)) {
+                            in[index][0] = (in[index][0] - blockDc) * winT[t] * winY[dy] * winX[dx];
+                        } else {
+                            in[index][0] = 0.0;
+                            in[index][1] = 0.0;
+                        }
+                    }
+                }
+            }
+
+            fftw_execute_dft(forwardPlan, in, out);
+
+            for (qint32 i = 0; i < Nt * Ny * Nx; i++) {
+                magnitudes[i] = sqrtf(static_cast<float>((out[i][0] * out[i][0]) + (out[i][1] * out[i][1])));
+            }
+            memcpy(modelInput, magnitudes, sizeof(float) * Nt * Ny * Nx);
+
+            qint32 reflectedIndex = Nt * Ny * Nx;
+            for (qint32 ft = 0; ft < Nt; ft++) {
+                const qint32 refT = ((2 - ft) % 4 + 4) % 4;
+                for (qint32 fy = 0; fy < Ny; fy++) {
+                    const qint32 refY = (Ny - fy) % Ny;
+                    for (qint32 fx = 0; fx < Nx; fx++) {
+                        const qint32 refX = ((Nx / 2) - fx + Nx) % Nx;
+                        modelInput[reflectedIndex++] = magnitudes[IDX3(refT, refY, refX, Nt, Ny, Nx)];
+                    }
+                }
+            }
+
+            static const int64_t inputShape[] = { 1, 2, 4, 16, 16 };
+            Ort::Value modelInputTensor = Ort::Value::CreateTensor<float>(
+                modelMemoryInfo, modelInput, 2 * Nt * Ny * Nx, inputShape, 5
+            );
+            static const char *inputNames[] = { "input" };
+            static const char *outputNames[] = { "output" };
+            std::vector<Ort::Value> modelOutputs;
+            try {
+                modelOutputs = ortSession->Run(
+                    Ort::RunOptions{ nullptr },
+                    inputNames, &modelInputTensor, 1,
+                    outputNames, 1
+                );
+            } catch (const Ort::Exception &e) {
+                qWarning() << "nnTransform3D ONNX inference failed; disabling nn session and falling back to 2D chroma:"
+                           << e.what();
+                onnxReady = false;
+                ortSession.reset();
+                return false;
+            }
+            if (cancelEpoch.load(std::memory_order_relaxed) != decodeEpoch) {
+                return false;
+            }
+            const float *mask = modelOutputs[0].GetTensorData<float>();
+            for (qint32 i = 0; i < Nt * Ny * Nx; i++) {
+                out[i][0] *= mask[i];
+                out[i][1] *= mask[i];
+            }
+
+            fftw_execute_dft(inversePlan, out, in);
+
+            for (qint32 t = 0; t < Nt; t++) {
+                const qint32 targetFrameIndex = t / 2;
+                const bool oddField = (t % 2) != 0;
+                FrameBuffer *targetFrame = frames[targetFrameIndex];
+
+                for (qint32 dy = 0; dy < Ny; dy++) {
+                    const qint32 absY = y + dy;
+                    if (absY < videoParameters.firstActiveFrameLine || absY >= videoParameters.lastActiveFrameLine) {
+                        continue;
+                    }
+                    if ((absY % 2 != 0) != oddField) {
+                        continue;
+                    }
+
+                    for (qint32 dx = 0; dx < Nx; dx++) {
+                        const qint32 absX = x + dx;
+                        if (absX < videoParameters.activeVideoStart || absX >= videoParameters.activeVideoEnd) {
+                            continue;
+                        }
+                        const qint32 index = IDX3(t, dy, dx, Nt, Ny, Nx);
+                        const double value = in[index][0] / static_cast<double>(Nt * Ny * Nx);
+                        const double weight = winT[t] * winY[dy] * winX[dx];
+
+                        targetFrame->nnAccChroma[absY][absX] += value * weight;
+                        targetFrame->nnWeightSum[absY][absX] += weight * weight;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+void Comb::FrameBuffer::finalizeNnTransform3D()
+{
+    for (qint32 lineNumber = videoParameters.firstActiveFrameLine; lineNumber < videoParameters.lastActiveFrameLine; lineNumber++) {
+        for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
+            const double weight = nnWeightSum[lineNumber][h];
+            clpbuffer[2].pixel[lineNumber][h] = (weight > 1.0e-6) ? (nnAccChroma[lineNumber][h] / weight) : 0.0;
+        }
+    }
+}
+
+void Comb::FrameBuffer::fallbackNnTransform3DTo2D()
+{
+    for (qint32 lineNumber = videoParameters.firstActiveFrameLine; lineNumber < videoParameters.lastActiveFrameLine; lineNumber++) {
+        for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
+            clpbuffer[2].pixel[lineNumber][h] = clpbuffer[1].pixel[lineNumber][h];
+        }
+    }
 }
 
 /*
@@ -281,6 +894,15 @@ void Comb::FrameBuffer::loadFields(const SourceField &firstField, const SourceFi
             for (qint32 x = 0; x < MAX_WIDTH; x++) {
                 clpbuffer[buf].pixel[y][x] = 0.0;
             }
+        }
+    }
+
+    for (qint32 line = 0; line < frameHeight; line++) {
+        if (line < nnAccChroma.size()) {
+            std::fill(nnAccChroma[line].begin(), nnAccChroma[line].end(), 0.0);
+        }
+        if (line < nnWeightSum.size()) {
+            std::fill(nnWeightSum[line].begin(), nnWeightSum[line].end(), 0.0);
         }
     }
 

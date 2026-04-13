@@ -30,6 +30,7 @@
 #include <QVector>
 #include <QActionGroup>
 #include <QImage>
+#include <QFutureWatcher>
 
 #include "oscilloscopedialog.h"
 #include "vectorscopedialog.h"
@@ -149,6 +150,7 @@ private slots:
     void on_busy(QString infoMessage);
     void on_finishedLoading(bool success);
     void on_finishedSaving(bool success);
+    void on_asyncFrameRenderFinished();
 	
 	// UI handler
 	void resize_on_aspect();
@@ -284,6 +286,8 @@ private:
     QString outputRootDirectoryForCurrentSource();
     QString outputBaseNameForCurrentSource();
     void updateImageViewer();
+    bool shouldRenderFrameAsync() const;
+    void startAsyncFrameRender();
     QVector<QRect> getActiveVideoRects() const;
     bool isExportBoundaryDragAvailable() const;
     ExportBoundaryHandle exportBoundaryHandleAtViewerPoint(const QPoint &viewerPoint) const;
@@ -297,6 +301,7 @@ private:
     void resizeFrameToWindow();
     void enterChromaSeekMode(QPushButton* button);
     void exitChromaSeekMode(QPushButton* button);
+    void cancelInFlightAsyncFrameRender();
 
     // TBC source signal handlers
     void loadTbcFile(QString inputFileName, bool forceMetadataOnly = false, bool preserveStatusDuringReload = false);
@@ -323,6 +328,12 @@ private:
     bool restoreUiStateAfterReload = false;
     QString pendingSourceOpenFilename;
     bool sourceOperationInProgress = false;
+    QFutureWatcher<QImage> asyncFrameRenderWatcher;
+    bool asyncFrameRenderInProgress = false;
+    bool asyncFrameRenderQueued = false;
+    qint32 asyncFrameRenderFrameNumber = -1;
+    qint32 asyncFrameRenderFieldNumber = -1;
+    QImage asyncFrameImage;
 };
 
 #endif // MAINWINDOW_H

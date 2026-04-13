@@ -32,6 +32,7 @@
 #include <QDebug>
 #include <QFile>
 #include <QtMath>
+#include <atomic>
 
 #include "lddecodemetadata.h"
 
@@ -49,6 +50,7 @@ public:
         double chromaGain = 1.0;
         double chromaPhase = 0.0;
         qint32 dimensions = 2;
+        bool nnTransform3D = false;
         bool adaptive = true;
         bool showMap = false;
         bool phaseCompensation = false;
@@ -72,6 +74,7 @@ public:
     // Decode a sequence of fields into a sequence of interlaced frames
     void decodeFrames(const QVector<SourceField> &inputFields, qint32 startIndex, qint32 endIndex,
                       QVector<ComponentFrame> &componentFrames);
+    void requestNnTransform3DCancel();
 
     // Maximum frame size
     static constexpr qint32 MAX_WIDTH = 910;
@@ -84,6 +87,7 @@ private:
     bool configurationSet;
     Configuration configuration;
     LdDecodeMetaData::VideoParameters videoParameters;
+    std::atomic<quint64> nnTransform3DCancelEpoch {0};
 
     // An input frame in the process of being decoded
     class FrameBuffer {
@@ -96,6 +100,10 @@ private:
         void split1D();
         void split2D();
         void split3D(const FrameBuffer &previousFrame, const FrameBuffer &nextFrame);
+        bool split3DnnTransform(FrameBuffer &nextFrame, qint32 frameIndex,
+                                const std::atomic<quint64> &cancelEpoch, quint64 decodeEpoch);
+        void finalizeNnTransform3D();
+        void fallbackNnTransform3DTo2D();
 
         void setComponentFrame(ComponentFrame &_componentFrame) {
             componentFrame = &_componentFrame;
@@ -124,6 +132,9 @@ private:
 
         // Baseband samples (interlaced to form a complete frame)
         SourceVideo::Data rawbuffer;
+
+        QVector<QVector<double>> nnAccChroma;
+        QVector<QVector<double>> nnWeightSum;
 
         // Chroma phase of the frame's two fields
         qint32 firstFieldPhaseID;

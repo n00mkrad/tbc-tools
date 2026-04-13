@@ -481,12 +481,6 @@ QString resolveExternalExecutable(const QStringList &toolNames)
         return names;
     }();
 
-    for (const QString &name : candidateToolNames) {
-        const QString toolPath = QStandardPaths::findExecutable(name);
-        if (!toolPath.isEmpty() && isRunnableFile(toolPath)) {
-            return toolPath;
-        }
-    }
     QStringList searchRoots;
     const auto appendRoot = [&searchRoots](const QString &rootPath) {
         appendUniqueCandidate(searchRoots, QDir::cleanPath(rootPath));
@@ -545,6 +539,13 @@ QString resolveExternalExecutable(const QStringList &toolNames)
             if (isRunnableFile(localCandidate)) {
                 return localCandidate;
             }
+        }
+    }
+
+    for (const QString &name : candidateToolNames) {
+        const QString toolPath = QStandardPaths::findExecutable(name);
+        if (!toolPath.isEmpty() && isRunnableFile(toolPath)) {
+            return toolPath;
         }
     }
 

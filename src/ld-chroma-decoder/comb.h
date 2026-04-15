@@ -41,7 +41,6 @@
 #include "sourcefield.h"
 
 
-#pragma once
 #include <vector>
 #include <memory>
 #include <onnxruntime_cxx_api.h>

@@ -46,6 +46,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QRegularExpression>
 
 #include "chroma_net_v2_onnx_data.h"
 #include "tbc/logging.h"
@@ -273,6 +274,52 @@ bool appendCudaExecutionProvider(Ort::SessionOptions &options, QString &errorMes
         return true;
     };
 
+    auto removeUnsupportedCudaOption = [](
+        std::vector<std::pair<const char *, const char *>> &entries,
+        const QString &updateError,
+        QString &optionName
+    ) -> bool {
+        static const QRegularExpression unknownOptionRegex(
+            QStringLiteral("Unknown provider option:\\s*\"([^\"]+)\"")
+        );
+        const QRegularExpressionMatch match = unknownOptionRegex.match(updateError);
+        if (!match.hasMatch()) {
+            return false;
+        }
+
+        optionName = match.captured(1);
+        const qsizetype previousSize = entries.size();
+        entries.erase(
+            std::remove_if(entries.begin(), entries.end(), [&](const auto &entry) {
+                return optionName == QLatin1String(entry.first);
+            }),
+            entries.end()
+        );
+        return entries.size() != static_cast<size_t>(previousSize);
+    };
+
+    auto applyCudaProviderOptions = [&](std::vector<std::pair<const char *, const char *>> entries,
+                                        QString &applyError) -> bool {
+        while (true) {
+            if (updateCudaProviderOptions(entries, applyError)) {
+                return true;
+            }
+
+            QString unsupportedOption;
+            if (!removeUnsupportedCudaOption(entries, applyError, unsupportedOption)) {
+                return false;
+            }
+
+            qWarning() << "Ignoring unsupported CUDA provider option for nnTransform3D:"
+                       << unsupportedOption;
+
+            if (entries.empty()) {
+                applyError = QStringLiteral("no supported CUDA provider options remained after filtering");
+                return false;
+            }
+        }
+    };
+
     const std::vector<std::pair<const char *, const char *>> preferredEntries = {
         { "device_id", "0" },
         { "cudnn_conv_algo_search", "EXHAUSTIVE" },
@@ -295,10 +342,10 @@ bool appendCudaExecutionProvider(Ort::SessionOptions &options, QString &errorMes
     };
 
     QString updateError;
-    if (!updateCudaProviderOptions(preferredEntries, updateError)) {
+    if (!applyCudaProviderOptions(preferredEntries, updateError)) {
         qWarning() << "Unable to apply preferred CUDA provider options for nnTransform3D; retrying with compatibility set:"
                    << updateError;
-        if (!updateCudaProviderOptions(compatibilityEntries, updateError)) {
+        if (!applyCudaProviderOptions(compatibilityEntries, updateError)) {
             errorMessage = QStringLiteral("UpdateCUDAProviderOptions failed: %1").arg(updateError);
             releaseCudaOptions();
             return false;

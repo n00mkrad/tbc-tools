@@ -26,7 +26,7 @@ __global__ void calcMagnitudeKernel(const cufftDoubleComplex* d_out_batch, float
     int i = idx % block_size;  // Offset inside block
 
     // Decode tensor coordinates
-    int Nx = 16, Ny = 16, Nt = 4;
+    int Nx = 16, Ny = 16;
     int t = i / (Ny * Nx);
     int rem = i % (Ny * Nx);
     int y = rem / Nx;

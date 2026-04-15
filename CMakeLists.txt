@@ -133,28 +133,56 @@ set(FFTW_LIBRARY PkgConfig::FFTW)
 
 find_package(onnxruntime CONFIG QUIET)
 if(NOT TARGET onnxruntime::onnxruntime)
+    set(_ONNXRUNTIME_SEARCH_ROOTS
+        ${ONNXRUNTIME_ROOT}
+        $ENV{ONNXRUNTIME_ROOT}
+    )
     find_path(ONNXRUNTIME_INCLUDE_DIR
         NAMES onnxruntime_cxx_api.h
         PATHS
-            ${ONNXRUNTIME_ROOT}/include
-            $ENV{ONNXRUNTIME_ROOT}/include
+            ${_ONNXRUNTIME_SEARCH_ROOTS}
+        PATH_SUFFIXES
+            include
     )
     find_library(ONNXRUNTIME_LIBRARY
         NAMES onnxruntime
         PATHS
-            ${ONNXRUNTIME_ROOT}/lib
-            $ENV{ONNXRUNTIME_ROOT}/lib
+            ${_ONNXRUNTIME_SEARCH_ROOTS}
+        PATH_SUFFIXES
+            lib
     )
+    if(WIN32)
+        find_file(ONNXRUNTIME_DLL
+            NAMES onnxruntime.dll
+            PATHS
+                ${_ONNXRUNTIME_SEARCH_ROOTS}
+            PATH_SUFFIXES
+                bin
+                lib
+        )
+    endif()
 
-    if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
+    if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY OR (WIN32 AND NOT ONNXRUNTIME_DLL))
         message(FATAL_ERROR "Could not find ONNX Runtime. Set ONNXRUNTIME_ROOT to an SDK containing include/ and lib/, or provide onnxruntimeConfig.cmake.")
     endif()
 
     add_library(onnxruntime::onnxruntime SHARED IMPORTED GLOBAL)
-    set_target_properties(onnxruntime::onnxruntime PROPERTIES
-        IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
-    )
+    if(WIN32)
+        set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_IMPLIB "${ONNXRUNTIME_LIBRARY}"
+            IMPORTED_IMPLIB_RELEASE "${ONNXRUNTIME_LIBRARY}"
+            IMPORTED_LOCATION "${ONNXRUNTIME_DLL}"
+            IMPORTED_LOCATION_RELEASE "${ONNXRUNTIME_DLL}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
+        )
+    else()
+        set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
+        )
+    endif()
+    unset(_ONNXRUNTIME_SEARCH_ROOTS)
+    unset(ONNXRUNTIME_DLL)
 endif()
 
 # Build metadata (set by Nix or other build systems)

@@ -43,12 +43,18 @@
 #ifdef __linux__
 #include <dlfcn.h>
 #endif
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include <fftw3.h>
 #include <onnxruntime_cxx_api.h>
 #include <QCoreApplication>
+#include <QDir>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QRegularExpression>
+#include <QStringList>
 
 #include "chroma_net_v2_onnx_data.h"
 #include "tbc/logging.h"
@@ -112,6 +118,7 @@ constexpr double cos4fsc(const qint32 i) {
 namespace {
 constexpr const char *kNnProviderEnvVar = "LDDECODE_NNTRANSFORM3D_PROVIDER";
 constexpr const char *kNnThreadsEnvVar = "LDDECODE_NNTRANSFORM3D_THREADS";
+constexpr const char *kOnnxRuntimeRootEnvVar = "ONNXRUNTIME_ROOT";
 
 enum class NnExecutionProviderPreference {
     Auto,
@@ -232,9 +239,130 @@ bool ensureCudaDriverLoaded(QString &errorMessage)
     return true;
 }
 
+bool ensureWindowsOnnxCudaProviderLoaded(QString &errorMessage)
+{
+#ifdef _WIN32
+    static std::once_flag providerLoadOnce;
+    static bool providerReady = false;
+    static QString providerError;
+
+    std::call_once(providerLoadOnce, []() {
+        auto formatWindowsError = [](DWORD errorCode) {
+            LPWSTR messageBuffer = nullptr;
+            const DWORD formatFlags = FORMAT_MESSAGE_ALLOCATE_BUFFER
+                | FORMAT_MESSAGE_FROM_SYSTEM
+                | FORMAT_MESSAGE_IGNORE_INSERTS;
+            const DWORD messageLength = FormatMessageW(
+                formatFlags,
+                nullptr,
+                errorCode,
+                MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                reinterpret_cast<LPWSTR>(&messageBuffer),
+                0,
+                nullptr
+            );
+
+            QString message;
+            if (messageLength > 0 && messageBuffer != nullptr) {
+                message = QString::fromWCharArray(messageBuffer, static_cast<int>(messageLength)).trimmed();
+            } else {
+                message = QStringLiteral("Windows error code %1").arg(errorCode);
+            }
+
+            if (messageBuffer != nullptr) {
+                LocalFree(messageBuffer);
+            }
+            return message;
+        };
+
+        auto tryLoadLibrary = [&](const QString &libraryPath, QString &loadError) -> bool {
+            HMODULE module = LoadLibraryW(reinterpret_cast<LPCWSTR>(libraryPath.utf16()));
+            if (module != nullptr) {
+                return true;
+            }
+
+            loadError = formatWindowsError(GetLastError());
+            return false;
+        };
+
+        auto tryLoadProviderPair = [&](const QString &directory, QString &pairError) -> bool {
+            const QString providersSharedDll = QStringLiteral("onnxruntime_providers_shared.dll");
+            const QString providersCudaDll = QStringLiteral("onnxruntime_providers_cuda.dll");
+            const QString sharedPath = directory.isEmpty()
+                ? providersSharedDll
+                : QDir(directory).filePath(providersSharedDll);
+            const QString cudaPath = directory.isEmpty()
+                ? providersCudaDll
+                : QDir(directory).filePath(providersCudaDll);
+
+            if (!directory.isEmpty()) {
+                if (!QFileInfo::exists(sharedPath) || !QFileInfo::exists(cudaPath)) {
+                    pairError = QStringLiteral("missing ONNX Runtime CUDA provider DLLs in %1").arg(directory);
+                    return false;
+                }
+            }
+
+            QString sharedError;
+            if (!tryLoadLibrary(sharedPath, sharedError)) {
+                pairError = QStringLiteral("failed to load %1: %2").arg(sharedPath, sharedError);
+                return false;
+            }
+
+            QString cudaError;
+            if (!tryLoadLibrary(cudaPath, cudaError)) {
+                pairError = QStringLiteral("failed to load %1: %2").arg(cudaPath, cudaError);
+                return false;
+            }
+
+            return true;
+        };
+
+        QStringList candidateDirectories;
+        const QString appDir = QCoreApplication::applicationDirPath();
+        if (!appDir.isEmpty()) {
+            candidateDirectories.append(appDir);
+        }
+
+        const QString onnxRuntimeRoot = qEnvironmentVariable(kOnnxRuntimeRootEnvVar).trimmed();
+        if (!onnxRuntimeRoot.isEmpty()) {
+            const QDir onnxRuntimeRootDir(onnxRuntimeRoot);
+            candidateDirectories.append(onnxRuntimeRootDir.filePath(QStringLiteral("lib")));
+            candidateDirectories.append(onnxRuntimeRootDir.filePath(QStringLiteral("bin")));
+            candidateDirectories.append(onnxRuntimeRoot);
+        }
+
+        candidateDirectories.removeDuplicates();
+        candidateDirectories.append(QString());
+
+        QString pairError;
+        for (const QString &candidateDirectory : candidateDirectories) {
+            if (tryLoadProviderPair(candidateDirectory, pairError)) {
+                providerReady = true;
+                return;
+            }
+        }
+
+        providerError = pairError.isEmpty()
+            ? QStringLiteral("unable to locate ONNX Runtime CUDA provider DLLs")
+            : pairError;
+    });
+
+    if (!providerReady) {
+        errorMessage = providerError;
+        return false;
+    }
+#else
+    Q_UNUSED(errorMessage)
+#endif
+    return true;
+}
+
 bool appendCudaExecutionProvider(Ort::SessionOptions &options, QString &errorMessage)
 {
     if (!ensureCudaDriverLoaded(errorMessage)) {
+        return false;
+    }
+    if (!ensureWindowsOnnxCudaProviderLoaded(errorMessage)) {
         return false;
     }
 
@@ -412,13 +540,45 @@ void Comb::updateConfiguration(const LdDecodeMetaData::VideoParameters &_videoPa
     // Copy the configuration parameters
     videoParameters = _videoParameters;
     configuration = _configuration;
+    const qint32 frameHeight = ((videoParameters.fieldHeight * 2) - 1);
 
     // Range check the frame dimensions
     if (videoParameters.fieldWidth > MAX_WIDTH) qCritical() << "Comb::Comb(): Frame width exceeds allowed maximum!";
-    if (((videoParameters.fieldHeight * 2) - 1) > MAX_HEIGHT) qCritical() << "Comb::Comb(): Frame height exceeds allowed maximum!";
+    if (frameHeight > MAX_HEIGHT) qCritical() << "Comb::Comb(): Frame height exceeds allowed maximum!";
 
-    // Range check the video start
-    if (videoParameters.activeVideoStart < 16) qCritical() << "Comb::Comb(): activeVideoStart must be > 16!";
+    const qint32 clampedFirstActiveFrameLine = qBound(0, videoParameters.firstActiveFrameLine, qMax(0, frameHeight - 1));
+    const qint32 clampedLastActiveFrameLine = qBound(
+        clampedFirstActiveFrameLine + 1,
+        videoParameters.lastActiveFrameLine,
+        qMax(clampedFirstActiveFrameLine + 1, frameHeight)
+    );
+    if (clampedFirstActiveFrameLine != videoParameters.firstActiveFrameLine
+        || clampedLastActiveFrameLine != videoParameters.lastActiveFrameLine) {
+        qWarning() << "Comb::updateConfiguration(): Clamping invalid active frame line bounds from"
+                   << videoParameters.firstActiveFrameLine << "-" << videoParameters.lastActiveFrameLine
+                   << "to" << clampedFirstActiveFrameLine << "-" << clampedLastActiveFrameLine;
+    }
+    videoParameters.firstActiveFrameLine = clampedFirstActiveFrameLine;
+    videoParameters.lastActiveFrameLine = clampedLastActiveFrameLine;
+
+    const qint32 clampedActiveVideoStart = qBound(0, videoParameters.activeVideoStart, qMax(0, videoParameters.fieldWidth - 1));
+    const qint32 clampedActiveVideoEnd = qBound(
+        clampedActiveVideoStart + 1,
+        videoParameters.activeVideoEnd,
+        videoParameters.fieldWidth
+    );
+    if (clampedActiveVideoStart != videoParameters.activeVideoStart
+        || clampedActiveVideoEnd != videoParameters.activeVideoEnd) {
+        qWarning() << "Comb::updateConfiguration(): Clamping invalid active video sample bounds from"
+                   << videoParameters.activeVideoStart << "-" << videoParameters.activeVideoEnd
+                   << "to" << clampedActiveVideoStart << "-" << clampedActiveVideoEnd;
+    }
+    videoParameters.activeVideoStart = clampedActiveVideoStart;
+    videoParameters.activeVideoEnd = clampedActiveVideoEnd;
+
+    if (videoParameters.activeVideoStart < 16) {
+        qWarning() << "Comb::updateConfiguration(): activeVideoStart is near frame edge; edge-safe filtering will be used";
+    }
 
     // Check the sample rate is close to 4 * fSC.
     // Older versions of ld-decode used integer approximations, so this needs
@@ -664,6 +824,7 @@ bool Comb::FrameBuffer::split3DnnTransform(FrameBuffer &nextFrame, qint32 frameI
     static bool onnxReady = false;
     static std::unique_ptr<Ort::Env> ortEnv;
     static std::unique_ptr<Ort::Session> ortSession;
+    static std::mutex onnxRunMutex;
     std::call_once(onnxInitOnce, []() {
         try {
             ortEnv = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "LdDecodeToolsNnTransform3D");
@@ -873,17 +1034,24 @@ bool Comb::FrameBuffer::split3DnnTransform(FrameBuffer &nextFrame, qint32 frameI
             static const char *inputNames[] = { "input" };
             static const char *outputNames[] = { "output" };
             std::vector<Ort::Value> modelOutputs;
-            try {
-                modelOutputs = ortSession->Run(
-                    Ort::RunOptions{ nullptr },
-                    inputNames, &modelInputTensor, 1,
-                    outputNames, 1
-                );
-            } catch (const Ort::Exception &e) {
-                qWarning() << "nnTransform3D ONNX inference failed; disabling nn session and falling back to 2D chroma:"
-                           << e.what();
-                onnxReady = false;
-                return false;
+            {
+                std::lock_guard<std::mutex> runLock(onnxRunMutex);
+                if (!onnxReady || !ortSession) {
+                    return false;
+                }
+                try {
+                    modelOutputs = ortSession->Run(
+                        Ort::RunOptions{ nullptr },
+                        inputNames, &modelInputTensor, 1,
+                        outputNames, 1
+                    );
+                } catch (const Ort::Exception &e) {
+                    qWarning() << "nnTransform3D ONNX inference failed; disabling nn session and falling back to 2D chroma:"
+                               << e.what();
+                    onnxReady = false;
+                    ortSession.reset();
+                    return false;
+                }
             }
             if (cancelEpoch.load(std::memory_order_relaxed) != decodeEpoch) {
                 return false;
@@ -1045,11 +1213,15 @@ void Comb::FrameBuffer::copyRawToLuma()
 // splitIQ, so we use its result for split2D rather than the raw signal.
 void Comb::FrameBuffer::split1D()
 {
+    const qint32 startSample = qMax(videoParameters.activeVideoStart, 2);
+    const qint32 endSample = qMin(videoParameters.activeVideoEnd, videoParameters.fieldWidth - 2);
+    if (startSample >= endSample) {
+        return;
+    }
     for (qint32 lineNumber = videoParameters.firstActiveFrameLine; lineNumber < videoParameters.lastActiveFrameLine; lineNumber++) {
         // Get a pointer to the line's data
         const quint16 *line = rawbuffer.data() + (lineNumber * videoParameters.fieldWidth);
-
-        for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
+        for (qint32 h = startSample; h < endSample; h++) {
             double tc1 = (line[h] - ((line[h - 2] + line[h + 2]) / 2.0)) / 2.0;
 
             // Record the 1D C value
@@ -1072,6 +1244,11 @@ void Comb::FrameBuffer::split2D()
 {
     // Dummy black line
     static constexpr double blackLine[MAX_WIDTH] = {0};
+    const qint32 startSample = qMax(videoParameters.activeVideoStart, 1);
+    const qint32 endSample = qMin(videoParameters.activeVideoEnd, videoParameters.fieldWidth - 1);
+    if (startSample >= endSample) {
+        return;
+    }
 
     for (qint32 lineNumber = videoParameters.firstActiveFrameLine; lineNumber < videoParameters.lastActiveFrameLine; lineNumber++) {
         // Get pointers to the surrounding lines of 1D chroma.
@@ -1086,7 +1263,7 @@ void Comb::FrameBuffer::split2D()
             nextLine = clpbuffer[0].pixel[lineNumber + 2];
         }
 
-        for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
+        for (qint32 h = startSample; h < endSample; h++) {
             double kp, kn;
 
             // Summing the differences of the *absolute* values of the 1D chroma samples
@@ -1149,18 +1326,23 @@ void Comb::FrameBuffer::split2D()
 // candidate.
 void Comb::FrameBuffer::split3D(const FrameBuffer &previousFrame, const FrameBuffer &nextFrame)
 {
+    const qint32 startSample = qMax(videoParameters.activeVideoStart, 1);
+    const qint32 endSample = qMin(videoParameters.activeVideoEnd, videoParameters.fieldWidth - 1);
     for (qint32 lineNumber = videoParameters.firstActiveFrameLine; lineNumber < videoParameters.lastActiveFrameLine; lineNumber++) {
         for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
+            clpbuffer[2].pixel[lineNumber][h] = clpbuffer[1].pixel[lineNumber][h];
+        }
+
+        if (startSample >= endSample) {
+            continue;
+        }
+
+        for (qint32 h = startSample; h < endSample; h++) {
             // Select the best candidate
             qint32 bestIndex;
             double bestSample;
             getBestCandidate(lineNumber, h, previousFrame, nextFrame, bestIndex, bestSample);
-
-            if (bestIndex < CAND_PREV_FIELD) {
-                // A 1D or 2D candidate was best.
-                // Use split2D's output, to save duplicating the line-blending heuristics here.
-                clpbuffer[2].pixel[lineNumber][h] = clpbuffer[1].pixel[lineNumber][h];
-            } else {
+            if (bestIndex >= CAND_PREV_FIELD) {
                 // Compute a 3D result.
                 // This sample is Y + C; the candidate is (ideally) Y - C. So compute C as ((Y + C) - (Y - C)) / 2.
                 clpbuffer[2].pixel[lineNumber][h] = (clpbuffer[0].pixel[lineNumber][h] - bestSample) / 2;
@@ -1223,13 +1405,20 @@ Comb::FrameBuffer::Candidate Comb::FrameBuffer::getCandidate(qint32 refLineNumbe
                                                              double adjustPenalty) const
 {
     Candidate result;
-    result.sample = frameBuffer.clpbuffer[0].pixel[lineNumber][h];
-
-    // If the candidate is outside the active region (vertically), it's not viable
-    if (lineNumber < videoParameters.firstActiveFrameLine || lineNumber >= videoParameters.lastActiveFrameLine) {
+    const bool lineOutOfRange = (lineNumber < videoParameters.firstActiveFrameLine)
+        || (lineNumber >= videoParameters.lastActiveFrameLine)
+        || (refLineNumber < videoParameters.firstActiveFrameLine)
+        || (refLineNumber >= videoParameters.lastActiveFrameLine);
+    const bool sampleOutOfRange = (h < 1)
+        || (h >= (videoParameters.fieldWidth - 1))
+        || (refH < 1)
+        || (refH >= (videoParameters.fieldWidth - 1));
+    if (lineOutOfRange || sampleOutOfRange) {
+        result.sample = 0.0;
         result.penalty = 1000.0;
         return result;
     }
+    result.sample = frameBuffer.clpbuffer[0].pixel[lineNumber][h];
 
     // The target sample should have 180 degrees phase difference from the reference.
     // If it doesn't (e.g. because it's a blank frame or the player skipped), it's not viable.
@@ -1508,8 +1697,11 @@ void Comb::FrameBuffer::splitIQlocked()
         double *Y = componentFrame->y(lineNumber);
         double *I = componentFrame->u(lineNumber);
         double *Q = componentFrame->v(lineNumber);
+        const qint32 startSample = qMax(0, videoParameters.activeVideoStart);
+        const qint32 endSample = qMin(videoParameters.activeVideoEnd, videoParameters.fieldWidth);
+        const qint32 shiftedWriteEndSample = qMin(endSample, videoParameters.fieldWidth - 1);
 
-        for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
+        for (qint32 h = startSample; h < shiftedWriteEndSample; h++) {
             const auto val = clpbuffer[configuration.dimensions - 1].pixel[lineNumber][h];
 
             // Demodulate the sine and cosine components.
@@ -1525,6 +1717,11 @@ void Comb::FrameBuffer::splitIQlocked()
             I[h + 1] = ti * ROTATE_COS - tq * -ROTATE_SIN;
             Q[h + 1] = -(ti * -ROTATE_SIN + tq * ROTATE_COS);
             // Subtract the split chroma part from the luma signal.
+            Y[h] = line[h] - val;
+        }
+
+        for (qint32 h = shiftedWriteEndSample; h < endSample; h++) {
+            const auto val = clpbuffer[configuration.dimensions - 1].pixel[lineNumber][h];
             Y[h] = line[h] - val;
         }
     }

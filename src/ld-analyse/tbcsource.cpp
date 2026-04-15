@@ -1064,8 +1064,7 @@ void TbcSource::configureChromaDecoder()
     // Configure the chroma decoder
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
     LdDecodeMetaData::VideoParameters decodeVideoParameters = videoParameters;
-    const bool useNnTransform3D = (videoParameters.system == NTSC) && ntscConfiguration.nnTransform3D;
-    const bool applyHybridFullFrameBounds = (chromaDecodeMode == HYBRID_CHROMA_MODE) && !useNnTransform3D;
+    const bool applyHybridFullFrameBounds = (chromaDecodeMode == HYBRID_CHROMA_MODE);
     if (outputConfiguration.fullFrameDecode || applyHybridFullFrameBounds) {
         applyFullFrameDecodeBounds(decodeVideoParameters);
     }

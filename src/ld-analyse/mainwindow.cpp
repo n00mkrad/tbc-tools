@@ -1655,10 +1655,13 @@ void MainWindow::updateCursorReadout(const QPoint &viewerPoint)
     }
 
     QString rawHex = QStringLiteral("----");
-    const TbcSource::ScanLineData scanLineData = tbcSource.getScanLineData(sourceY + 1);
-    if (!scanLineData.composite.isEmpty() && sourceX >= 0 && sourceX < scanLineData.composite.size()) {
-        const quint16 rawValue = static_cast<quint16>(qBound(0, scanLineData.composite[sourceX], 65535));
-        rawHex = QStringLiteral("0x%1").arg(rawValue, 4, 16, QChar('0')).toUpper();
+    const bool asyncNnRenderActive = asyncFrameRenderInProgress && shouldRenderFrameAsync();
+    if (!asyncNnRenderActive) {
+        const TbcSource::ScanLineData scanLineData = tbcSource.getScanLineData(sourceY + 1);
+        if (!scanLineData.composite.isEmpty() && sourceX >= 0 && sourceX < scanLineData.composite.size()) {
+            const quint16 rawValue = static_cast<quint16>(qBound(0, scanLineData.composite[sourceX], 65535));
+            rawHex = QStringLiteral("0x%1").arg(rawValue, 4, 16, QChar('0')).toUpper();
+        }
     }
 
     const QString rgbHex = QStringLiteral("#%1%2%3")
@@ -2169,6 +2172,9 @@ void MainWindow::cancelInFlightAsyncFrameRender()
     asyncFrameRenderWatcher.waitForFinished();
     asyncFrameRenderInProgress = false;
     asyncFrameRenderQueued = false;
+    asyncFrameRenderFrameNumber = -1;
+    asyncFrameRenderFieldNumber = -1;
+    asyncFrameImage = QImage();
     if (statusBar()) {
         statusBar()->clearMessage();
     }
@@ -5179,6 +5185,8 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
 // Source/Chroma select button clicked
 void MainWindow::on_videoPushButton_clicked()
 {
+    const bool resumePlayback = playbackRunning;
+    setPlaybackRunning(false);
     cancelInFlightAsyncFrameRender();
     if (!tbcSource.getChromaDecoder()) {
         tbcSource.setChromaDecodeMode(TbcSource::HYBRID_CHROMA_MODE);
@@ -5192,9 +5200,8 @@ void MainWindow::on_videoPushButton_clicked()
 
     // Show the current image
     showImage();
-
-    if (playbackRunning) {
-        scheduleNextPlaybackTick();
+    if (resumePlayback) {
+        setPlaybackRunning(true);
     } else if (ui && ui->playPushButton) {
         ui->playPushButton->setToolTip(playbackStartToolTip());
     }
@@ -5375,6 +5382,8 @@ void MainWindow::on_dropoutsPushButton_clicked()
 // Source selection button clicked
 void MainWindow::on_sourcesPushButton_clicked()
 {
+    const bool resumePlayback = playbackRunning;
+    setPlaybackRunning(false);
     cancelInFlightAsyncFrameRender();
     switch (tbcSource.getSourceMode()) {
     case TbcSource::ONE_SOURCE:
@@ -5396,9 +5405,8 @@ void MainWindow::on_sourcesPushButton_clicked()
 
     // Show the current image
     showImage();
-
-    if (playbackRunning) {
-        scheduleNextPlaybackTick();
+    if (resumePlayback) {
+        setPlaybackRunning(true);
     } else if (ui && ui->playPushButton) {
         ui->playPushButton->setToolTip(playbackStartToolTip());
     }
@@ -5984,6 +5992,8 @@ void MainWindow::exportBoundaryThicknessChangedSignalHandler(int thickness)
 // Handle configuration changed signal from the chroma decoder configuration dialogue
 void MainWindow::chromaDecoderConfigChangedSignalHandler()
 {
+    const bool resumePlayback = playbackRunning;
+    setPlaybackRunning(false);
     cancelInFlightAsyncFrameRender();
     const PalColour::Configuration &palConfig = chromaDecoderConfigDialog->getPalConfiguration();
     const Comb::Configuration &ntscConfig = chromaDecoderConfigDialog->getNtscConfiguration();
@@ -6015,6 +6025,11 @@ void MainWindow::chromaDecoderConfigChangedSignalHandler()
     // Update the image viewer
     updateImage();
     updateVideoPushButton();
+    if (resumePlayback) {
+        setPlaybackRunning(true);
+    } else if (ui && ui->playPushButton) {
+        ui->playPushButton->setToolTip(playbackStartToolTip());
+    }
 
     updateMetadataStatusPanel();
 }

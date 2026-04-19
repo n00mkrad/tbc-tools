@@ -1,0 +1,13 @@
+Source: https://github.com/simoninns/decode-orc
+Commit: b494c5d7e680930d8f3119a98b52e915fc6c221d
+Path: orc/core/stages/ac3rf_sink/ac3rf-lib
+License: GPL-3.0-or-later
+
+Vendored subset:
+- Logger.h
+- ac3/*
+- rs/*
+
+Local adaptations:
+- Removed fmt/spdlog formatting dependency to keep C++17-only build compatibility.
+- Added standalone CLI wrapper in src/ac3-decoder/main.cpp.

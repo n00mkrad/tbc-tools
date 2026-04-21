@@ -72,6 +72,7 @@
 #include "metadataconverterutil.h"
 #include "notesviewerdialog.h"
 #include "timelinemarkerslider.h"
+#include "efmhandlerdialog.h"
 #include "../audio-align/audioalignmentdialog.h"
 #include "../tbc-export-metadata/metadataexportdialog.h"
 #include "../ld-process-vits/processingpool.h"
@@ -4382,6 +4383,75 @@ void MainWindow::on_actionAuto_Audio_Align_triggered()
     }
 }
 
+void MainWindow::on_actionEFM_Handler_triggered()
+{
+    if (!efmHandlerDialog) {
+        efmHandlerDialog = new EfmHandlerDialog(this);
+        efmHandlerDialog->setModal(false);
+        efmHandlerDialog->setWindowModality(Qt::NonModal);
+        efmHandlerDialog->setWindowFlags(Qt::Window
+                                         | Qt::CustomizeWindowHint
+                                         | Qt::WindowTitleHint
+                                         | Qt::WindowSystemMenuHint
+                                         | Qt::WindowMinimizeButtonHint
+                                         | Qt::WindowCloseButtonHint);
+        efmHandlerDialog->setAttribute(Qt::WA_TranslucentBackground, false);
+        efmHandlerDialog->setAttribute(Qt::WA_NoSystemBackground, false);
+        efmHandlerDialog->setAutoFillBackground(true);
+        efmHandlerDialog->setWindowOpacity(1.0);
+        connect(efmHandlerDialog, &QObject::destroyed, this, [this]() {
+            efmHandlerDialog = nullptr;
+        });
+        connect(efmHandlerDialog, &EfmHandlerDialog::exportTracksPrepared, this,
+                [this](const QStringList &trackFiles, const QStringList &trackNames) {
+                    if (!exportDialog || trackFiles.isEmpty()) {
+                        return;
+                    }
+                    exportDialog->loadAudioTracksForExport(trackFiles, trackNames);
+                    if (ui && ui->mainTabWidget) {
+                        ui->mainTabWidget->setCurrentWidget(exportDialog);
+                    }
+                    statusBar()->showMessage(tr("Loaded %1 decoded EFM audio track(s) into Export.")
+                                                 .arg(trackFiles.size()),
+                                             5000);
+                });
+    }
+
+    efmHandlerDialog->setModal(false);
+    efmHandlerDialog->setWindowModality(Qt::NonModal);
+    efmHandlerDialog->setWindowOpacity(1.0);
+
+    QString sourceDirectory = outputRootDirectoryForCurrentSource();
+    if (sourceDirectory.isEmpty()) {
+        sourceDirectory = configuration.getSourceDirectory();
+    }
+    if (!sourceDirectory.isEmpty()) {
+        efmHandlerDialog->setSourceDirectory(sourceDirectory);
+    }
+
+    QString suggestedOutputBase;
+    const QString sourceFilename = tbcSource.getCurrentSourceFilename();
+    if (!sourceFilename.isEmpty()) {
+        const QFileInfo sourceInfo(sourceFilename);
+        suggestedOutputBase = QDir(sourceInfo.absolutePath())
+                                  .filePath(sourceInfo.completeBaseName());
+    } else if (!lastFilename.isEmpty()) {
+        const QFileInfo sourceInfo(lastFilename);
+        suggestedOutputBase = QDir(sourceInfo.absolutePath())
+                                  .filePath(sourceInfo.completeBaseName());
+    }
+    if (!suggestedOutputBase.isEmpty()) {
+        efmHandlerDialog->setSuggestedOutputBase(suggestedOutputBase);
+    }
+
+    efmHandlerDialog->show();
+    if (efmHandlerDialog->windowHandle() && windowHandle()) {
+        efmHandlerDialog->windowHandle()->setTransientParent(windowHandle());
+    }
+    efmHandlerDialog->raise();
+    efmHandlerDialog->activateWindow();
+    statusBar()->showMessage(tr("Opened EFM Handler. Configure EFM/AC3 stages and run the pipeline."), 5000);
+}
 // Start saving the modified metadata
 void MainWindow::on_actionSave_Metadata_triggered()
 {

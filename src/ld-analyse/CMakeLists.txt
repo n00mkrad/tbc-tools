@@ -7,6 +7,7 @@ set(ld-analyse_SOURCES
     ../audio-align/audioalignmentdialog.cpp ../audio-align/audioalignmentdialog.h ../audio-align/audioalignmentdialog.ui
     ../audio-align/audioalignmentutil.cpp ../audio-align/audioalignmentutil.h
     closedcaptionsdialog.cpp closedcaptionsdialog.ui
+    efmhandlerdialog.cpp efmhandlerdialog.h
     exportdialog.cpp exportdialog.ui
     metadataconversiondialog.cpp metadataconversiondialog.ui
     metadatastatusdialog.cpp metadatastatusdialog.ui

@@ -56,6 +56,7 @@ namespace Ui {
 class MainWindow;
 }
 class AudioAlignmentDialog;
+class EfmHandlerDialog;
 class MetadataExportDialog;
 class NotesViewerDialog;
 class TimelineMarkerSlider;
@@ -104,6 +105,7 @@ private slots:
     void on_actionProcess_VITS_triggered();
     void on_actionFix_JSON_SNR_triggered();
     void on_actionAuto_Audio_Align_triggered();
+    void on_actionEFM_Handler_triggered();
 
     // Media control frame handlers
     void on_previousPushButton_clicked();
@@ -214,6 +216,7 @@ private:
     MetadataStatusDialog *metadataStatusDialog;
     ExportDialog *exportDialog;
     AudioAlignmentDialog *audioAlignmentDialog = nullptr;
+    EfmHandlerDialog *efmHandlerDialog = nullptr;
     MetadataExportDialog *metadataExportDialog = nullptr;
     NotesViewerDialog *notesViewerDialog = nullptr;
 

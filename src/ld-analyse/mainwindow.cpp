@@ -1104,6 +1104,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
 
     // Set up dialogues
     oscilloscopeDialog = new OscilloscopeDialog(this);
+    rgbScopeDialog = new RgbScopeDialog(this);
     vectorscopeDialog = new VectorscopeDialog(this);
     fieldTimingDialog = new FieldTimingDialog(this);
     aboutDialog = new AboutDialog(this);
@@ -1245,6 +1246,12 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
 
     // Connect to the changed signal from the vectorscope dialogue
     connect(vectorscopeDialog, &VectorscopeDialog::scopeChanged, this, &MainWindow::vectorscopeChangedSignalHandler);
+    connect(rgbScopeDialog, &RgbScopeDialog::renderTargetSizeChanged, this, [this](const QSize &) {
+        if (!rgbScopeDialog || !rgbScopeDialog->isVisible() || rgbScopeDialog->isMinimized()) {
+            return;
+        }
+        updateRgbScopeDialogue(false);
+    });
 
     // Connect to the video parameters changed signal
     connect(videoParametersDialog, &VideoParametersDialog::videoParametersChanged, this, &MainWindow::videoParametersChangedSignalHandler);
@@ -1304,6 +1311,14 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     resizeTimer->setSingleShot(true);
     resizeTimer->setInterval(100); // 100ms delay for resize calculations
     connect(resizeTimer, &QTimer::timeout, this, &MainWindow::resizeFrameToWindow);
+    rgbScopeRefreshTimer = new QTimer(this);
+    rgbScopeRefreshTimer->setSingleShot(true);
+    connect(rgbScopeRefreshTimer, &QTimer::timeout, this, [this]() {
+        rgbScopeRefreshPending = false;
+        if (rgbScopeDialog && rgbScopeDialog->isVisible()) {
+            updateRgbScopeDialogue(true);
+        }
+    });
     
     // Initialize chroma seek mode tracking
     chromaSeekMode = false;
@@ -1948,6 +1963,12 @@ void MainWindow::updateGuiUnloaded()
     videoParametersDialog->hide();
     chromaDecoderConfigDialog->hide();
     fieldTimingDialog->hide();
+    rgbScopeDialog->hide();
+    if (rgbScopeRefreshTimer) {
+        rgbScopeRefreshTimer->stop();
+    }
+    rgbScopeRefreshPending = false;
+    rgbScopeLastRefreshMs = 0;
     updateTimelineMarkers();
     updateNotesViewerState();
 
@@ -2285,6 +2306,9 @@ void MainWindow::updateImage()
     // If the scope dialogues are open, update them
     if (oscilloscopeDialog->isVisible()) {
         updateOscilloscopeDialogue();
+    }
+    if (rgbScopeDialog->isVisible() && !rgbScopeDialog->isMinimized()) {
+        updateRgbScopeDialogue();
     }
     if (vectorscopeDialog->isVisible()) {
         updateVectorscopeDialogue();
@@ -2976,6 +3000,36 @@ void MainWindow::updateOscilloscopeDialogue()
     oscilloscopeDialog->showTraceImage(tbcSource.getScanLineData(lastScopeLine),
                                        lastScopeDot, lastScopeLine - 1,
                                        tbcSource.getFrameWidth(), tbcSource.getFrameHeight(), tbcSource.getSourceMode() == TbcSource::SourceMode::BOTH_SOURCES);
+}
+
+void MainWindow::updateRgbScopeDialogue(bool force)
+{
+    if (!rgbScopeDialog || !tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        return;
+    }
+    if (asyncFrameRenderInProgress && shouldRenderFrameAsync()) {
+        return;
+    }
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 minRefreshIntervalMs = playbackRunning ? 180 : 80;
+    if (!force && rgbScopeLastRefreshMs > 0) {
+        const qint64 elapsedMs = nowMs - rgbScopeLastRefreshMs;
+        if (elapsedMs < minRefreshIntervalMs) {
+            if (rgbScopeRefreshTimer && !rgbScopeRefreshPending) {
+                rgbScopeRefreshPending = true;
+                rgbScopeRefreshTimer->start(static_cast<int>(minRefreshIntervalMs - elapsedMs));
+            }
+            return;
+        }
+    }
+
+    rgbScopeDialog->showScopeImage(tbcSource.getRgbScopeImage(rgbScopeDialog->scopeRenderTargetSize()));
+    rgbScopeLastRefreshMs = nowMs;
+    if (rgbScopeRefreshTimer && rgbScopeRefreshPending) {
+        rgbScopeRefreshTimer->stop();
+        rgbScopeRefreshPending = false;
+    }
 }
 
 // Method to update the vectorscope
@@ -4433,17 +4487,18 @@ void MainWindow::on_actionVectorscope_triggered()
     }
 }
 
-// Display RGB scope in the main viewer
+// Display the RGB scope pop-out view
 void MainWindow::on_actionRGB_scope_triggered()
 {
     if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
         return;
     }
-
-    tbcSource.setViewMode(TbcSource::ViewMode::RGB_SCOPE_VIEW);
-    tbcSource.setStretchField(false);
-    setViewValues();
-    showImage();
+    if (!rgbScopeDialog->isVisible()) {
+        rgbScopeDialog->show();
+    }
+    updateRgbScopeDialogue(true);
+    rgbScopeDialog->raise();
+    rgbScopeDialog->activateWindow();
 }
 // Display the field timing scope view
 void MainWindow::on_actionField_timing_scope_triggered()

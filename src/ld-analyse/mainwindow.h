@@ -34,6 +34,7 @@
 #include <QFutureWatcher>
 
 #include "oscilloscopedialog.h"
+#include "rgbscopedialog.h"
 #include "vectorscopedialog.h"
 #include "fieldtimingdialog.h"
 #include "aboutdialog.h"
@@ -199,6 +200,7 @@ private:
 
     // Dialogues
     OscilloscopeDialog* oscilloscopeDialog;
+    RgbScopeDialog *rgbScopeDialog;
     VectorscopeDialog* vectorscopeDialog;
     FieldTimingDialog* fieldTimingDialog;
     AboutDialog* aboutDialog;
@@ -250,6 +252,9 @@ private:
     QTimer* resizeTimer = nullptr;
     double playbackTickCarryMs = 0.0;
     bool playbackRunning = false;
+    QTimer* rgbScopeRefreshTimer = nullptr;
+    bool rgbScopeRefreshPending = false;
+    qint64 rgbScopeLastRefreshMs = 0;
     
     // Chroma toggle during seek
     bool chromaSeekMode;
@@ -313,6 +318,7 @@ private:
     void loadTbcFile(QString inputFileName, bool forceMetadataOnly = false, bool preserveStatusDuringReload = false);
     void cleanupTempMetadataFile();
     void updateOscilloscopeDialogue();
+    void updateRgbScopeDialogue(bool force = false);
     void updateVectorscopeDialogue();
     void updateFieldTimingDialogue();
     void populateThemesMenu();

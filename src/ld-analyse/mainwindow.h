@@ -78,6 +78,7 @@ private slots:
     void on_actionMetadata_Status_triggered();
     void on_actionSave_Metadata_triggered();
     void on_actionLine_scope_triggered();
+    void on_actionRGB_scope_triggered();
     void on_actionVectorscope_triggered();
     void on_actionField_timing_scope_triggered();
     void on_actionTBC_Tools_Wiki_triggered();

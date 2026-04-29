@@ -1476,6 +1476,7 @@ void MainWindow::setGuiEnabled(bool enabled)
 
     // Enable menu options
     ui->actionLine_scope->setEnabled(enabled);
+    ui->actionRGB_scope->setEnabled(enabled);
     ui->actionVectorscope->setEnabled(enabled);
     ui->actionField_timing_scope->setEnabled(enabled);
     ui->actionVBI->setEnabled(enabled);
@@ -1839,6 +1840,7 @@ void MainWindow::updateGuiLoaded()
     if (metadataOnly) {
         ui->actionSave_frame_as_PNG->setEnabled(false);
         ui->actionLine_scope->setEnabled(false);
+        ui->actionRGB_scope->setEnabled(false);
         ui->actionVectorscope->setEnabled(false);
         ui->actionField_timing_scope->setEnabled(false);
     }
@@ -2586,6 +2588,8 @@ QVector<QRect> MainWindow::getActiveVideoRects() const
         }
         break;
     }
+    case TbcSource::ViewMode::RGB_SCOPE_VIEW:
+        break;
     }
 
     return rects;
@@ -3280,10 +3284,16 @@ void MainWindow::setViewValues()
 {
     qint32 currentNumber, maximum;
     QString buttonLabel, spinLabel;
+    const bool rgbScopeView = tbcSource.getRgbScopeViewEnabled();
 
 	if (this->width() >= 930)
 	{
-		if (tbcSource.getFieldViewEnabled()) {
+		if (rgbScopeView) {
+			currentNumber = currentFrameNumber;
+			maximum = tbcSource.getNumberOfFrames();
+			spinLabel = QString("Frame #:");
+			buttonLabel = QString("RGB Scope");
+		} else if (tbcSource.getFieldViewEnabled()) {
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
@@ -3306,7 +3316,12 @@ void MainWindow::setViewValues()
 	}
 	else
 	{
-		if (tbcSource.getFieldViewEnabled()) {
+		if (rgbScopeView) {
+			currentNumber = currentFrameNumber;
+			maximum = tbcSource.getNumberOfFrames();
+			spinLabel = QString("Frame #:");
+			buttonLabel = QString("RGB");
+		} else if (tbcSource.getFieldViewEnabled()) {
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
@@ -4418,6 +4433,18 @@ void MainWindow::on_actionVectorscope_triggered()
     }
 }
 
+// Display RGB scope in the main viewer
+void MainWindow::on_actionRGB_scope_triggered()
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        return;
+    }
+
+    tbcSource.setViewMode(TbcSource::ViewMode::RGB_SCOPE_VIEW);
+    tbcSource.setStretchField(false);
+    setViewValues();
+    showImage();
+}
 // Display the field timing scope view
 void MainWindow::on_actionField_timing_scope_triggered()
 {
@@ -4527,6 +4554,10 @@ void MainWindow::on_actionSave_frame_as_PNG_triggered()
 
     case TbcSource::ViewMode::FIELD_VIEW:
         filenameStem += tr("field_");
+        break;
+
+    case TbcSource::ViewMode::RGB_SCOPE_VIEW:
+        filenameStem += tr("rgb_scope_");
         break;
     }
 
@@ -4728,7 +4759,8 @@ void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
         {QStringLiteral("frame"), TbcSource::ViewMode::FRAME_VIEW, false},
         {QStringLiteral("split"), TbcSource::ViewMode::SPLIT_VIEW, false},
         {QStringLiteral("field_1x"), TbcSource::ViewMode::FIELD_VIEW, false},
-        {QStringLiteral("field_2x"), TbcSource::ViewMode::FIELD_VIEW, true}
+        {QStringLiteral("field_2x"), TbcSource::ViewMode::FIELD_VIEW, true},
+        {QStringLiteral("rgb_scope"), TbcSource::ViewMode::RGB_SCOPE_VIEW, false}
     };
 
     int savedCount = 0;
@@ -5438,11 +5470,19 @@ void MainWindow::on_viewPushButton_clicked()
                 // Set field mode with 2:1 aspect
                 tbcSource.setStretchField(true);
             } else {
-                tbcDebugStream() << "Changing to FRAME_VIEW mode";
+                tbcDebugStream() << "Changing to RGB_SCOPE_VIEW mode";
 
-                // Set frame mode
-                tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
+                // Set RGB scope mode
+                tbcSource.setViewMode(TbcSource::ViewMode::RGB_SCOPE_VIEW);
+                tbcSource.setStretchField(false);
             }
+            break;
+
+        case TbcSource::ViewMode::RGB_SCOPE_VIEW:
+            tbcDebugStream() << "Changing to FRAME_VIEW mode";
+
+            // Set frame mode
+            tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
             break;
     }
 
@@ -6265,7 +6305,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 				ui->viewPushButton->setText(tr("Field 1:1"));
 			}
 		} else {
-			if (tbcSource.getSplitViewEnabled()) {
+			if (tbcSource.getRgbScopeViewEnabled()) {
+				ui->viewPushButton->setText(tr("RGB Scope"));
+			} else if (tbcSource.getSplitViewEnabled()) {
 				ui->viewPushButton->setText(tr("Split View"));
 			} else {
 				ui->viewPushButton->setText(tr("Frame View"));
@@ -6281,7 +6323,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 				ui->viewPushButton->setText(tr("Field 1:1"));
 			}
 		} else {
-			if (tbcSource.getSplitViewEnabled()) {
+			if (tbcSource.getRgbScopeViewEnabled()) {
+				ui->viewPushButton->setText(tr("RGB"));
+			} else if (tbcSource.getSplitViewEnabled()) {
 				ui->viewPushButton->setText(tr("Split"));
 			} else {
 				ui->viewPushButton->setText(tr("Frame"));

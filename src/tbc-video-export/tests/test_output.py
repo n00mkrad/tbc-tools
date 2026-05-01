@@ -210,8 +210,8 @@ class TestOutput:
             output_video_base=VideoBasePAL(
                 width=928,
                 height=576,
-                pixel_aspect_ratio="1.110",
-                display_aspect_ratio="1.789",
+                pixel_aspect_ratio="1.103",
+                display_aspect_ratio="1.778",
             ),
             output_video_color=VideoColorPAL(
                 bit_depth=10,
@@ -323,8 +323,8 @@ class TestOutput:
             output_video_base=VideoBasePAL(
                 width=928,
                 height=576,
-                pixel_aspect_ratio="1.110",
-                display_aspect_ratio="1.789",
+                pixel_aspect_ratio="1.103",
+                display_aspect_ratio="1.778",
             ),
             output_video_color=VideoColorPAL(
                 bit_depth=10,
@@ -435,8 +435,8 @@ class TestOutput:
             output_video_base=VideoBasePAL(
                 width=928,
                 height=576,
-                pixel_aspect_ratio="1.110",
-                display_aspect_ratio="1.789",
+                pixel_aspect_ratio="1.103",
+                display_aspect_ratio="1.778",
             ),
             output_video_color=VideoColorPAL(
                 bit_depth=10,
@@ -547,8 +547,8 @@ class TestOutput:
             output_video_base=VideoBaseNTSC(
                 width=760,
                 height=488,
-                pixel_aspect_ratio="1.136",
-                display_aspect_ratio="1.770",
+                pixel_aspect_ratio="1.142",
+                display_aspect_ratio="1.778",
             ),
             output_video_color=VideoColorNTSC(
                 bit_depth=10,
@@ -659,8 +659,8 @@ class TestOutput:
             output_video_base=VideoBaseNTSC(
                 width=760,
                 height=488,
-                pixel_aspect_ratio="1.136",
-                display_aspect_ratio="1.770",
+                pixel_aspect_ratio="1.142",
+                display_aspect_ratio="1.778",
             ),
             output_video_color=VideoColorNTSC(
                 bit_depth=10,
@@ -771,8 +771,8 @@ class TestOutput:
             output_video_base=VideoBaseNTSC(
                 width=760,
                 height=488,
-                pixel_aspect_ratio="1.136",
-                display_aspect_ratio="1.770",
+                pixel_aspect_ratio="1.142",
+                display_aspect_ratio="1.778",
             ),
             output_video_color=VideoColorNTSC(
                 bit_depth=10,
@@ -879,8 +879,8 @@ class TestOutput:
             output_video_base=VideoBasePALM(
                 width=760,
                 height=488,
-                pixel_aspect_ratio="1.136",
-                display_aspect_ratio="1.770",
+                pixel_aspect_ratio="1.142",
+                display_aspect_ratio="1.778",
             ),
             output_video_color=VideoColorPALM(
                 bit_depth=10,

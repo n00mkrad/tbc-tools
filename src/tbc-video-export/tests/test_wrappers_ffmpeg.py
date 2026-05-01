@@ -93,6 +93,22 @@ class TestWrappersFFmpeg:
             expected_str=["scale=720:486:flags=lanczos:interl=1,setsar=12/13"],
         ),
         WrapperTestCase(
+            id="standard output (pal, force anamorphic)",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=["--standard", "--force-anamorphic"],
+            expected_str=[
+                "scale=720:576:flags=lanczos:interl=1,setsar=128/117,setdar=16/9"
+            ],
+        ),
+        WrapperTestCase(
+            id="standard output (ntsc, force anamorphic)",
+            input_tbc=f"{get_path('ntsc_svideo')}.tbc",
+            input_opts=["--standard", "--force-anamorphic"],
+            expected_str=[
+                "scale=720:486:flags=lanczos:interl=1,setsar=12/13,setdar=16/9"
+            ],
+        ),
+        WrapperTestCase(
             id="full-frame h264 auto-pad (420)",
             input_tbc=f"{get_path('palm_svideo')}.tbc",
             input_opts=["--full-frame", "--h264"],
@@ -277,19 +293,19 @@ class TestWrappersFFmpeg:
             id="set widescreen (pal)",
             input_tbc=f"{get_path('pal_svideo')}.tbc",
             input_opts=["--force-anamorphic"],
-            expected_str=["setsar=865/779:max=1000"],
+            expected_str=["setdar=16/9"],
         ),
         WrapperTestCase(
             id="set widescreen (ntsc)",
             input_tbc=f"{get_path('ntsc_svideo')}.tbc",
             input_opts=["--force-anamorphic"],
-            expected_str=["setsar=25/22:max=1000"],
+            expected_str=["setdar=16/9"],
         ),
         WrapperTestCase(
             id="set widescreen (palm)",
             input_tbc=f"{get_path('palm_svideo')}.tbc",
             input_opts=["--force-anamorphic"],
-            expected_str=["setsar=25/22:max=1000"],
+            expected_str=["setdar=16/9"],
         ),
         WrapperTestCase(
             id="two-step luma input",

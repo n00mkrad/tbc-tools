@@ -276,9 +276,6 @@ class WrapperFFmpeg(Wrapper):
         video_filters.append(f"setfield={self._get_field_order()}")
         video_filters += _vf
 
-        if (arf := self._get_aspect_ratio_filter()) is not None:
-            video_filters.append(arf)
-
         # override profile colorlevels if set with opt
         if self._state.opts.force_black_level is not None:
             video_filters.append(
@@ -294,6 +291,10 @@ class WrapperFFmpeg(Wrapper):
             video_filters.append(self._state.opts.append_video_filter)
         if (chroma_alignment_filter := self._get_chroma_alignment_filter()) is not None:
             video_filters.append(chroma_alignment_filter)
+        if (aspect_ratio_filter := self._get_aspect_ratio_filter()) is not None:
+            # Keep DAR/SAR adjustments near the end so earlier scale/pad filters
+            # cannot override them.
+            video_filters.append(aspect_ratio_filter)
 
         video_filters.append(f"format={self._get_profile_video_format()}")
         video_filters.append(self._get_setparams_filter())
@@ -423,13 +424,10 @@ class WrapperFFmpeg(Wrapper):
 
     def _get_aspect_ratio_filter(self) -> str | None:
         """Return filter for aspect ratios."""
-        if self._state.is_widescreen:
-            ar = self._state.video_system_data.aspect_ratio["widescreen"]
-            return f"setsar={ar.horizontal}/{ar.vertical}:max=1000"
-
-        if self._state.opts.letterbox:
-            ar = self._state.video_system_data.aspect_ratio["letterbox"]
-            return f"setdar={ar.horizontal}/{ar.vertical}"
+        if self._state.is_widescreen or self._state.opts.letterbox:
+            # Explicitly target 16:9 DAR and let FFmpeg derive SAR for
+            # non-square-pixel outputs.
+            return "setdar=16/9"
 
         return None  # do not return default ar
 

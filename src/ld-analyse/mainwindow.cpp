@@ -440,12 +440,12 @@ QString resolveMetadataFilenameForSource(const QString &sourceFilename,
     };
 
     const auto appendCandidatesForFile = [&appendMetadataCandidate](const QFileInfo &info) {
-        appendMetadataCandidate(info.filePath() + QStringLiteral(".db"));
         appendMetadataCandidate(info.filePath() + QStringLiteral(".json"));
+        appendMetadataCandidate(info.filePath() + QStringLiteral(".db"));
 
         const QString basePath = QDir(info.absolutePath()).filePath(info.completeBaseName());
-        appendMetadataCandidate(basePath + QStringLiteral(".db"));
         appendMetadataCandidate(basePath + QStringLiteral(".json"));
+        appendMetadataCandidate(basePath + QStringLiteral(".db"));
 
         const QString suffix = info.suffix().toLower();
         if (suffix == QStringLiteral("ytbc")
@@ -453,9 +453,9 @@ QString resolveMetadataFilenameForSource(const QString &sourceFilename,
             || suffix == QStringLiteral("tbcy")
             || suffix == QStringLiteral("tbcc")) {
             appendMetadataCandidate(QDir(info.absolutePath())
-                                        .filePath(info.completeBaseName() + QStringLiteral(".tbc.db")));
-            appendMetadataCandidate(QDir(info.absolutePath())
                                         .filePath(info.completeBaseName() + QStringLiteral(".tbc.json")));
+            appendMetadataCandidate(QDir(info.absolutePath())
+                                        .filePath(info.completeBaseName() + QStringLiteral(".tbc.db")));
         }
     };
 
@@ -3036,10 +3036,10 @@ void MainWindow::loadTbcFile(QString inputFileName, bool forceMetadataOnly, bool
         }
 
         QString metadataCandidate;
-        if (QFileInfo::exists(dbCandidate)) {
-            metadataCandidate = dbCandidate;
-        } else if (QFileInfo::exists(jsonCandidate)) {
+        if (QFileInfo::exists(jsonCandidate)) {
             metadataCandidate = jsonCandidate;
+        } else if (QFileInfo::exists(dbCandidate)) {
+            metadataCandidate = dbCandidate;
         }
 
         if (metadataCandidate.isEmpty()) {

@@ -42,6 +42,10 @@ public:
     QRect customAreaRect() const;
     void setCustomAreaModeSelected(bool selected);
     void setCustomAreaRect(const QRect &areaRect);
+    bool setAdvancedRenderModeSelected(bool selected);
+    bool isAdvancedRenderModeSelected() const;
+    bool setFullAreaModeSelected(bool selected);
+    bool isFullAreaModeSelected() const;
 
 protected:
     void resizeEvent(QResizeEvent *event) override;

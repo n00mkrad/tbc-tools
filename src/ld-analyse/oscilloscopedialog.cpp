@@ -73,6 +73,27 @@ OscilloscopeDialog::~OscilloscopeDialog()
     delete ui;
 }
 
+bool OscilloscopeDialog::setAdvancedTabSelected(bool selected)
+{
+    if (!scopeTabWidget || !scopeOriginalTab || !scopeAdvancedTab) {
+        return false;
+    }
+
+    QWidget *targetTab = selected ? scopeAdvancedTab : scopeOriginalTab;
+    if (scopeTabWidget->currentWidget() != targetTab) {
+        scopeTabWidget->setCurrentWidget(targetTab);
+    }
+    return scopeTabWidget->currentWidget() == targetTab;
+}
+
+bool OscilloscopeDialog::isAdvancedTabSelected() const
+{
+    if (!scopeTabWidget || !scopeAdvancedTab) {
+        return false;
+    }
+    return scopeTabWidget->currentWidget() == scopeAdvancedTab;
+}
+
 void OscilloscopeDialog::setupAdvancedScopeTab()
 {
     if (!ui || !ui->horizontalLayout || !ui->scopeLabel) {

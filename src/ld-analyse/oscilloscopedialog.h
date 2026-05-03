@@ -36,6 +36,8 @@ public:
     ~OscilloscopeDialog();
 
     void showTraceImage(TbcSource::ScanLineData scanLineData, qint32 xCoord, qint32 yCoord, qint32 frameWidth, qint32 frameHeight, bool bothSources);
+    bool setAdvancedTabSelected(bool selected);
+    bool isAdvancedTabSelected() const;
 
 signals:
     void scopeCoordsChanged(qint32 xCoord, qint32 yCoord);

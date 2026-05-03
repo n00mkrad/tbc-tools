@@ -412,6 +412,53 @@ void VectorscopeDialog::setCustomAreaRect(const QRect &areaRect)
     }
 }
 
+bool VectorscopeDialog::setAdvancedRenderModeSelected(bool selected)
+{
+    if (!renderModePointsRadioButton || !renderModeDensityRadioButton) {
+        return false;
+    }
+
+    QRadioButton *targetButton = selected ? renderModeDensityRadioButton : renderModePointsRadioButton;
+    if (!targetButton->isChecked()) {
+        targetButton->setChecked(true);
+    }
+    return targetButton->isChecked();
+}
+
+bool VectorscopeDialog::isAdvancedRenderModeSelected() const
+{
+    if (!renderModeDensityRadioButton) {
+        return false;
+    }
+    return renderModeDensityRadioButton->isChecked();
+}
+
+bool VectorscopeDialog::setFullAreaModeSelected(bool selected)
+{
+    if (!areaModeActiveRadioButton || !areaModeFullRadioButton) {
+        return false;
+    }
+
+    QRadioButton *targetButton = selected ? areaModeFullRadioButton : areaModeActiveRadioButton;
+    const bool wasChecked = targetButton->isChecked();
+    if (!wasChecked) {
+        targetButton->setChecked(true);
+    }
+    applyAreaPreset();
+    if (!wasChecked && targetButton->isChecked()) {
+        emit scopeChanged();
+    }
+    return targetButton->isChecked();
+}
+
+bool VectorscopeDialog::isFullAreaModeSelected() const
+{
+    if (!areaModeFullRadioButton) {
+        return false;
+    }
+    return areaModeFullRadioButton->isChecked();
+}
+
 QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters)
 {
     // Scope size and scale

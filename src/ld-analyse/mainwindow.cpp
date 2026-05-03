@@ -59,6 +59,8 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QPushButton>
+#include <QCheckBox>
+#include <QRadioButton>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrent>
 #include <optional>
@@ -1310,7 +1312,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
 
     // Connect to the scan line changed signal from the oscilloscope dialogue
     connect(oscilloscopeDialog, &OscilloscopeDialog::scopeCoordsChanged, this, &MainWindow::scopeCoordsChangedSignalHandler);
-    lastScopeLine = 1;
+    lastScopeLine = 350;
     lastScopeDot = 1;
 
     // Make shift-clicking on the oscilloscope change the black/white level
@@ -1355,7 +1357,9 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
 
     vbiDialog->restoreGeometry(configuration.getVbiDialogGeometry());
     oscilloscopeDialog->restoreGeometry(configuration.getOscilloscopeDialogGeometry());
-    vectorscopeDialog->restoreGeometry(configuration.getVectorscopeDialogGeometry());
+    if (!vectorscopeDialog->restoreGeometry(configuration.getVectorscopeDialogGeometry())) {
+        vectorscopeDialog->resize(900, 730);
+    }
     dropoutAnalysisDialog->restoreGeometry(configuration.getDropoutAnalysisDialogGeometry());
     visibleDropoutAnalysisDialog->restoreGeometry(configuration.getVisibleDropoutAnalysisDialogGeometry());
     blackSnrAnalysisDialog->restoreGeometry(configuration.getBlackSnrAnalysisDialogGeometry());
@@ -4904,6 +4908,40 @@ void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
         return;
     }
 
+    QMessageBox exportModeDialog(this);
+    exportModeDialog.setIcon(QMessageBox::Question);
+    exportModeDialog.setWindowTitle(tr("Save all mode views as PNGs"));
+    exportModeDialog.setText(tr("Choose what to export:"));
+    QAbstractButton *everythingButton = exportModeDialog.addButton(tr("Everything"), QMessageBox::AcceptRole);
+    QAbstractButton *imageButton = exportModeDialog.addButton(tr("Image"), QMessageBox::ActionRole);
+    QAbstractButton *scopesButton = exportModeDialog.addButton(tr("Scopes"), QMessageBox::ActionRole);
+    QAbstractButton *snrGraphsButton = exportModeDialog.addButton(tr("SNR Graphs"), QMessageBox::ActionRole);
+    if (QPushButton *defaultButton = qobject_cast<QPushButton *>(everythingButton)) {
+        exportModeDialog.setDefaultButton(defaultButton);
+    }
+    exportModeDialog.exec();
+
+    const QAbstractButton *selectedExportModeButton = exportModeDialog.clickedButton();
+    if (!selectedExportModeButton) {
+        return;
+    }
+
+    const bool exportImages =
+        (selectedExportModeButton == everythingButton || selectedExportModeButton == imageButton);
+    const bool exportScopes =
+        (selectedExportModeButton == everythingButton || selectedExportModeButton == scopesButton);
+    const bool exportSnrGraphs =
+        (selectedExportModeButton == everythingButton || selectedExportModeButton == snrGraphsButton);
+
+    QString exportSelectionToken = QStringLiteral("all_modes");
+    if (selectedExportModeButton == imageButton) {
+        exportSelectionToken = QStringLiteral("image");
+    } else if (selectedExportModeButton == scopesButton) {
+        exportSelectionToken = QStringLiteral("scopes");
+    } else if (selectedExportModeButton == snrGraphsButton) {
+        exportSelectionToken = QStringLiteral("snr_graphs");
+    }
+
     const QString outputRoot = outputRootDirectoryForCurrentSource();
     if (outputRoot.isEmpty()) {
         QMessageBox::warning(this, tr("Warning"), tr("Could not determine output directory."));
@@ -4914,8 +4952,8 @@ void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
     const QString frameToken = tbcSource.getFieldViewEnabled()
                                    ? QStringLiteral("field_%1").arg(currentFieldNumber, 6, 10, QChar('0'))
                                    : QStringLiteral("frame_%1").arg(currentFrameNumber, 6, 10, QChar('0'));
-    const QString outputFolderName = QStringLiteral("%1_%2_all_modes_pngs")
-                                         .arg(baseName, frameToken);
+    const QString outputFolderName = QStringLiteral("%1_%2_%3_pngs")
+                                         .arg(baseName, frameToken, exportSelectionToken);
     const QString outputFolderPath = QDir(outputRoot).filePath(outputFolderName);
     if (!QDir().mkpath(outputFolderPath)) {
         QMessageBox::warning(this, tr("Warning"),
@@ -4994,13 +5032,16 @@ void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
         TbcSource::ViewMode viewMode;
         bool stretchField;
     };
-    const QVector<ViewModeSnapshot> viewModes = {
-        {QStringLiteral("frame"), TbcSource::ViewMode::FRAME_VIEW, false},
-        {QStringLiteral("split"), TbcSource::ViewMode::SPLIT_VIEW, false},
-        {QStringLiteral("field_1x"), TbcSource::ViewMode::FIELD_VIEW, false},
-        {QStringLiteral("field_2x"), TbcSource::ViewMode::FIELD_VIEW, true},
-        {QStringLiteral("rgb_scope"), TbcSource::ViewMode::RGB_SCOPE_VIEW, false}
-    };
+    QVector<ViewModeSnapshot> viewModes;
+    if (exportImages) {
+        viewModes.append({QStringLiteral("frame"), TbcSource::ViewMode::FRAME_VIEW, false});
+        viewModes.append({QStringLiteral("split"), TbcSource::ViewMode::SPLIT_VIEW, false});
+        viewModes.append({QStringLiteral("field_1x"), TbcSource::ViewMode::FIELD_VIEW, false});
+        viewModes.append({QStringLiteral("field_2x"), TbcSource::ViewMode::FIELD_VIEW, true});
+    }
+    if (exportScopes) {
+        viewModes.append({QStringLiteral("rgb_scope"), TbcSource::ViewMode::RGB_SCOPE_VIEW, false});
+    }
 
     int savedCount = 0;
     QStringList failedFiles;
@@ -5010,47 +5051,49 @@ void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
                                            ? QStringLiteral("palm")
                                            : QStringLiteral("ntsc"));
 
-    for (const SourceModeSnapshot &sourceModeSnapshot : sourceModes) {
-        tbcSource.setSourceMode(sourceModeSnapshot.sourceMode);
+    if (!viewModes.isEmpty()) {
+        for (const SourceModeSnapshot &sourceModeSnapshot : sourceModes) {
+            tbcSource.setSourceMode(sourceModeSnapshot.sourceMode);
 
-        for (const VideoModeSnapshot &videoModeSnapshot : videoModes) {
-            if (videoModeSnapshot.chromaEnabled) {
-                tbcSource.setChromaDecodeMode(videoModeSnapshot.chromaMode);
-                tbcSource.setChromaDecoder(true);
-            } else {
-                tbcSource.setChromaDecoder(false);
-            }
-
-            for (const ViewModeSnapshot &viewModeSnapshot : viewModes) {
-                tbcSource.setViewMode(viewModeSnapshot.viewMode);
-                tbcSource.setStretchField(viewModeSnapshot.stretchField);
-
-                if (viewModeSnapshot.viewMode == TbcSource::ViewMode::FIELD_VIEW) {
-                    setCurrentField(originalFieldNumber);
+            for (const VideoModeSnapshot &videoModeSnapshot : videoModes) {
+                if (videoModeSnapshot.chromaEnabled) {
+                    tbcSource.setChromaDecodeMode(videoModeSnapshot.chromaMode);
+                    tbcSource.setChromaDecoder(true);
                 } else {
-                    setCurrentFrame(originalFrameNumber);
+                    tbcSource.setChromaDecoder(false);
                 }
 
-                updateVideoPushButton();
-                updateSourcesPushButton();
-                updateAspectPushButton();
-                setViewValues();
-                showImage();
+                for (const ViewModeSnapshot &viewModeSnapshot : viewModes) {
+                    tbcSource.setViewMode(viewModeSnapshot.viewMode);
+                    tbcSource.setStretchField(viewModeSnapshot.stretchField);
 
-                const QImage imageToSave = renderedCurrentImageForExport();
-                const QString outputStem = QStringLiteral("%1_%2_%3_%4_%5")
-                                               .arg(baseName,
-                                                    systemToken,
-                                                    videoModeSnapshot.token,
-                                                    sourceModeSnapshot.token,
-                                                    viewModeSnapshot.token);
-                const QString outputFilePath = QDir(outputFolderPath)
-                                                   .filePath(sanitizedFileToken(outputStem) + QStringLiteral(".png"));
+                    if (viewModeSnapshot.viewMode == TbcSource::ViewMode::FIELD_VIEW) {
+                        setCurrentField(originalFieldNumber);
+                    } else {
+                        setCurrentFrame(originalFrameNumber);
+                    }
 
-                if (imageToSave.isNull() || !imageToSave.save(outputFilePath)) {
-                    failedFiles << outputFilePath;
-                } else {
-                    savedCount++;
+                    updateVideoPushButton();
+                    updateSourcesPushButton();
+                    updateAspectPushButton();
+                    setViewValues();
+                    showImage();
+
+                    const QImage imageToSave = renderedCurrentImageForExport();
+                    const QString outputStem = QStringLiteral("%1_%2_%3_%4_%5")
+                                                   .arg(baseName,
+                                                        systemToken,
+                                                        videoModeSnapshot.token,
+                                                        sourceModeSnapshot.token,
+                                                        viewModeSnapshot.token);
+                    const QString outputFilePath = QDir(outputFolderPath)
+                                                       .filePath(sanitizedFileToken(outputStem) + QStringLiteral(".png"));
+
+                    if (imageToSave.isNull() || !imageToSave.save(outputFilePath)) {
+                        failedFiles << outputFilePath;
+                    } else {
+                        savedCount++;
+                    }
                 }
             }
         }
@@ -5058,6 +5101,286 @@ void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
 
     restoreState();
 
+    auto saveDialogSnapshot = [&](QDialog *dialog, const QString &token) {
+        if (!dialog) {
+            return;
+        }
+
+        dialog->update();
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        QPixmap snapshot = dialog->grab();
+        if (snapshot.isNull()) {
+            const bool wasVisible = dialog->isVisible();
+            if (!wasVisible) {
+                dialog->show();
+                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            }
+            snapshot = dialog->grab();
+            if (!wasVisible) {
+                dialog->hide();
+            }
+        }
+
+        const QString outputStem = QStringLiteral("%1_%2_%3")
+                                       .arg(baseName, systemToken, token);
+        const QString outputFilePath = QDir(outputFolderPath)
+                                           .filePath(sanitizedFileToken(outputStem) + QStringLiteral(".png"));
+        if (snapshot.isNull() || !snapshot.save(outputFilePath)) {
+            failedFiles << outputFilePath;
+        } else {
+            savedCount++;
+        }
+    };
+
+    if (exportScopes || exportSnrGraphs) {
+        const bool resumePlayback = playbackRunning;
+        setPlaybackRunning(false);
+
+        if (exportScopes) {
+            tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
+            tbcSource.setStretchField(false);
+            setCurrentFrame(originalFrameNumber);
+            setViewValues();
+            showImage();
+            const bool originalOscilloscopeAdvancedTab = oscilloscopeDialog->isAdvancedTabSelected();
+            QCheckBox *lineYcCheckBox = oscilloscopeDialog->findChild<QCheckBox *>(QStringLiteral("YCcheckBox"));
+            QCheckBox *lineYCheckBox = oscilloscopeDialog->findChild<QCheckBox *>(QStringLiteral("YcheckBox"));
+            QCheckBox *lineCCheckBox = oscilloscopeDialog->findChild<QCheckBox *>(QStringLiteral("CcheckBox"));
+            QCheckBox *lineDropoutsCheckBox = oscilloscopeDialog->findChild<QCheckBox *>(QStringLiteral("dropoutsCheckBox"));
+
+            const bool originalLineYcChecked = lineYcCheckBox ? lineYcCheckBox->isChecked() : false;
+            const bool originalLineYChecked = lineYCheckBox ? lineYCheckBox->isChecked() : false;
+            const bool originalLineCChecked = lineCCheckBox ? lineCCheckBox->isChecked() : false;
+            const bool originalLineDropoutsChecked =
+                lineDropoutsCheckBox ? lineDropoutsCheckBox->isChecked() : false;
+
+            const auto setButtonCheckedWithoutSignals = [](QAbstractButton *button, bool checked) {
+                if (!button) {
+                    return;
+                }
+                const QSignalBlocker blocker(button);
+                button->setChecked(checked);
+            };
+
+            struct LineScopePreset {
+                QString token;
+                bool advanced;
+                bool yc;
+                bool y;
+                bool c;
+                bool dropouts;
+            };
+            const QVector<LineScopePreset> lineScopePresets = {
+                {QStringLiteral("line_scope_basic_yc"), false, true, false, false, true},
+                {QStringLiteral("line_scope_basic_y"), false, false, true, false, true},
+                {QStringLiteral("line_scope_basic_c"), false, false, false, true, true},
+                {QStringLiteral("line_scope_basic_yc_y_c"), false, true, true, true, true},
+                {QStringLiteral("line_scope_basic_yc_no_dropouts"), false, true, false, false, false},
+                {QStringLiteral("line_scope_advanced_yc"), true, true, false, false, true},
+                {QStringLiteral("line_scope_advanced_y"), true, false, true, false, true},
+                {QStringLiteral("line_scope_advanced_c"), true, false, false, true, true},
+                {QStringLiteral("line_scope_advanced_yc_y_c"), true, true, true, true, true}
+            };
+            for (const LineScopePreset &lineScopePreset : lineScopePresets) {
+                setButtonCheckedWithoutSignals(lineYcCheckBox, lineScopePreset.yc);
+                setButtonCheckedWithoutSignals(lineYCheckBox, lineScopePreset.y);
+                setButtonCheckedWithoutSignals(lineCCheckBox, lineScopePreset.c);
+                setButtonCheckedWithoutSignals(lineDropoutsCheckBox, lineScopePreset.dropouts);
+                if (lineYcCheckBox && lineYCheckBox && lineCCheckBox
+                    && !lineYcCheckBox->isChecked() && !lineYCheckBox->isChecked() && !lineCCheckBox->isChecked()) {
+                    setButtonCheckedWithoutSignals(lineYcCheckBox, true);
+                }
+                if (!oscilloscopeDialog->setAdvancedTabSelected(lineScopePreset.advanced)) {
+                    continue;
+                }
+                updateOscilloscopeDialogue();
+                saveDialogSnapshot(oscilloscopeDialog, lineScopePreset.token);
+            }
+
+            setButtonCheckedWithoutSignals(lineYcCheckBox, originalLineYcChecked);
+            setButtonCheckedWithoutSignals(lineYCheckBox, originalLineYChecked);
+            setButtonCheckedWithoutSignals(lineCCheckBox, originalLineCChecked);
+            setButtonCheckedWithoutSignals(lineDropoutsCheckBox, originalLineDropoutsChecked);
+            oscilloscopeDialog->setAdvancedTabSelected(originalOscilloscopeAdvancedTab);
+            updateOscilloscopeDialogue();
+
+            const bool originalVectorscopeAdvancedMode = vectorscopeDialog->isAdvancedRenderModeSelected();
+            const bool originalVectorscopeFullAreaMode = vectorscopeDialog->isFullAreaModeSelected();
+            const bool originalVectorscopeCustomAreaMode = vectorscopeDialog->isCustomAreaModeSelected();
+            const QRect originalVectorscopeCustomAreaRect = vectorscopeDialog->customAreaRect();
+            QRadioButton *fieldSelectAllRadioButton =
+                vectorscopeDialog->findChild<QRadioButton *>(QStringLiteral("fieldSelectAllRadioButton"));
+            QRadioButton *fieldSelectFirstRadioButton =
+                vectorscopeDialog->findChild<QRadioButton *>(QStringLiteral("fieldSelectFirstRadioButton"));
+            QRadioButton *fieldSelectSecondRadioButton =
+                vectorscopeDialog->findChild<QRadioButton *>(QStringLiteral("fieldSelectSecondRadioButton"));
+            QRadioButton *graticuleNoneRadioButton =
+                vectorscopeDialog->findChild<QRadioButton *>(QStringLiteral("graticuleNoneRadioButton"));
+            QRadioButton *graticule75RadioButton =
+                vectorscopeDialog->findChild<QRadioButton *>(QStringLiteral("graticule75RadioButton"));
+            QRadioButton *graticule100RadioButton =
+                vectorscopeDialog->findChild<QRadioButton *>(QStringLiteral("graticule100RadioButton"));
+            QCheckBox *vectorscopeDefocusCheckBox =
+                vectorscopeDialog->findChild<QCheckBox *>(QStringLiteral("defocusCheckBox"));
+            QCheckBox *vectorscopeBlendColorsCheckBox =
+                vectorscopeDialog->findChild<QCheckBox *>(QStringLiteral("blendColorCheckBox"));
+
+            const bool originalFieldAllChecked =
+                fieldSelectAllRadioButton ? fieldSelectAllRadioButton->isChecked() : false;
+            const bool originalFieldFirstChecked =
+                fieldSelectFirstRadioButton ? fieldSelectFirstRadioButton->isChecked() : false;
+            const bool originalFieldSecondChecked =
+                fieldSelectSecondRadioButton ? fieldSelectSecondRadioButton->isChecked() : false;
+            const bool originalGraticuleNoneChecked =
+                graticuleNoneRadioButton ? graticuleNoneRadioButton->isChecked() : false;
+            const bool originalGraticule75Checked =
+                graticule75RadioButton ? graticule75RadioButton->isChecked() : false;
+            const bool originalGraticule100Checked =
+                graticule100RadioButton ? graticule100RadioButton->isChecked() : false;
+            const bool originalVectorscopeDefocusChecked =
+                vectorscopeDefocusCheckBox ? vectorscopeDefocusCheckBox->isChecked() : false;
+            const bool originalVectorscopeBlendChecked =
+                vectorscopeBlendColorsCheckBox ? vectorscopeBlendColorsCheckBox->isChecked() : false;
+
+            struct RadioModePreset {
+                QString token;
+                QRadioButton *radioButton;
+            };
+            QVector<RadioModePreset> fieldPresets;
+            if (fieldSelectAllRadioButton) {
+                fieldPresets.append({QStringLiteral("all"), fieldSelectAllRadioButton});
+            }
+            if (fieldSelectFirstRadioButton) {
+                fieldPresets.append({QStringLiteral("field_1"), fieldSelectFirstRadioButton});
+            }
+            if (fieldSelectSecondRadioButton) {
+                fieldPresets.append({QStringLiteral("field_2"), fieldSelectSecondRadioButton});
+            }
+            if (fieldPresets.isEmpty()) {
+                fieldPresets.append({QStringLiteral("current"), nullptr});
+            }
+
+            QVector<RadioModePreset> graticulePresets;
+            if (graticuleNoneRadioButton) {
+                graticulePresets.append({QStringLiteral("none"), graticuleNoneRadioButton});
+            }
+            if (graticule75RadioButton) {
+                graticulePresets.append({QStringLiteral("75"), graticule75RadioButton});
+            }
+            if (graticule100RadioButton) {
+                graticulePresets.append({QStringLiteral("100"), graticule100RadioButton});
+            }
+            if (graticulePresets.isEmpty()) {
+                graticulePresets.append({QStringLiteral("current"), nullptr});
+            }
+
+            struct RenderModePreset {
+                QString token;
+                bool advanced;
+            };
+            QVector<RenderModePreset> renderModePresets;
+            renderModePresets.append({QStringLiteral("point_plot"), false});
+            const bool supportsDensityRenderMode = vectorscopeDialog->setAdvancedRenderModeSelected(true);
+            vectorscopeDialog->setAdvancedRenderModeSelected(false);
+            if (supportsDensityRenderMode) {
+                renderModePresets.append({QStringLiteral("density_plot"), true});
+            }
+
+            setButtonCheckedWithoutSignals(vectorscopeDefocusCheckBox, false);
+            setButtonCheckedWithoutSignals(vectorscopeBlendColorsCheckBox, false);
+            vectorscopeDialog->setFullAreaModeSelected(false);
+            vectorscopeDialog->setCustomAreaModeSelected(false);
+            for (const RadioModePreset &fieldPreset : fieldPresets) {
+                setButtonCheckedWithoutSignals(fieldPreset.radioButton, true);
+                for (const RadioModePreset &graticulePreset : graticulePresets) {
+                    setButtonCheckedWithoutSignals(graticulePreset.radioButton, true);
+                    for (const RenderModePreset &renderModePreset : renderModePresets) {
+                        if (renderModePreset.advanced
+                            && !vectorscopeDialog->setAdvancedRenderModeSelected(true)) {
+                            continue;
+                        }
+                        if (!renderModePreset.advanced) {
+                            vectorscopeDialog->setAdvancedRenderModeSelected(false);
+                        }
+                        updateVectorscopeDialogue();
+                        saveDialogSnapshot(vectorscopeDialog,
+                                           QStringLiteral("vectorscope_field_%1_graticule_%2_%3")
+                                               .arg(fieldPreset.token,
+                                                    graticulePreset.token,
+                                                    renderModePreset.token));
+                    }
+                }
+            }
+
+            setButtonCheckedWithoutSignals(fieldSelectAllRadioButton, true);
+            setButtonCheckedWithoutSignals(graticule75RadioButton, true);
+            vectorscopeDialog->setAdvancedRenderModeSelected(false);
+            vectorscopeDialog->setFullAreaModeSelected(false);
+            vectorscopeDialog->setCustomAreaModeSelected(false);
+
+            if (vectorscopeDialog->setFullAreaModeSelected(true)) {
+                updateVectorscopeDialogue();
+                saveDialogSnapshot(vectorscopeDialog, QStringLiteral("vectorscope_scope_area_full_frame"));
+                vectorscopeDialog->setFullAreaModeSelected(false);
+            }
+            if (originalVectorscopeCustomAreaMode) {
+                if (originalVectorscopeCustomAreaRect.isValid()) {
+                    vectorscopeDialog->setCustomAreaRect(originalVectorscopeCustomAreaRect);
+                }
+                vectorscopeDialog->setCustomAreaModeSelected(true);
+                updateVectorscopeDialogue();
+                saveDialogSnapshot(vectorscopeDialog, QStringLiteral("vectorscope_scope_area_custom"));
+                vectorscopeDialog->setCustomAreaModeSelected(false);
+            }
+            if (vectorscopeDefocusCheckBox) {
+                setButtonCheckedWithoutSignals(vectorscopeDefocusCheckBox, true);
+                updateVectorscopeDialogue();
+                saveDialogSnapshot(vectorscopeDialog, QStringLiteral("vectorscope_defocus"));
+                setButtonCheckedWithoutSignals(vectorscopeDefocusCheckBox, false);
+            }
+            if (vectorscopeBlendColorsCheckBox) {
+                setButtonCheckedWithoutSignals(vectorscopeBlendColorsCheckBox, true);
+                updateVectorscopeDialogue();
+                saveDialogSnapshot(vectorscopeDialog, QStringLiteral("vectorscope_blend_colors"));
+                setButtonCheckedWithoutSignals(vectorscopeBlendColorsCheckBox, false);
+            }
+
+            setButtonCheckedWithoutSignals(fieldSelectAllRadioButton, originalFieldAllChecked);
+            setButtonCheckedWithoutSignals(fieldSelectFirstRadioButton, originalFieldFirstChecked);
+            setButtonCheckedWithoutSignals(fieldSelectSecondRadioButton, originalFieldSecondChecked);
+            setButtonCheckedWithoutSignals(graticuleNoneRadioButton, originalGraticuleNoneChecked);
+            setButtonCheckedWithoutSignals(graticule75RadioButton, originalGraticule75Checked);
+            setButtonCheckedWithoutSignals(graticule100RadioButton, originalGraticule100Checked);
+            setButtonCheckedWithoutSignals(vectorscopeDefocusCheckBox, originalVectorscopeDefocusChecked);
+            setButtonCheckedWithoutSignals(vectorscopeBlendColorsCheckBox, originalVectorscopeBlendChecked);
+            vectorscopeDialog->setAdvancedRenderModeSelected(originalVectorscopeAdvancedMode);
+            if (originalVectorscopeCustomAreaRect.isValid()) {
+                vectorscopeDialog->setCustomAreaRect(originalVectorscopeCustomAreaRect);
+            }
+            if (originalVectorscopeCustomAreaMode) {
+                vectorscopeDialog->setCustomAreaModeSelected(true);
+            } else {
+                vectorscopeDialog->setFullAreaModeSelected(originalVectorscopeFullAreaMode);
+            }
+            updateVectorscopeDialogue();
+
+            updateRgbScopeDialogue(true);
+            updateFieldTimingDialogue();
+            saveDialogSnapshot(rgbScopeDialog, QStringLiteral("rgb_scope_window"));
+            saveDialogSnapshot(fieldTimingDialog, QStringLiteral("field_timing_scope"));
+        }
+
+        if (exportSnrGraphs) {
+            blackSnrAnalysisDialog->updateFrameMarker(currentFrameNumber);
+            whiteSnrAnalysisDialog->updateFrameMarker(currentFrameNumber);
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
+            saveDialogSnapshot(blackSnrAnalysisDialog, QStringLiteral("black_snr_graph"));
+            saveDialogSnapshot(whiteSnrAnalysisDialog, QStringLiteral("white_snr_graph"));
+        }
+
+        setPlaybackRunning(resumePlayback);
+    }
     configuration.setPngDirectory(outputFolderPath);
     configuration.writeConfiguration();
 

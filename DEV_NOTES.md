@@ -158,3 +158,73 @@ The `Tools -> Export Decode Metadata` action in `ld-analyse` must behave as an i
 ### Validation
 - Build verification passed for `ld-analyse` and `tbc-export-metadata`.
 - User confirmed real-world GUI behavior is fixed.
+
+## HARD DEV NOTE - TBC-VIDEO-EXPORT PIXEL FORMAT + PADDING COMPATIBILITY (2026-05-04)
+
+This section records the verified behavior for FFmpeg format selection, scaling, and codec-compatibility padding in `tbc-video-export`.
+
+### Verified source of truth
+- `src/tbc-video-export/src/tbc_video_export/process/wrapper/wrapper_ffmpeg.py`
+- `src/tbc-video-export/src/tbc_video_export/opts/opt_validators.py`
+- `src/tbc-video-export/src/tbc_video_export/common/enums.py`
+- `src/tbc-video-export/tests/test_wrappers_ffmpeg.py`
+
+### Pixel format resolution (`_get_profile_video_format`)
+Resolution happens in this order:
+1. Start from selected profile `video_format`.
+2. If export is luma-focused (`LUMA`, `LUMA_4FSC`, `LUMA_EXTRACTED`) or two-step luma pass, force a GRAY format (`gray8` or `gray16le`) based on effective bitdepth.
+3. If `--8bit/--10bit/--16bit` is provided, attempt format-family-preserving bitdepth remap via `VideoFormatType.get_new_format(...)`.
+4. If explicit format alias is provided (`--yuv420/--yuv422/--yuv444/--gray`) and bitdepth is set, use that explicit family+bitdepth combination (except in two-step luma mode).
+
+Validation rule:
+- Setting a format alias without bitdepth is rejected (`--yuv420` etc. requires `--8bit/--10bit/--16bit`).
+
+### Standard scaling behavior
+- `--standard/--d1` injects:
+  - PAL: `scale=720:576:flags=lanczos:interl=1,setsar=128/117`
+  - NTSC/PAL-M: `scale=720:486:flags=lanczos:interl=1,setsar=12/13`
+- This is only valid with default active-area framing.
+- Validator rejects `--standard` with `--vbi`, `--full-vertical`, `--letterbox`, `--full-frame`, active-line overrides, and `--luma-4fsc`.
+
+### Codec-specific compatibility padding (`_get_chroma_alignment_filter`)
+Compatibility padding is only auto-added for:
+- H.264 family: `libx264`, `h264_*`
+- H.265/HEVC family: `libx265`, `hevc_*`
+- AV1 software encoders: `libsvtav1`, `libaom-av1`
+
+Padding behavior is centered:
+- Horizontal: `(ow-iw)/2`
+- Vertical: `(oh-ih)/2`
+
+Rules by pixel format:
+- For `yuv420*`:
+  - H.264 family: `pad=ceil(iw/2)*2:ceil(ih/4)*4:...` (height multiple-of-4 path)
+  - others above: `pad=ceil(iw/2)*2:ceil(ih/2)*2:...`
+- For `yuv422*`:
+  - implementation currently pads to even width and even height:
+    `pad=ceil(iw/2)*2:ceil(ih/2)*2:...`
+
+Note:
+- The `yuv422` comment says “needs even width”, but implementation also enforces even height. Treat implementation as authoritative unless intentionally changed.
+
+### Filter ordering guarantees
+Video filter order is:
+1. `setfield=...`
+2. profile filters
+3. optional black-level override
+4. optional standard scale/SAR
+5. optional appended video filter
+6. codec-compat pad (if any)
+7. DAR adjustment (`setdar=16/9`) when required
+8. `format=...`
+9. `setparams=...`
+10. optional `hwupload` for VAAPI
+
+This ordering keeps DAR near the end so earlier scale/pad filters do not overwrite it.
+
+### Verification run (2026-05-04)
+Focused test cases were executed and passed for:
+- standard scaling (`pal`, `ntsc`, `pal-m` alias)
+- anamorphic+standard behavior
+- full-frame codec auto-pad (`h264 420`, `h264_lossless 422`) and ffv1 no-auto-pad case
+- bitdepth + format alias mappings (`yuv420/422/444`, `gray`, luma-only gray paths)

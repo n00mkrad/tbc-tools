@@ -50,6 +50,27 @@ class SnippetHelperTests(unittest.TestCase):
 
             self.assertEqual(errors, [])
 
+    def test_check_not_contains_reports_forbidden_snippet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            fixture = Path(tmp_dir) / "fixture.txt"
+            fixture.write_text("alpha forbidden beta", encoding="utf-8")
+            errors: list[str] = []
+
+            check_ci_contracts.check_not_contains(fixture, "forbidden", errors)
+
+            self.assertEqual(len(errors), 1)
+            self.assertIn("forbidden snippet present", errors[0])
+
+    def test_check_not_contains_ignores_absent_snippet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            fixture = Path(tmp_dir) / "fixture.txt"
+            fixture.write_text("alpha beta gamma", encoding="utf-8")
+            errors: list[str] = []
+
+            check_ci_contracts.check_not_contains(fixture, "forbidden", errors)
+
+            self.assertEqual(errors, [])
+
 
 class ContractCoverageTests(unittest.TestCase):
     def test_windows_contract_covers_packaging_trigger_and_launch_check(self) -> None:
@@ -67,8 +88,17 @@ class ContractCoverageTests(unittest.TestCase):
             "LDDECODE_NNTRANSFORM3D_PROVIDER: cpu",
             "result/share/tbc-video-export",
             "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
+            "/nix/store/*)",
         }
         self.assertTrue(expected.issubset(set(check_ci_contracts.MACOS_REQUIRED_SNIPPETS)))
+
+    def test_macos_contract_forbids_host_dependency_capture(self) -> None:
+        expected_forbidden = {
+            "/usr/local/*|/opt/homebrew/*",
+        }
+        self.assertTrue(
+            expected_forbidden.issubset(set(check_ci_contracts.MACOS_FORBIDDEN_SNIPPETS))
+        )
 
     def test_release_contract_wires_all_platform_packaging_workflows(self) -> None:
         expected = {

@@ -23,6 +23,10 @@ XCB_RUNTIME_LIBS = (
     "libxkbcommon-x11.so.0",
 )
 
+MACOS_FORBIDDEN_SNIPPETS = (
+    "/usr/local/*|/opt/homebrew/*",
+)
+
 WINDOWS_REQUIRED_SNIPPETS = (
     "workflow_dispatch:",
     "workflow_call:",
@@ -53,6 +57,7 @@ MACOS_REQUIRED_SNIPPETS = (
     "Missing vendored exporter tool: dist/tbc-tools.app/Contents/MacOS/tbc-video-export",
     "Missing vendored exporter package payload: dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export",
     "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
+    "/nix/store/*)",
 )
 
 RELEASE_REQUIRED_SNIPPETS = (
@@ -97,6 +102,12 @@ def check_count_at_least(path: Path, snippet: str, minimum: int, errors: list[st
         )
 
 
+def check_not_contains(path: Path, snippet: str, errors: list[str]) -> None:
+    content = path.read_text(encoding="utf-8")
+    if snippet in content:
+        errors.append(f"{path}: forbidden snippet present: {snippet!r}")
+
+
 def main() -> int:
     errors: list[str] = []
 
@@ -124,6 +135,8 @@ def main() -> int:
         check_contains(LINUX_WORKFLOW, snippet, errors)
     for snippet in MACOS_REQUIRED_SNIPPETS:
         check_contains(MACOS_WORKFLOW, snippet, errors)
+    for snippet in MACOS_FORBIDDEN_SNIPPETS:
+        check_not_contains(MACOS_WORKFLOW, snippet, errors)
 
     for snippet in RELEASE_REQUIRED_SNIPPETS:
         check_contains(RELEASE_WORKFLOW, snippet, errors)

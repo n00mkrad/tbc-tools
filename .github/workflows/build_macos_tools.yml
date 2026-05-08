@@ -366,7 +366,11 @@ jobs:
             deps=$(otool -L "$file" 2>/dev/null | tail -n +2 | awk "{print \$1}" || true)
             for dep in $deps; do
               case "$dep" in
-                /nix/store/*|/usr/local/*|/opt/homebrew/*)
+                # Keep runtime dependency capture strictly in Nix store paths.
+                # Mixing host Homebrew dylibs with Nix dylibs can cause ABI
+                # mismatches (for example libidn2 expecting GNU libiconv symbols
+                # while a different host libiconv is bundled first).
+                /nix/store/*)
                   local target
                   target=$(copy_dep "$dep")
                   local newref

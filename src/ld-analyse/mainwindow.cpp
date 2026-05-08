@@ -4433,81 +4433,55 @@ void MainWindow::on_actionFix_JSON_SNR_triggered()
 
     QString metadataFilename;
     QString inputTbcFilename;
-    if (tbcSource.getIsSourceLoaded()) {
-        const QString currentMetadataFilename = tbcSource.getCurrentMetadataFilename();
-        if (!currentMetadataFilename.isEmpty()
-            && QFileInfo::exists(currentMetadataFilename)
-            && isMetadataFile(currentMetadataFilename)) {
-            metadataFilename = currentMetadataFilename;
-        } else if (metadataJsonLoaded
-                   && !metadataJsonFilename.isEmpty()
-                   && QFileInfo::exists(metadataJsonFilename)
-                   && isMetadataFile(metadataJsonFilename)) {
-            metadataFilename = metadataJsonFilename;
-        }
-
-        if (!tbcSource.getIsMetadataOnly()) {
-            const QString currentSourceFilename = tbcSource.getCurrentSourceFilename();
-            if (!currentSourceFilename.isEmpty()
-                && QFileInfo::exists(currentSourceFilename)
-                && isTbcSourceFile(currentSourceFilename)) {
-                inputTbcFilename = currentSourceFilename;
-            }
-        }
+    const QString currentMetadataFilename = tbcSource.getCurrentMetadataFilename();
+    if (!currentMetadataFilename.isEmpty()
+        && QFileInfo::exists(currentMetadataFilename)
+        && isMetadataFile(currentMetadataFilename)) {
+        metadataFilename = currentMetadataFilename;
+    } else if (metadataJsonLoaded
+               && !metadataJsonFilename.isEmpty()
+               && QFileInfo::exists(metadataJsonFilename)
+               && isMetadataFile(metadataJsonFilename)) {
+        metadataFilename = metadataJsonFilename;
     }
 
     if (metadataFilename.isEmpty()) {
-        QString defaultInput;
-        if (metadataJsonLoaded && !metadataJsonFilename.isEmpty()) {
-            defaultInput = metadataJsonFilename;
-        } else if (tbcSource.getIsSourceLoaded()) {
-            defaultInput = tbcSource.getCurrentMetadataFilename();
-        }
-
-        const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
-#if defined(Q_OS_MACOS)
-        metadataFilename = chooseFileViaAppleScript(startPath);
-#else
-        metadataFilename = QFileDialog::getOpenFileName(this,
-                                                        tr("Select metadata file for SNR fix"),
-                                                        startPath,
-                                                        tr("Metadata files (*.json *.db);;All Files (*)"));
-#endif
-        if (metadataFilename.isEmpty()) {
-            return;
-        }
+        QMessageBox::warning(this, tr("Metadata not found"),
+                             tr("Could not determine the currently loaded metadata file.\n"
+                                "Load the metadata you want to fix in Analyse, then run Fix JSON SNR again."));
+        return;
     }
-
     if (!isMetadataFile(metadataFilename)) {
         QMessageBox::warning(this, tr("Unsupported metadata file"),
-                             tr("Please select a metadata file ending in .json or .db."));
+                             tr("The currently loaded metadata is not a .json or .db file.\n"
+                                "Load a supported metadata file in Analyse first."));
         return;
+    }
+
+    if (!tbcSource.getIsMetadataOnly()) {
+        const QString currentSourceFilename = tbcSource.getCurrentSourceFilename();
+        if (!currentSourceFilename.isEmpty()
+            && QFileInfo::exists(currentSourceFilename)
+            && isTbcSourceFile(currentSourceFilename)) {
+            inputTbcFilename = currentSourceFilename;
+        }
     }
 
     if (inputTbcFilename.isEmpty()) {
         inputTbcFilename = resolveSourceFilenameForMetadata(metadataFilename);
     }
     if (inputTbcFilename.isEmpty()) {
-        const QFileInfo metadataInfo(metadataFilename);
-        const QString startPath = metadataInfo.exists()
-            ? metadataInfo.absolutePath()
-            : configuration.getSourceDirectory();
-#if defined(Q_OS_MACOS)
-        inputTbcFilename = chooseFileViaAppleScript(startPath);
-#else
-        inputTbcFilename = QFileDialog::getOpenFileName(this,
-                                                        tr("Select source TBC file for SNR fix"),
-                                                        startPath,
-                                                        tr("TBC files (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;All Files (*)"));
-#endif
-        if (inputTbcFilename.isEmpty()) {
-            return;
-        }
+        QMessageBox::warning(this, tr("Source TBC not found"),
+                             tr("Could not determine the source TBC for the currently loaded metadata:\n%1\n\n"
+                                "Load the matching source/metadata in Analyse first, then run Fix JSON SNR again.")
+                                 .arg(metadataFilename));
+        return;
     }
 
     if (!isTbcSourceFile(inputTbcFilename)) {
         QMessageBox::warning(this, tr("Unsupported TBC file"),
-                             tr("Please select a source file ending in .tbc, .ytbc, .ctbc, .tbcy or .tbcc."));
+                             tr("The resolved source file is not a supported TBC input:\n%1")
+                                 .arg(inputTbcFilename));
         return;
     }
 

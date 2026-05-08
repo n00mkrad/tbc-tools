@@ -1,0 +1,458 @@
+{
+  "pcmAudioParameters": {
+    "bits": 16,
+    "isLittleEndian": true,
+    "isSigned": true,
+    "sampleRate": 0
+  },
+  "videoParameters": {
+    "numberOfSequentialFields": 24,
+    "osInfo": "Linux:6.6.8:#1-NixOS SMP PREEMPT_DYNAMIC Wed Dec 20 16:02:07 UTC 2023",
+    "gitBranch": "UNKNOWN",
+    "gitCommit": "UNKNOWN",
+    "system": "NTSC",
+    "fieldWidth": 910,
+    "sampleRate": 14318181.818181818,
+    "black16bIre": 18048.0,
+    "white16bIre": 51200.0,
+    "fieldHeight": 263,
+    "colourBurstStart": 74,
+    "colourBurstEnd": 110,
+    "activeVideoStart": 134,
+    "activeVideoEnd": 894
+  },
+  "fields": [
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 1,
+      "diskLoc": 1.8,
+      "fileLoc": 552960,
+      "medianBurstIRE": 17.67,
+      "fieldPhaseID": 1,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 132.4
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 2,
+      "diskLoc": 2.8,
+      "fileLoc": 1228800,
+      "medianBurstIRE": 17.84,
+      "fieldPhaseID": 2,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 187.8
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 3,
+      "diskLoc": 3.8,
+      "fileLoc": 1904640,
+      "medianBurstIRE": 18.01,
+      "fieldPhaseID": 3,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 245.1
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 4,
+      "diskLoc": 4.8,
+      "fileLoc": 2580480,
+      "medianBurstIRE": 18.18,
+      "fieldPhaseID": 4,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 301.6
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 5,
+      "diskLoc": 5.8,
+      "fileLoc": 3256320,
+      "medianBurstIRE": 18.35,
+      "fieldPhaseID": 1,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 499.2
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 6,
+      "diskLoc": 6.8,
+      "fileLoc": 3932160,
+      "medianBurstIRE": 18.52,
+      "fieldPhaseID": 2,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 115.7
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 7,
+      "diskLoc": 7.8,
+      "fileLoc": 4608000,
+      "medianBurstIRE": 17.5,
+      "fieldPhaseID": 3,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 278.3
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 8,
+      "diskLoc": 8.8,
+      "fileLoc": 5283840,
+      "medianBurstIRE": 17.67,
+      "fieldPhaseID": 4,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 344.9
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 9,
+      "diskLoc": 9.8,
+      "fileLoc": 5959680,
+      "medianBurstIRE": 17.84,
+      "fieldPhaseID": 1,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 421.5
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 10,
+      "diskLoc": 10.8,
+      "fileLoc": 6635520,
+      "medianBurstIRE": 18.01,
+      "fieldPhaseID": 2,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 163.2
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 11,
+      "diskLoc": 11.8,
+      "fileLoc": 7311360,
+      "medianBurstIRE": 18.18,
+      "fieldPhaseID": 3,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 356.8
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 12,
+      "diskLoc": 12.8,
+      "fileLoc": 7987200,
+      "medianBurstIRE": 18.35,
+      "fieldPhaseID": 4,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 489.6
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 13,
+      "diskLoc": 13.8,
+      "fileLoc": 8663040,
+      "medianBurstIRE": 18.52,
+      "fieldPhaseID": 1,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 204.4
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 14,
+      "diskLoc": 14.8,
+      "fileLoc": 9338880,
+      "medianBurstIRE": 17.5,
+      "fieldPhaseID": 2,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 267.7
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 15,
+      "diskLoc": 15.8,
+      "fileLoc": 10014720,
+      "medianBurstIRE": 17.67,
+      "fieldPhaseID": 3,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 319.5
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 16,
+      "diskLoc": 16.8,
+      "fileLoc": 10690560,
+      "medianBurstIRE": 17.84,
+      "fieldPhaseID": 4,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 402.1
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 17,
+      "diskLoc": 17.8,
+      "fileLoc": 11366400,
+      "medianBurstIRE": 18.01,
+      "fieldPhaseID": 1,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 147.9
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 18,
+      "diskLoc": 18.8,
+      "fileLoc": 12042240,
+      "medianBurstIRE": 18.18,
+      "fieldPhaseID": 2,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 228.6
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 19,
+      "diskLoc": 19.8,
+      "fileLoc": 12718080,
+      "medianBurstIRE": 18.35,
+      "fieldPhaseID": 3,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 371.4
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 20,
+      "diskLoc": 20.8,
+      "fileLoc": 13393920,
+      "medianBurstIRE": 18.52,
+      "fieldPhaseID": 4,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 458.0
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 21,
+      "diskLoc": 21.8,
+      "fileLoc": 14069760,
+      "medianBurstIRE": 17.5,
+      "fieldPhaseID": 1,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 193.3
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 22,
+      "diskLoc": 22.8,
+      "fileLoc": 14745600,
+      "medianBurstIRE": 17.67,
+      "fieldPhaseID": 2,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 286.2
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": true,
+      "syncConf": 100,
+      "seqNo": 23,
+      "diskLoc": 23.8,
+      "fileLoc": 15421440,
+      "medianBurstIRE": 17.84,
+      "fieldPhaseID": 3,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 337.8
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    },
+    {
+      "isFirstField": false,
+      "syncConf": 100,
+      "seqNo": 24,
+      "diskLoc": 24.8,
+      "fileLoc": 16097280,
+      "medianBurstIRE": 18.01,
+      "fieldPhaseID": 4,
+      "decodeFaults": 0,
+      "vitsMetrics": {
+        "bPSNR": 476.5
+      },
+      "vbi": {
+        "vbiData": []
+      },
+      "audioSamples": 0,
+      "efmTValues": 0
+    }
+  ]
+}

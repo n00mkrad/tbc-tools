@@ -78,7 +78,6 @@
 #include "efmhandlerdialog.h"
 #include "../audio-align/audioalignmentdialog.h"
 #include "../tbc-export-metadata/metadataexportdialog.h"
-#include "../ld-process-vits/processingpool.h"
 namespace {
 QString chromaDecoderNameFromConfig(VideoSystem system,
                                     const PalColour::Configuration &palConfig,
@@ -4413,62 +4412,147 @@ void MainWindow::on_actionProcess_VITS_triggered()
 
 void MainWindow::on_actionFix_JSON_SNR_triggered()
 {
-    QString defaultInput;
-    if (metadataJsonLoaded && !metadataJsonFilename.isEmpty()) {
-        defaultInput = metadataJsonFilename;
-    } else if (tbcSource.getIsSourceLoaded()) {
-        defaultInput = tbcSource.getCurrentMetadataFilename();
-    }
+    const auto isMetadataFile = [](const QString &filename) {
+        return filename.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)
+               || filename.endsWith(QStringLiteral(".db"), Qt::CaseInsensitive);
+    };
+    const auto isTbcSourceFile = [](const QString &filename) {
+        return filename.endsWith(QStringLiteral(".tbc"), Qt::CaseInsensitive)
+               || filename.endsWith(QStringLiteral(".ytbc"), Qt::CaseInsensitive)
+               || filename.endsWith(QStringLiteral(".ctbc"), Qt::CaseInsensitive)
+               || filename.endsWith(QStringLiteral(".tbcy"), Qt::CaseInsensitive)
+               || filename.endsWith(QStringLiteral(".tbcc"), Qt::CaseInsensitive);
+    };
 
-    const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
-    const QString metadataFilename = QFileDialog::getOpenFileName(this,
-                                                                  tr("Select metadata file for SNR fix"),
-                                                                  startPath,
-                                                                  tr("Metadata files (*.json *.db);;All Files (*)"));
-    if (metadataFilename.isEmpty()) {
+    const QString toolPath = resolveExternalExecutable({QStringLiteral("ld-process-vits")});
+    if (toolPath.isEmpty()) {
+        QMessageBox::warning(this, tr("Tool not found"),
+                             tr("ld-process-vits was not found in PATH or alongside the application."));
         return;
     }
 
-    QString inputTbcFilename = resolveSourceFilenameForMetadata(metadataFilename);
+    QString metadataFilename;
+    QString inputTbcFilename;
+    if (tbcSource.getIsSourceLoaded()) {
+        const QString currentMetadataFilename = tbcSource.getCurrentMetadataFilename();
+        if (!currentMetadataFilename.isEmpty()
+            && QFileInfo::exists(currentMetadataFilename)
+            && isMetadataFile(currentMetadataFilename)) {
+            metadataFilename = currentMetadataFilename;
+        } else if (metadataJsonLoaded
+                   && !metadataJsonFilename.isEmpty()
+                   && QFileInfo::exists(metadataJsonFilename)
+                   && isMetadataFile(metadataJsonFilename)) {
+            metadataFilename = metadataJsonFilename;
+        }
+
+        if (!tbcSource.getIsMetadataOnly()) {
+            const QString currentSourceFilename = tbcSource.getCurrentSourceFilename();
+            if (!currentSourceFilename.isEmpty()
+                && QFileInfo::exists(currentSourceFilename)
+                && isTbcSourceFile(currentSourceFilename)) {
+                inputTbcFilename = currentSourceFilename;
+            }
+        }
+    }
+
+    if (metadataFilename.isEmpty()) {
+        QString defaultInput;
+        if (metadataJsonLoaded && !metadataJsonFilename.isEmpty()) {
+            defaultInput = metadataJsonFilename;
+        } else if (tbcSource.getIsSourceLoaded()) {
+            defaultInput = tbcSource.getCurrentMetadataFilename();
+        }
+
+        const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
+#if defined(Q_OS_MACOS)
+        metadataFilename = chooseFileViaAppleScript(startPath);
+#else
+        metadataFilename = QFileDialog::getOpenFileName(this,
+                                                        tr("Select metadata file for SNR fix"),
+                                                        startPath,
+                                                        tr("Metadata files (*.json *.db);;All Files (*)"));
+#endif
+        if (metadataFilename.isEmpty()) {
+            return;
+        }
+    }
+
+    if (!isMetadataFile(metadataFilename)) {
+        QMessageBox::warning(this, tr("Unsupported metadata file"),
+                             tr("Please select a metadata file ending in .json or .db."));
+        return;
+    }
+
     if (inputTbcFilename.isEmpty()) {
+        inputTbcFilename = resolveSourceFilenameForMetadata(metadataFilename);
+    }
+    if (inputTbcFilename.isEmpty()) {
+        const QFileInfo metadataInfo(metadataFilename);
+        const QString startPath = metadataInfo.exists()
+            ? metadataInfo.absolutePath()
+            : configuration.getSourceDirectory();
+#if defined(Q_OS_MACOS)
+        inputTbcFilename = chooseFileViaAppleScript(startPath);
+#else
         inputTbcFilename = QFileDialog::getOpenFileName(this,
                                                         tr("Select source TBC file for SNR fix"),
-                                                        configuration.getSourceDirectory(),
+                                                        startPath,
                                                         tr("TBC files (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;All Files (*)"));
+#endif
         if (inputTbcFilename.isEmpty()) {
             return;
         }
     }
 
-    LdDecodeMetaData metadata;
-    if (!metadata.read(metadataFilename)) {
-        QMessageBox::warning(this, tr("Metadata load failed"),
-                             tr("Unable to read metadata file:\n%1").arg(metadataFilename));
+    if (!isTbcSourceFile(inputTbcFilename)) {
+        QMessageBox::warning(this, tr("Unsupported TBC file"),
+                             tr("Please select a source file ending in .tbc, .ytbc, .ctbc, .tbcy or .tbcc."));
         return;
     }
 
-    const QString backupFilename = backupFilenameWithTimestampFallback(metadataFilename, QStringLiteral(".vbup"));
-
-    if (!QFile::copy(metadataFilename, backupFilename)) {
+    QString backupErrorMessage;
+    if (!createTimestampedMetadataBackup(metadataFilename, QStringLiteral(".vbup"), &backupErrorMessage)) {
         QMessageBox::warning(this, tr("Backup failed"),
-                             tr("Unable to create backup file:\n%1").arg(backupFilename));
+                             backupErrorMessage.isEmpty()
+                                 ? tr("Could not create metadata backup before processing.")
+                                 : backupErrorMessage);
         return;
     }
 
-    const qint32 maxThreads = qMax(1, QThread::idealThreadCount());
-    ProcessingPool processingPool(inputTbcFilename, metadataFilename, maxThreads, metadata);
-    if (!processingPool.process()) {
+    QStringList toolArguments = {
+        metadataInputOptionForTool(toolPath), metadataFilename
+    };
+    const QString noBackupOption = noBackupOptionForTool(toolPath);
+    if (!noBackupOption.isEmpty()) {
+        toolArguments << noBackupOption;
+    }
+    toolArguments << inputTbcFilename;
+
+    QString errorMessage;
+    if (!runExternalToolWithProgress(toolPath, toolArguments, tr("Fix JSON SNR"), &errorMessage)) {
+        if (errorMessage.contains(tr("cancelled"), Qt::CaseInsensitive)) {
+            statusBar()->showMessage(tr("Fix JSON SNR cancelled for %1").arg(metadataFilename), 4000);
+            return;
+        }
         QMessageBox::warning(this, tr("Process failed"),
-                             tr("SNR recalculation failed for:\n%1").arg(metadataFilename));
+                             errorMessage.isEmpty()
+                                 ? tr("Fix JSON SNR failed.")
+                                 : errorMessage);
         return;
     }
 
-    statusBar()->showMessage(tr("Fix JSON SNR completed for %1").arg(metadataFilename), 4000);
-    if (tbcSource.getIsSourceLoaded() &&
-        (sameFilePath(metadataFilename, tbcSource.getCurrentMetadataFilename())
-         || sameFilePath(metadataFilename, metadataJsonFilename)
-         || sameFilePath(inputTbcFilename, tbcSource.getCurrentSourceFilename()))) {
-        loadTbcFile(lastFilename);
+    const bool reloadingCurrentSource = tbcSource.getIsSourceLoaded()
+                                        && sameFilePath(inputTbcFilename, tbcSource.getCurrentSourceFilename());
+    const bool reloadingCurrentMetadata = tbcSource.getIsSourceLoaded()
+                                          && (sameFilePath(metadataFilename, tbcSource.getCurrentMetadataFilename())
+                                              || sameFilePath(metadataFilename, metadataJsonFilename));
+    if (reloadingCurrentSource) {
+        queueAnalysisRefreshPreservingUserState(inputTbcFilename);
+    } else if (reloadingCurrentMetadata && !lastFilename.isEmpty()) {
+        loadTbcFile(lastFilename, false, true);
+    } else {
+        statusBar()->showMessage(tr("Fix JSON SNR completed for %1").arg(metadataFilename), 4000);
     }
 }
 

@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+#
+# test-teletext-export - validate ld-process-vbi teletext integration runtime
+# Copyright (C) 2026 Harry Munday
+#
+# This file is part of ld-decode-tools.
+#
+# ld-decode-tools is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+SKIP_EXIT_CODE = 77
+
+
+def resolve_tool(build_dir: Path) -> Path | None:
+    candidates = (
+        build_dir / "bin" / "ld-process-vbi",
+        build_dir / "src" / "ld-process-vbi" / "ld-process-vbi",
+    )
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def fail(message: str) -> int:
+    print(f"FAIL: {message}", file=sys.stderr)
+    return 1
+
+
+def skip(message: str) -> int:
+    print(f"SKIP: {message}", file=sys.stderr)
+    return SKIP_EXIT_CODE
+
+
+def ensure_clean_directory(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Run a teletext runtime integration check using ld-process-vbi."
+    )
+    parser.add_argument(
+        "--build",
+        default=os.getcwd(),
+        help="CMake build directory containing ld-process-vbi (default: current directory).",
+    )
+    parser.add_argument(
+        "--input-base",
+        required=True,
+        help="Fixture base path without extension (expects <base>.tbc and <base>.tbc.db).",
+    )
+    parser.add_argument(
+        "--work-dir",
+        required=True,
+        help="Temporary working directory for copied fixtures and generated output.",
+    )
+    args = parser.parse_args()
+
+    build_dir = Path(args.build).resolve()
+    input_base = Path(args.input_base).resolve()
+    work_dir = Path(args.work_dir).resolve()
+
+    input_tbc_source = Path(f"{input_base}.tbc")
+    input_db_source = Path(f"{input_base}.tbc.db")
+    if not input_tbc_source.exists():
+        return skip(f"Teletext fixture is missing: {input_tbc_source}")
+    if not input_db_source.exists():
+        return skip(f"Teletext fixture metadata is missing: {input_db_source}")
+
+    tool = resolve_tool(build_dir)
+    if tool is None:
+        return skip(f"ld-process-vbi not found in build directory: {build_dir}")
+
+    ensure_clean_directory(work_dir)
+
+    input_tbc = work_dir / input_tbc_source.name
+    input_db = work_dir / input_db_source.name
+    shutil.copy2(input_tbc_source, input_tbc)
+    shutil.copy2(input_db_source, input_db)
+
+    html_dir = work_dir / "teletext_html"
+    env = os.environ.copy()
+    env["TELETEXT_FORCE_CPU"] = "1"
+    env["TELETEXT_DECONV_TIMEOUT_SEC"] = "120"
+
+    command = [
+        str(tool),
+        "--nobackup",
+        "--threads",
+        "1",
+        "--input-metadata",
+        str(input_db),
+        "--teletext-html-dir",
+        str(html_dir),
+        "--teletext-tape-format",
+        "vhs",
+        "--teletext-min-duplicates",
+        "1",
+        str(input_tbc),
+    ]
+
+    print(">>>", " ".join(command), file=sys.stderr)
+    completed = subprocess.run(
+        command,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if completed.stdout:
+        print(completed.stdout, file=sys.stderr, end="")
+    if completed.returncode != 0:
+        return fail(f"ld-process-vbi exited with code {completed.returncode}")
+
+    expected_files = (
+        html_dir / "teletext_raw.t42",
+        html_dir / "teletext_squashed.t42",
+        html_dir / "teletext.css",
+        html_dir / "teletext-noscanlines.css",
+        html_dir / "cssswitch.js",
+    )
+    missing = [str(path) for path in expected_files if not path.exists()]
+    if missing:
+        return fail(f"Teletext export did not produce expected files: {', '.join(missing)}")
+
+    print(f"Teletext runtime test passed. Output directory: {html_dir}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

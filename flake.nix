@@ -163,6 +163,9 @@
             cudaCudnnPackage
             python3Packages.pycuda
             python3Packages.pyopencl
+            ocl-icd
+            pocl
+            clinfo
           ];
           EZPWD_DIR = "${ezpwdSrc}/c++";
           ONNXRUNTIME_ROOT = "${onnxruntimePackage}";
@@ -172,7 +175,42 @@
             export CUDATOOLKIT_ROOT="$CUDAToolkit_ROOT"
             export CUDAHOSTCXX="${cudaHostCompiler}/bin/g++"
             export CMAKE_CUDA_HOST_COMPILER="${cudaHostCompiler}/bin/g++"
-            export LD_LIBRARY_PATH="${runtimeLibraryPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            for nvidiaCudaLib in \
+              /usr/lib/x86_64-linux-gnu/libcuda.so.1 \
+              /usr/lib64/libcuda.so.1 \
+              /usr/lib/libcuda.so.1; do
+              if [ -f "$nvidiaCudaLib" ]; then
+                if [ -n "$LD_PRELOAD" ]; then
+                  export LD_PRELOAD="$nvidiaCudaLib:$LD_PRELOAD"
+                else
+                  export LD_PRELOAD="$nvidiaCudaLib"
+                fi
+                break
+              fi
+            done
+            if [ -n "$CUDAHOSTCXX" ]; then
+              if [ -n "$NVCC_PREPEND_FLAGS" ]; then
+                export NVCC_PREPEND_FLAGS="-ccbin $CUDAHOSTCXX $NVCC_PREPEND_FLAGS"
+              else
+                export NVCC_PREPEND_FLAGS="-ccbin $CUDAHOSTCXX"
+              fi
+            fi
+            export OZ_OPENCL_VENDOR_DIR="$(mktemp -d -t tbc-opencl-vendors-XXXXXX)"
+            for icdFile in "${pkgs.pocl}/etc/OpenCL/vendors/"*.icd; do
+              [ -f "$icdFile" ] && cp -f "$icdFile" "$OZ_OPENCL_VENDOR_DIR/"
+            done
+            for nvidiaOpenclLib in \
+              /usr/lib/x86_64-linux-gnu/libnvidia-opencl.so.1 \
+              /usr/lib64/libnvidia-opencl.so.1 \
+              /usr/lib/libnvidia-opencl.so.1; do
+              if [ -f "$nvidiaOpenclLib" ]; then
+                printf "%s\n" "$nvidiaOpenclLib" > "$OZ_OPENCL_VENDOR_DIR/nvidia-abs.icd"
+                break
+              fi
+            done
+            export OCL_ICD_VENDORS="$OZ_OPENCL_VENDOR_DIR"
+            export OPENCL_VENDOR_PATH="$OCL_ICD_VENDORS"
+            export LD_LIBRARY_PATH="${pkgs.ocl-icd}/lib:${runtimeLibraryPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           '';
         };
       }

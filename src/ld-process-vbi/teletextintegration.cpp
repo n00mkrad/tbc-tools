@@ -28,6 +28,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
@@ -136,7 +137,7 @@ QString runPythonProbe(const QString &pythonExecutable,
 QString resolvePythonExecutable()
 {
     const QString overrideValue =
-        qEnvironmentVariable(QStringLiteral("TELETEXT_PYTHON")).trimmed();
+        qEnvironmentVariable("TELETEXT_PYTHON").trimmed();
     if (!overrideValue.isEmpty()) {
         const QString overrideExecutable = QStandardPaths::findExecutable(overrideValue);
         if (!overrideExecutable.isEmpty()) {
@@ -167,7 +168,8 @@ bool runPythonStep(const QString &pythonExecutable,
                    const QStringList &arguments,
                    const QProcessEnvironment &environment,
                    const QString &stepDescription,
-                   QString *errorMessage)
+                   QString *errorMessage,
+                   qint64 timeoutMilliseconds = -1)
 {
     QProcess process;
     process.setProcessEnvironment(environment);
@@ -177,16 +179,43 @@ bool runPythonStep(const QString &pythonExecutable,
         setError(errorMessage, QObject::tr("Could not start %1 step.").arg(stepDescription));
         return false;
     }
+    QElapsedTimer elapsedTimer;
+    elapsedTimer.start();
+    QString standardOutputBuffer;
+    QString standardErrorBuffer;
 
-    if (!process.waitForFinished(-1)) {
-        process.kill();
-        process.waitForFinished(1000);
-        setError(errorMessage, QObject::tr("%1 step timed out.").arg(stepDescription));
-        return false;
+    while (process.state() != QProcess::NotRunning) {
+        process.waitForReadyRead(200);
+        const QByteArray stdoutChunk = process.readAllStandardOutput();
+        if (!stdoutChunk.isEmpty()) {
+            standardOutputBuffer += QString::fromLocal8Bit(stdoutChunk);
+        }
+        const QByteArray stderrChunk = process.readAllStandardError();
+        if (!stderrChunk.isEmpty()) {
+            standardErrorBuffer += QString::fromLocal8Bit(stderrChunk);
+        }
+        if (timeoutMilliseconds > 0 && elapsedTimer.elapsed() > timeoutMilliseconds) {
+            process.kill();
+            process.waitForFinished(3000);
+            setError(errorMessage,
+                     QObject::tr("%1 step timed out after %2 seconds.")
+                         .arg(stepDescription)
+                         .arg(timeoutMilliseconds / 1000));
+            return false;
+        }
     }
 
-    const QString standardOutput = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
-    const QString standardError = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+    const QByteArray trailingStdout = process.readAllStandardOutput();
+    if (!trailingStdout.isEmpty()) {
+        standardOutputBuffer += QString::fromLocal8Bit(trailingStdout);
+    }
+    const QByteArray trailingStderr = process.readAllStandardError();
+    if (!trailingStderr.isEmpty()) {
+        standardErrorBuffer += QString::fromLocal8Bit(trailingStderr);
+    }
+
+    const QString standardOutput = standardOutputBuffer.trimmed();
+    const QString standardError = standardErrorBuffer.trimmed();
     if (!standardOutput.isEmpty()) {
         qInfo().noquote() << standardOutput;
     }
@@ -300,13 +329,30 @@ bool runTeletextHtmlExport(const TeletextIntegrationOptions &options, QString *e
         (forceCpuRaw == QStringLiteral("1")
          || forceCpuRaw == QStringLiteral("true")
          || forceCpuRaw == QStringLiteral("yes"));
+    bool preferOpenCl = false;
+    const QString preferOpenClRaw = qEnvironmentVariable("TELETEXT_PREFER_OPENCL").trimmed().toLower();
+    if (preferOpenClRaw == QStringLiteral("1")
+        || preferOpenClRaw == QStringLiteral("true")
+        || preferOpenClRaw == QStringLiteral("yes")) {
+        preferOpenCl = true;
+    } else if (preferOpenClRaw == QStringLiteral("0")
+               || preferOpenClRaw == QStringLiteral("false")
+               || preferOpenClRaw == QStringLiteral("no")) {
+        preferOpenCl = false;
+    } else {
+#if defined(Q_OS_MACOS)
+        preferOpenCl = true;
+#endif
+    }
     environment.insert(QStringLiteral("USE_GPU"), forceCpu ? QStringLiteral("0") : QStringLiteral("1"));
     if (forceCpu) {
         qInfo() << "Teletext export: GPU acceleration disabled by TELETEXT_FORCE_CPU";
+    } else if (preferOpenCl) {
+        qInfo() << "Teletext export: OpenCL-preferred backend ordering is enabled";
     }
 
     const QString dependencyProbeScript = QStringLiteral(R"PY(
-import importlib,sys
+import importlib.util,sys
 required=("numpy","scipy","matplotlib","click","tqdm","zmq","watchdog","serial")
 missing=[m for m in required if importlib.util.find_spec(m) is None]
 if missing:
@@ -333,20 +379,91 @@ print("ok")
     const QString backendProbeScript = QStringLiteral(R"PY(
 import importlib.util
 print("pycuda=" + ("yes" if importlib.util.find_spec("pycuda") else "no"))
-print("pyopencl=" + ("yes" if importlib.util.find_spec("pyopencl") else "no"))
+if importlib.util.find_spec("pyopencl") is None:
+    print("pyopencl=no")
+    print("pyopencl_runtime=no")
+else:
+    print("pyopencl=yes")
+    try:
+        import pyopencl as cl
+        platforms = cl.get_platforms()
+        selected_ctx = ""
+        first_error = ""
+        if len(platforms) > 0:
+            for pidx, platform in enumerate(platforms):
+                for didx, device in enumerate(platform.get_devices()):
+                    try:
+                        ctx = cl.Context([device])
+                        selected_ctx = f"{pidx}:{didx}"
+                        del ctx
+                        break
+                    except Exception as exc:
+                        if not first_error:
+                            first_error = type(exc).__name__ + ":" + str(exc)
+                if selected_ctx:
+                    break
+        print("pyopencl_runtime=" + ("yes" if selected_ctx else "no"))
+        if selected_ctx:
+            print("pyopencl_selected_ctx=" + selected_ctx)
+        elif first_error:
+            print("pyopencl_runtime_error=" + first_error)
+    except Exception as exc:
+        print("pyopencl_runtime=no")
+        print("pyopencl_runtime_error=" + type(exc).__name__ + ":" + str(exc))
 )PY");
     bool backendProbeOk = false;
     const QString backendProbeOutput =
         runPythonProbe(pythonExecutable, backendProbeScript, environment, &backendProbeOk);
+    bool pycudaAvailable = false;
+    bool pyopenclAvailable = false;
+    bool pyopenclRuntimeAvailable = false;
+    bool pyopenclRuntimeReported = false;
+    QString pyopenclRuntimeError;
+    QString pyopenclSelectedContext;
     if (backendProbeOk) {
         const QStringList backendLines = backendProbeOutput.split(
             QRegularExpression(QStringLiteral("[\\r\\n]+")), Qt::SkipEmptyParts);
         for (const QString &line : backendLines) {
-            qInfo() << "Teletext export backend probe:" << line.trimmed();
+            const QString trimmedLine = line.trimmed();
+            qInfo() << "Teletext export backend probe:" << trimmedLine;
+            const qint32 separatorIndex = trimmedLine.indexOf(QLatin1Char('='));
+            if (separatorIndex <= 0) {
+                continue;
+            }
+            const QString key = trimmedLine.left(separatorIndex).trimmed();
+            const QString value = trimmedLine.mid(separatorIndex + 1).trimmed();
+            if (key == QStringLiteral("pycuda")) {
+                pycudaAvailable = (value == QStringLiteral("yes"));
+            } else if (key == QStringLiteral("pyopencl")) {
+                pyopenclAvailable = (value == QStringLiteral("yes"));
+            } else if (key == QStringLiteral("pyopencl_runtime")) {
+                pyopenclRuntimeReported = true;
+                pyopenclRuntimeAvailable = (value == QStringLiteral("yes"));
+            } else if (key == QStringLiteral("pyopencl_runtime_error")) {
+                pyopenclRuntimeError = value;
+            } else if (key == QStringLiteral("pyopencl_selected_ctx")) {
+                pyopenclSelectedContext = value;
+            }
         }
     } else {
         qWarning() << "Teletext export: GPU backend probe failed:" << backendProbeOutput;
     }
+    if (!pyopenclRuntimeReported) {
+        pyopenclRuntimeAvailable = pyopenclAvailable;
+    }
+    if (!pyopenclRuntimeAvailable) {
+        if (!pyopenclRuntimeError.isEmpty()) {
+            qWarning() << "Teletext export: OpenCL runtime unavailable:" << pyopenclRuntimeError;
+        } else {
+            qWarning() << "Teletext export: OpenCL runtime unavailable";
+        }
+    } else if (pyopenclSelectedContext.isEmpty()) {
+        qWarning() << "Teletext export: OpenCL runtime reported available but no stable context was selected";
+    }
+    if (!pycudaAvailable) {
+        qWarning() << "Teletext export: CUDA Python module not available";
+    }
+    const bool pyopenclUsable = pyopenclRuntimeAvailable && !pyopenclSelectedContext.isEmpty();
 
     const qint32 teletextThreads = qMax<qint32>(1, options.maxThreads);
     const qint32 minDuplicates = qMax<qint32>(1, options.minDuplicates);
@@ -357,23 +474,136 @@ print("pyopencl=" + ("yes" if importlib.util.find_spec("pyopencl") else "no"))
     const QString rawStreamPath = outputDirectory.filePath(QStringLiteral("teletext_raw.t42"));
     const QString squashedStreamPath = outputDirectory.filePath(QStringLiteral("teletext_squashed.t42"));
 
-    if (forceCpu) {
-        qInfo() << "Teletext export: starting deconvolution with CPU backend";
-    } else {
-        qInfo() << "Teletext export: starting deconvolution (CUDA/OpenCL auto-detect enabled)";
-    }
-    const QStringList deconvolveArguments = {
-        QStringLiteral("-m"), QStringLiteral("teletext"),
-        QStringLiteral("deconvolve"),
-        QStringLiteral("-c"), QStringLiteral("tbc"),
-        QStringLiteral("--tape-format"), tapeFormat,
-        QStringLiteral("--threads"), QString::number(teletextThreads),
-        QStringLiteral("--no-progress"),
-        QStringLiteral("-o"), QStringLiteral("bytes"), rawStreamPath,
-        inputFilename
+    auto deconvolutionArguments = [&](bool useCpuMode, bool preferOpenClMode) {
+        QStringList arguments = {
+            QStringLiteral("-m"), QStringLiteral("teletext"),
+            QStringLiteral("deconvolve")
+        };
+        if (useCpuMode) {
+            arguments << QStringLiteral("-C");
+        } else if (preferOpenClMode) {
+            arguments << QStringLiteral("-O");
+        }
+        arguments << QStringLiteral("-c") << QStringLiteral("tbc")
+                  << QStringLiteral("--tape-format") << tapeFormat
+                  << QStringLiteral("--threads") << QString::number(teletextThreads)
+                  << QStringLiteral("--no-progress")
+                  << QStringLiteral("-o") << QStringLiteral("bytes") << rawStreamPath
+                  << inputFilename;
+        return arguments;
     };
-    if (!runPythonStep(pythonExecutable, deconvolveArguments, environment,
-                       QObject::tr("Teletext deconvolution"), errorMessage)) {
+
+    auto deconvolutionEnvironment = [&](bool useCpuMode, bool preferOpenClMode) {
+        QProcessEnvironment runEnvironment = environment;
+        runEnvironment.insert(QStringLiteral("USE_GPU"),
+                              useCpuMode ? QStringLiteral("0") : QStringLiteral("1"));
+        if (preferOpenClMode && !pyopenclSelectedContext.isEmpty()) {
+            runEnvironment.insert(QStringLiteral("PYOPENCL_CTX"), pyopenclSelectedContext);
+        } else if (runEnvironment.contains(QStringLiteral("PYOPENCL_CTX"))) {
+            runEnvironment.remove(QStringLiteral("PYOPENCL_CTX"));
+        }
+        return runEnvironment;
+    };
+    struct DeconvolutionAttempt {
+        bool useCpuMode;
+        bool preferOpenClMode;
+        QString description;
+        QString stepLabel;
+    };
+
+    QList<DeconvolutionAttempt> attempts;
+    if (forceCpu) {
+        attempts.append({
+            true,
+            false,
+            QStringLiteral("CPU backend"),
+            QObject::tr("Teletext deconvolution (CPU)")
+        });
+    } else if (preferOpenCl) {
+        if (pyopenclUsable) {
+            attempts.append({
+                false,
+                true,
+                QStringLiteral("OpenCL-first backend ordering"),
+                QObject::tr("Teletext deconvolution (OpenCL-first)")
+            });
+        } else {
+            qWarning() << "Teletext export: skipping OpenCL-first attempt because OpenCL runtime is unavailable";
+        }
+        attempts.append({
+            false,
+            false,
+            QStringLiteral("CUDA/OpenCL auto-detect backend ordering"),
+            QObject::tr("Teletext deconvolution")
+        });
+        attempts.append({
+            true,
+            false,
+            QStringLiteral("CPU fallback backend"),
+            QObject::tr("Teletext deconvolution (CPU fallback)")
+        });
+    } else {
+        attempts.append({
+            false,
+            false,
+            QStringLiteral("CUDA/OpenCL auto-detect backend ordering"),
+            QObject::tr("Teletext deconvolution")
+        });
+        if (pyopenclUsable) {
+            attempts.append({
+                false,
+                true,
+                QStringLiteral("OpenCL-first fallback backend ordering"),
+                QObject::tr("Teletext deconvolution (OpenCL fallback)")
+            });
+        } else {
+            qWarning() << "Teletext export: skipping OpenCL fallback attempt because OpenCL runtime is unavailable";
+        }
+        attempts.append({
+            true,
+            false,
+            QStringLiteral("CPU fallback backend"),
+            QObject::tr("Teletext deconvolution (CPU fallback)")
+        });
+    }
+
+    bool deconvolved = false;
+    QStringList deconvolutionFailures;
+    bool deconvolutionTimeoutOk = false;
+    const qint32 deconvolutionTimeoutSecondsRaw =
+        qEnvironmentVariableIntValue("TELETEXT_DECONV_TIMEOUT_SEC", &deconvolutionTimeoutOk);
+    const qint64 deconvolutionTimeoutMilliseconds = static_cast<qint64>(
+        (deconvolutionTimeoutOk && deconvolutionTimeoutSecondsRaw > 0)
+            ? deconvolutionTimeoutSecondsRaw
+            : 180
+    ) * 1000;
+    for (qint32 attemptIndex = 0; attemptIndex < attempts.size(); ++attemptIndex) {
+        const DeconvolutionAttempt &attempt = attempts.at(attemptIndex);
+        qInfo() << "Teletext export: starting deconvolution with" << attempt.description;
+        QString attemptError;
+        if (runPythonStep(pythonExecutable,
+                          deconvolutionArguments(attempt.useCpuMode, attempt.preferOpenClMode),
+                          deconvolutionEnvironment(attempt.useCpuMode, attempt.preferOpenClMode),
+                          attempt.stepLabel,
+                          &attemptError,
+                          deconvolutionTimeoutMilliseconds)) {
+            if (attemptIndex > 0) {
+                qInfo() << "Teletext export: deconvolution succeeded after fallback to"
+                        << attempt.description;
+            }
+            deconvolved = true;
+            break;
+        }
+        deconvolutionFailures.append(attempt.stepLabel + QStringLiteral(": ") + attemptError);
+        if (attemptIndex + 1 < attempts.size()) {
+            qWarning() << "Teletext export: deconvolution attempt failed, trying next backend";
+        }
+    }
+
+    if (!deconvolved) {
+        setError(errorMessage,
+                 QObject::tr("Teletext deconvolution failed after trying all backends: %1")
+                     .arg(deconvolutionFailures.join(QStringLiteral(" | "))));
         return false;
     }
 

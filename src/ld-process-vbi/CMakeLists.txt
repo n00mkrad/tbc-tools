@@ -35,4 +35,16 @@ if(BUILD_TESTING)
     set_tests_properties(ld-process-vbi-teletext-help PROPERTIES
         PASS_REGULAR_EXPRESSION "--teletext-html-dir"
     )
+
+    add_test(
+        NAME ld-process-vbi-teletext-runtime
+        COMMAND python3
+            ${CMAKE_SOURCE_DIR}/scripts/test-teletext-export
+            --build ${CMAKE_BINARY_DIR}
+            --input-base ${CMAKE_SOURCE_DIR}/test-data/ntsc/issue176
+            --work-dir ${CMAKE_BINARY_DIR}/test-artifacts/teletext-runtime
+    )
+    set_tests_properties(ld-process-vbi-teletext-runtime PROPERTIES
+        SKIP_RETURN_CODE 77
+    )
 endif()

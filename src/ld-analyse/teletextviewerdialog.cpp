@@ -19,6 +19,7 @@
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -27,7 +28,9 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QTextBrowser>
+#include <QTextDocument>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -164,6 +167,55 @@ QStringList droppedLocalFiles(const QMimeData *mimeData)
     }
     return filePaths;
 }
+
+QString qtTeletextCompatibilityStyle()
+{
+    return QStringLiteral(
+        "<style id=\"qt-teletext-compat\">"
+        "body { background: black !important; margin: 0 !important; padding: 0 !important; }"
+        ".subpage {"
+        "  float: none !important;"
+        "  display: inline-block !important;"
+        "  white-space: pre !important;"
+        "  border: 0 !important;"
+        "  text-shadow: none !important;"
+        "  filter: none !important;"
+        "  font-family: teletext2, \"Courier New\", monospace !important;"
+        "  font-size: 20px !important;"
+        "  line-height: 1.0 !important;"
+        "  min-width: 40ch !important;"
+        "  min-height: 25em !important;"
+        "}"
+        ".row { display: block !important; white-space: pre !important; }"
+        ".dh {"
+        "  font-family: teletext4, teletext2, \"Courier New\", monospace !important;"
+        "  font-size: 200% !important;"
+        "  line-height: 1.0 !important;"
+        "}"
+        "</style>");
+}
+
+QString normalizedTeletextHtmlForQt(QString htmlContent)
+{
+    if (htmlContent.contains(QStringLiteral("qt-teletext-compat"), Qt::CaseInsensitive)) {
+        return htmlContent;
+    }
+
+    static const QRegularExpression rowBoundaryPattern(
+        QStringLiteral("</span>\\s*<span\\s+class=\"row\">"),
+        QRegularExpression::CaseInsensitiveOption
+    );
+    htmlContent.replace(rowBoundaryPattern, QStringLiteral("</span><br/><span class=\"row\">"));
+
+    const QString styleBlock = qtTeletextCompatibilityStyle();
+    const qint32 headCloseIndex = htmlContent.indexOf(QStringLiteral("</head>"), 0, Qt::CaseInsensitive);
+    if (headCloseIndex >= 0) {
+        htmlContent.insert(headCloseIndex, styleBlock);
+    } else {
+        htmlContent.prepend(QStringLiteral("<head>") + styleBlock + QStringLiteral("</head>"));
+    }
+    return htmlContent;
+}
 } // namespace
 
 TeletextViewerDialog::TeletextViewerDialog(QWidget *parent)
@@ -207,7 +259,8 @@ TeletextViewerDialog::TeletextViewerDialog(QWidget *parent)
     mainLayout->addLayout(optionsLayout);
 
     pageViewer = new QTextBrowser(this);
-    pageViewer->setOpenExternalLinks(true);
+    pageViewer->setOpenExternalLinks(false);
+    pageViewer->setOpenLinks(false);
     mainLayout->addWidget(pageViewer, 1);
 
     refreshTimer = new QTimer(this);
@@ -222,6 +275,8 @@ TeletextViewerDialog::TeletextViewerDialog(QWidget *parent)
             this, &TeletextViewerDialog::loadSelectedPage);
     connect(refreshPageButton, &QPushButton::clicked,
             this, &TeletextViewerDialog::loadSelectedPage);
+    connect(pageViewer, &QTextBrowser::anchorClicked,
+            this, &TeletextViewerDialog::handlePageLinkClicked);
     connect(openInBrowserButton, &QPushButton::clicked,
             this, &TeletextViewerDialog::openSelectedPageInBrowser);
     connect(autoRefreshCheckBox, &QCheckBox::toggled,
@@ -400,12 +455,63 @@ void TeletextViewerDialog::loadSelectedPage()
         return;
     }
 
+    QFile pageFile(pagePath);
+    if (!pageFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return;
+    }
+
+    QString pageHtml = QString::fromUtf8(pageFile.readAll());
+    pageHtml = normalizedTeletextHtmlForQt(pageHtml);
     pageViewer->setSearchPaths(QStringList() << currentDirectoryPath);
-    pageViewer->setSource(QUrl::fromLocalFile(pagePath));
+    pageViewer->document()->setBaseUrl(QUrl::fromLocalFile(pagePath));
+    pageViewer->setHtml(pageHtml);
 
     lastLoadedPagePath = pagePath;
     lastLoadedPageModified = pageInfo.lastModified();
     setWindowTitle(tr("Teletext Viewer - %1").arg(pageInfo.fileName()));
+}
+
+void TeletextViewerDialog::handlePageLinkClicked(const QUrl &linkUrl)
+{
+    if (!linkUrl.isValid()) {
+        return;
+    }
+
+    if (linkUrl.path().isEmpty() && !linkUrl.fragment().isEmpty()) {
+        pageViewer->scrollToAnchor(linkUrl.fragment());
+        return;
+    }
+
+    QUrl resolvedUrl = linkUrl;
+    if (resolvedUrl.isRelative() && !lastLoadedPagePath.isEmpty()) {
+        resolvedUrl = QUrl::fromLocalFile(lastLoadedPagePath).resolved(linkUrl);
+    }
+
+    if (resolvedUrl.isLocalFile()) {
+        const QFileInfo linkedFileInfo(QDir::cleanPath(resolvedUrl.toLocalFile()));
+        if (linkedFileInfo.exists() &&
+            linkedFileInfo.isFile() &&
+            linkedFileInfo.suffix().compare(QStringLiteral("html"), Qt::CaseInsensitive) == 0) {
+            if (currentDirectoryPath.compare(linkedFileInfo.absolutePath(), Qt::CaseInsensitive) != 0) {
+                setDirectory(linkedFileInfo.absolutePath());
+            }
+
+            const qint32 linkedPageIndex = pageComboBox->findText(
+                linkedFileInfo.fileName(),
+                Qt::MatchFixedString
+            );
+            if (linkedPageIndex >= 0) {
+                if (pageComboBox->currentIndex() != linkedPageIndex) {
+                    pageComboBox->setCurrentIndex(linkedPageIndex);
+                } else {
+                    loadSelectedPage();
+                }
+                return;
+            }
+        }
+    }
+
+    QDesktopServices::openUrl(resolvedUrl);
 }
 
 void TeletextViewerDialog::openSelectedPageInBrowser()

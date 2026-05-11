@@ -657,6 +657,16 @@ else:
                            errorMessage)) {
         return false;
     }
+    if (!copyFileReplacing(QDir(vendorDirectory).filePath(QStringLiteral("misc/teletext2.ttf")),
+                           outputDirectory.filePath(QStringLiteral("teletext2.ttf")),
+                           errorMessage)) {
+        return false;
+    }
+    if (!copyFileReplacing(QDir(vendorDirectory).filePath(QStringLiteral("misc/teletext4.ttf")),
+                           outputDirectory.filePath(QStringLiteral("teletext4.ttf")),
+                           errorMessage)) {
+        return false;
+    }
     ensureCssSwitchScript(outputDirectoryPath);
 
     const QStringList generatedHtmlFiles = outputDirectory.entryList(

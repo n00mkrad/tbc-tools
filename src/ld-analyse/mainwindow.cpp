@@ -782,8 +782,21 @@ enum class ExternalToolStage {
     LoadingMetadata,
     AnalysingMetadata,
     WritingMetadata,
+    TeletextDependencyCheck,
+    TeletextBackendProbe,
+    TeletextDeconvolution,
+    TeletextSquashing,
+    TeletextHtmlGeneration,
     Finishing
 };
+bool externalToolStageIsTeletext(ExternalToolStage stage)
+{
+    return stage == ExternalToolStage::TeletextDependencyCheck
+        || stage == ExternalToolStage::TeletextBackendProbe
+        || stage == ExternalToolStage::TeletextDeconvolution
+        || stage == ExternalToolStage::TeletextSquashing
+        || stage == ExternalToolStage::TeletextHtmlGeneration;
+}
 
 QString externalToolStageLabel(const QString &toolDisplayName, ExternalToolStage stage)
 {
@@ -796,6 +809,16 @@ QString externalToolStageLabel(const QString &toolDisplayName, ExternalToolStage
         return QObject::tr("%1: Analysing metadata...").arg(toolDisplayName);
     case ExternalToolStage::WritingMetadata:
         return QObject::tr("%1: Writing metadata...").arg(toolDisplayName);
+    case ExternalToolStage::TeletextDependencyCheck:
+        return QObject::tr("%1: Checking teletext runtime...").arg(toolDisplayName);
+    case ExternalToolStage::TeletextBackendProbe:
+        return QObject::tr("%1: Probing teletext backends...").arg(toolDisplayName);
+    case ExternalToolStage::TeletextDeconvolution:
+        return QObject::tr("%1: Teletext deconvolution...").arg(toolDisplayName);
+    case ExternalToolStage::TeletextSquashing:
+        return QObject::tr("%1: Squashing teletext packets...").arg(toolDisplayName);
+    case ExternalToolStage::TeletextHtmlGeneration:
+        return QObject::tr("%1: Generating teletext HTML...").arg(toolDisplayName);
     case ExternalToolStage::Finishing:
     default:
         return QObject::tr("%1: Finalising...").arg(toolDisplayName);
@@ -831,6 +854,14 @@ int externalToolProgressPercent(qint32 processedFields, qint32 totalFields)
 
     const qint32 clampedProcessedFields = qBound<qint32>(0, processedFields, totalFields);
     return static_cast<int>((static_cast<double>(clampedProcessedFields) / static_cast<double>(totalFields)) * 100.0);
+}
+
+QString externalToolTeletextProgressSummary(qint32 teletextPercent)
+{
+    if (teletextPercent < 0) {
+        return QObject::tr("Teletext progress: --");
+    }
+    return QObject::tr("Teletext progress: %1%").arg(teletextPercent);
 }
 
 QString normalizedPathForCompare(const QString &path)
@@ -3822,6 +3853,7 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
     ExternalToolStage stage = ExternalToolStage::Starting;
     qint32 totalFields = 0;
     qint32 processedFields = 0;
+    qint32 teletextProgressPercent = -1;
     QString lastOutputLine;
     bool cancelRequested = false;
     bool terminateSent = false;
@@ -3854,10 +3886,23 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
     const QRegularExpression completeFieldsExpression(
         QStringLiteral("(?:Info:\\s*)?Processing\\s+complete\\s*-\\s*([0-9,]+)\\s*fields"),
         QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression ansiEscapeExpression(QStringLiteral("\\x1B\\[[0-9;]*[A-Za-z]"));
+    const QRegularExpression teletextTqdmPercentExpression(QStringLiteral("(\\d{1,3})%\\|"));
 
     auto updateProgressDialog = [&]() {
-        const int percent = externalToolProgressPercent(processedFields, totalFields);
-        if (totalFields > 0) {
+        const bool teletextStage = externalToolStageIsTeletext(stage);
+        int percent = 0;
+        bool hasDeterminateProgress = false;
+
+        if (teletextStage && teletextProgressPercent >= 0) {
+            percent = qBound<qint32>(0, teletextProgressPercent, 100);
+            hasDeterminateProgress = true;
+        } else if (!teletextStage && totalFields > 0) {
+            percent = externalToolProgressPercent(processedFields, totalFields);
+            hasDeterminateProgress = true;
+        }
+
+        if (hasDeterminateProgress) {
             progressBar->setRange(0, 100);
             progressBar->setValue(percent);
             progressBar->setFormat(QStringLiteral("%p%"));
@@ -3865,17 +3910,24 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
             progressBar->setRange(0, 0);
             progressBar->setFormat(tr("Working..."));
         }
-
-        const QString progressLine = (totalFields > 0)
+        const QString progressLine = hasDeterminateProgress
             ? tr("Progress: %1%").arg(percent)
             : tr("Progress: --");
         stageLabel->setText(externalToolStageLabel(toolDisplayName, stage));
-        countsLabel->setText(externalToolProgressSummary(processedFields, totalFields));
+        if (teletextStage) {
+            countsLabel->setText(tr("%1\n%2")
+                                     .arg(externalToolProgressSummary(processedFields, totalFields),
+                                          externalToolTeletextProgressSummary(teletextProgressPercent)));
+        } else {
+            countsLabel->setText(externalToolProgressSummary(processedFields, totalFields));
+        }
         percentLabel->setText(progressLine);
     };
 
     auto processOutputLine = [&](const QString &line) {
-        const QString trimmedLine = line.trimmed();
+        QString normalizedLine = line;
+        normalizedLine.remove(ansiEscapeExpression);
+        const QString trimmedLine = normalizedLine.trimmed();
         if (trimmedLine.isEmpty()) {
             return;
         }
@@ -3891,6 +3943,40 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
             if (totalFields > 0) {
                 processedFields = totalFields;
             }
+        } else if (trimmedLine.contains(QStringLiteral("Teletext export output directory"), Qt::CaseInsensitive)
+                   || trimmedLine.contains(QStringLiteral("Teletext export: using Python executable"),
+                                           Qt::CaseInsensitive)
+                   || trimmedLine.contains(QStringLiteral("Teletext Python dependency check"),
+                                           Qt::CaseInsensitive)) {
+            stage = ExternalToolStage::TeletextDependencyCheck;
+            teletextProgressPercent = qMax<qint32>(teletextProgressPercent, 0);
+        } else if (trimmedLine.contains(QStringLiteral("Teletext export backend probe:"),
+                                        Qt::CaseInsensitive)
+                   || trimmedLine.contains(QStringLiteral("optional Python modules missing"),
+                                           Qt::CaseInsensitive)) {
+            stage = ExternalToolStage::TeletextBackendProbe;
+            teletextProgressPercent = qMax<qint32>(teletextProgressPercent, 5);
+        } else if (trimmedLine.contains(QStringLiteral("Teletext export: starting deconvolution with"),
+                                        Qt::CaseInsensitive)
+                   || trimmedLine.contains(QStringLiteral("Teletext export: deconvolution attempt failed"),
+                                           Qt::CaseInsensitive)
+                   || trimmedLine.contains(QStringLiteral("Teletext export: deconvolution succeeded after fallback"),
+                                           Qt::CaseInsensitive)) {
+            stage = ExternalToolStage::TeletextDeconvolution;
+            teletextProgressPercent = qMax<qint32>(teletextProgressPercent, 10);
+        } else if (trimmedLine.contains(QStringLiteral("Teletext export: squashing duplicate packets"),
+                                        Qt::CaseInsensitive)) {
+            stage = ExternalToolStage::TeletextSquashing;
+            teletextProgressPercent = qMax<qint32>(teletextProgressPercent, 70);
+        } else if (trimmedLine.contains(QStringLiteral("Teletext export: generating HTML pages"),
+                                        Qt::CaseInsensitive)) {
+            stage = ExternalToolStage::TeletextHtmlGeneration;
+            teletextProgressPercent = qMax<qint32>(teletextProgressPercent, 80);
+        } else if (trimmedLine.contains(QStringLiteral("Teletext export complete"), Qt::CaseInsensitive)
+                   || trimmedLine.contains(QStringLiteral("Teletext export finished but generated no HTML pages"),
+                                           Qt::CaseInsensitive)) {
+            stage = ExternalToolStage::Finishing;
+            teletextProgressPercent = 100;
         }
 
         const QRegularExpressionMatch totalFieldsMatch = totalFieldsExpression.match(trimmedLine);
@@ -3939,6 +4025,18 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
                 totalFields = parsedTotal;
                 processedFields = totalFields;
                 stage = ExternalToolStage::Finishing;
+            }
+        }
+
+        const QRegularExpressionMatch teletextPercentMatch = teletextTqdmPercentExpression.match(trimmedLine);
+        if (teletextPercentMatch.hasMatch()) {
+            bool percentOk = false;
+            const qint32 parsedPercent = teletextPercentMatch.captured(1).toInt(&percentOk);
+            if (percentOk) {
+                teletextProgressPercent = qBound<qint32>(0, parsedPercent, 100);
+                if (!externalToolStageIsTeletext(stage)) {
+                    stage = ExternalToolStage::TeletextHtmlGeneration;
+                }
             }
         }
 
@@ -4016,6 +4114,7 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
     if (totalFields > 0) {
         processedFields = totalFields;
     }
+    teletextProgressPercent = qMax<qint32>(teletextProgressPercent, 100);
     updateProgressDialog();
     QCoreApplication::processEvents();
     constexpr qint64 minimumVisibleMilliseconds = 700;

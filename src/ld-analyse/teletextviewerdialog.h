@@ -26,6 +26,7 @@ class QMimeData;
 class QPushButton;
 class QTextBrowser;
 class QTimer;
+class QUrl;
 
 class TeletextViewerDialog : public QDialog
 {
@@ -45,6 +46,7 @@ private slots:
     void browseForDirectory();
     void refreshPageList();
     void loadSelectedPage();
+    void handlePageLinkClicked(const QUrl &linkUrl);
     void openSelectedPageInBrowser();
     void setAutoRefreshEnabled(bool enabled);
     void handlePeriodicRefresh();

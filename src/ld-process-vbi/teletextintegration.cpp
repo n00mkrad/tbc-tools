@@ -353,11 +353,15 @@ bool runTeletextHtmlExport(const TeletextIntegrationOptions &options, QString *e
 
     const QString dependencyProbeScript = QStringLiteral(R"PY(
 import importlib.util,sys
-required=("numpy","scipy","matplotlib","click","tqdm","zmq","watchdog","serial")
+required=("numpy","scipy","matplotlib","click","tqdm","zmq")
+optional=("watchdog","serial")
 missing=[m for m in required if importlib.util.find_spec(m) is None]
+missing_optional=[m for m in optional if importlib.util.find_spec(m) is None]
 if missing:
     print("missing:"+",".join(missing))
     sys.exit(2)
+if missing_optional:
+    print("optional_missing:"+",".join(missing_optional))
 print("ok")
 )PY");
     bool dependencyProbeOk = false;
@@ -374,6 +378,15 @@ print("ok")
                  QObject::tr("Teletext Python dependencies missing: %1")
                      .arg(dependencyProbeOutput.mid(QStringLiteral("missing:").size())));
         return false;
+    }
+    const QStringList dependencyProbeLines = dependencyProbeOutput.split(
+        QRegularExpression(QStringLiteral("[\\r\\n]+")), Qt::SkipEmptyParts);
+    for (const QString &line : dependencyProbeLines) {
+        const QString trimmedLine = line.trimmed();
+        if (trimmedLine.startsWith(QStringLiteral("optional_missing:"))) {
+            qWarning() << "Teletext export: optional Python modules missing:"
+                       << trimmedLine.mid(QStringLiteral("optional_missing:").size());
+        }
     }
 
     const QString backendProbeScript = QStringLiteral(R"PY(

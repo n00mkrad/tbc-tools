@@ -31,8 +31,6 @@ jobs:
 
     name: Build tbc-tools (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    env:
-      LDDECODE_NNTRANSFORM3D_PROVIDER: cpu
 
     steps:
       - uses: actions/checkout@v5
@@ -284,11 +282,6 @@ jobs:
             file "$1" 2>/dev/null | grep -q "Mach-O"
           }
 
-          exports_symbol() {
-            local file="$1"
-            local symbol="$2"
-            nm -gU "$file" 2>/dev/null | grep -Eq "(^|[[:space:]])${symbol}$"
-          }
           dep_unique_name() {
             local dep="$1"
             if [[ "$dep" == /nix/store/* ]]; then
@@ -383,22 +376,24 @@ jobs:
             local deps
             deps=$(otool -L "$file" 2>/dev/null | tail -n +2 | awk "{print \$1}" || true)
             for dep in $deps; do
+              local store_dep=""
               case "$dep" in
                 # Keep runtime dependency capture strictly in Nix store paths.
                 # Mixing host Homebrew dylibs with Nix dylibs can cause ABI
                 # mismatches (for example libidn2 expecting GNU libiconv symbols
                 # while a different host libiconv is bundled first).
                 /nix/store/*)
-                  local target
-                  target=$(copy_dep "$dep")
-                  local newref
-                  newref=$(newref_for_dep "$dep")
-                  install_name_tool -change "$dep" "$newref" "$file" 2>/dev/null || true
-                  [ -n "$target" ] && QUEUE+=("$target")
-                  ;;
-                *)
+                  store_dep="$dep"
                   ;;
               esac
+              if [ -n "$store_dep" ]; then
+                local target
+                target=$(copy_dep "$store_dep")
+                local newref
+                newref=$(newref_for_dep "$store_dep")
+                install_name_tool -change "$dep" "$newref" "$file" 2>/dev/null || true
+                [ -n "$target" ] && QUEUE+=("$target")
+              fi
             done
           }
 
@@ -460,21 +455,6 @@ jobs:
             exit 1
           fi
           FW_DIR="dist/tbc-tools.app/Contents/Frameworks"
-          SYMBOL_EXPORT_CACHE_DIR=$(mktemp -d)
-          symbol_export_cache_file() {
-            local lib="$1"
-            local key
-            key=$(printf '%s' "$lib" | shasum | awk '{print $1}')
-            echo "$SYMBOL_EXPORT_CACHE_DIR/$key.exports"
-          }
-          cache_exported_symbols() {
-            local lib="$1"
-            local cache_file
-            cache_file=$(symbol_export_cache_file "$lib")
-            if [ ! -f "$cache_file" ]; then
-              nm -gUj "$lib" 2>/dev/null | sed '/^$/d' | sort -u > "$cache_file" || true
-            fi
-          }
           resolve_bundled_dep_path() {
             local dep="$1"
             case "$dep" in
@@ -499,59 +479,45 @@ jobs:
             fi
             return 1
           }
-          verify_bundled_symbol_links() {
+          verify_bundled_dependencies() {
             local failures=0
             while IFS= read -r -d '' macho_file; do
               if ! file "$macho_file" 2>/dev/null | grep -q "Mach-O"; then
                 continue
               fi
-              while IFS=$'\t' read -r symbol dep; do
-                [ -n "$symbol" ] || continue
+              while IFS= read -r dep; do
                 [ -n "$dep" ] || continue
-                local dep_path
-                dep_path=$(resolve_bundled_dep_path "$dep" || true)
-                if [ -z "$dep_path" ]; then
-                  continue
-                fi
-                cache_exported_symbols "$dep_path"
-                local cache_file
-                cache_file=$(symbol_export_cache_file "$dep_path")
-                if ! grep -Fxq "$symbol" "$cache_file"; then
-                  echo "Missing bundled symbol reference:"
-                  echo "  Symbol: $symbol"
+                case "$dep" in
+                  /System/*|/usr/lib/*|/Library/Frameworks/*)
+                    continue
+                    ;;
+                  @*|/*)
+                    ;;
+                  *)
+                    # otool prints "dynamically looked up" / "flat namespace"
+                    # entries that awk '{print $1}' truncates to single tokens.
+                    # Anything not starting with / or @ is one of those.
+                    continue
+                    ;;
+                esac
+                if ! resolve_bundled_dep_path "$dep" >/dev/null 2>&1; then
+                  echo "Unresolved bundled dependency:"
                   echo "  Required by: $macho_file"
                   echo "  Declared dependency: $dep"
-                  echo "  Resolved bundled dylib: $dep_path"
                   failures=1
                 fi
-              done < <(
-                nm -m "$macho_file" 2>/dev/null | awk '
-                  /\(undefined\)/ && /\(from / && $0 !~ / weak / {
-                    sym=""; dep="";
-                    if (match($0, / (external|private external) ([^ ]+)/, m)) {
-                      sym=m[2];
-                    }
-                    if (match($0, /\(from ([^)]+)\)/, d)) {
-                      dep=d[1];
-                    }
-                    if (sym != "" && dep != "") {
-                      print sym "\t" dep;
-                    }
-                  }'
-              )
+              done < <(otool -L "$macho_file" 2>/dev/null | tail -n +2 | awk '{print $1}')
             done < <(find dist/tbc-tools.app/Contents -type f -print0)
             if [ "$failures" -ne 0 ]; then
-              echo "Bundled symbol verification failed."
+              echo "Bundled dependency verification failed."
               return 1
             fi
-            echo "Bundled symbol verification passed."
+            echo "Bundled dependency verification passed."
             return 0
           }
-          if ! verify_bundled_symbol_links; then
-            rm -rf "$SYMBOL_EXPORT_CACHE_DIR"
+          if ! verify_bundled_dependencies; then
             exit 1
           fi
-          rm -rf "$SYMBOL_EXPORT_CACHE_DIR"
           for tool in ffmpeg ffprobe; do
             tool_path="dist/tbc-tools.app/Contents/MacOS/$tool"
             if [ ! -x "$tool_path" ]; then

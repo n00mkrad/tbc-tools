@@ -85,14 +85,13 @@ class ContractCoverageTests(unittest.TestCase):
         expected = {
             "workflow_dispatch:",
             "workflow_call:",
-            "LDDECODE_NNTRANSFORM3D_PROVIDER: cpu",
             "result/share/tbc-video-export",
             "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
             "/nix/store/*)",
             "dep_unique_name()",
-            "verify_bundled_symbol_links()",
-            "Missing bundled symbol reference:",
-            "Bundled symbol verification failed.",
+            "verify_bundled_dependencies()",
+            "Unresolved bundled dependency:",
+            "Bundled dependency verification failed.",
         }
         self.assertTrue(expected.issubset(set(check_ci_contracts.MACOS_REQUIRED_SNIPPETS)))
 

@@ -38,6 +38,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #ifdef __linux__
@@ -123,7 +125,8 @@ constexpr const char *kOnnxRuntimeRootEnvVar = "ONNXRUNTIME_ROOT";
 enum class NnExecutionProviderPreference {
     Auto,
     Cpu,
-    Cuda
+    Cuda,
+    CoreML
 };
 
 NnExecutionProviderPreference getNnExecutionProviderPreference()
@@ -137,6 +140,9 @@ NnExecutionProviderPreference getNnExecutionProviderPreference()
     }
     if (provider == "cuda" || provider == "gpu") {
         return NnExecutionProviderPreference::Cuda;
+    }
+    if (provider == "coreml") {
+        return NnExecutionProviderPreference::CoreML;
     }
 
     qWarning() << "Unknown" << kNnProviderEnvVar << "value:" << provider << "- using auto";
@@ -152,6 +158,8 @@ QString providerPreferenceToString(NnExecutionProviderPreference preference)
         return QStringLiteral("cpu");
     case NnExecutionProviderPreference::Cuda:
         return QStringLiteral("cuda");
+    case NnExecutionProviderPreference::CoreML:
+        return QStringLiteral("coreml");
     }
     return QStringLiteral("auto");
 }
@@ -496,6 +504,27 @@ bool appendCudaExecutionProvider(Ort::SessionOptions &options, QString &errorMes
 
     releaseCudaOptions();
     return true;
+}
+
+bool appendCoreMLExecutionProvider(Ort::SessionOptions &options, QString &errorMessage)
+{
+#if defined(__APPLE__)
+    try {
+        const std::unordered_map<std::string, std::string> coremlOptions = {
+            { "MLComputeUnits", "ALL" },
+            { "ModelFormat", "MLProgram" },
+        };
+        options.AppendExecutionProvider("CoreML", coremlOptions);
+        return true;
+    } catch (const std::exception &e) {
+        errorMessage = QString::fromUtf8(e.what());
+        return false;
+    }
+#else
+    Q_UNUSED(options)
+    errorMessage = QStringLiteral("CoreML execution provider is only available on macOS");
+    return false;
+#endif
 }
 }
 
@@ -862,12 +891,23 @@ bool Comb::FrameBuffer::split3DnnTransform(FrameBuffer &nextFrame, qint32 frameI
 
             #if defined(__APPLE__)
             const bool allowCuda = false;
+            // ORT's CoreML EP currently rejects 3D Conv (deliberate gate in
+            // conv_op_builder.cc), so for this model every Conv falls back to
+            // CPU and CoreML is a net ~7% regression. Keep it opt-in via an
+            // explicit LDDECODE_NNTRANSFORM3D_PROVIDER=coreml until that lands.
+            const bool allowCoreML = providerPreference == NnExecutionProviderPreference::CoreML;
             if (providerPreference == NnExecutionProviderPreference::Cuda) {
                 qWarning() << "Ignoring" << kNnProviderEnvVar
                            << "=cuda on macOS; using CPU provider";
             }
             #else
-            const bool allowCuda = providerPreference != NnExecutionProviderPreference::Cpu;
+            const bool allowCuda = providerPreference != NnExecutionProviderPreference::Cpu
+                                && providerPreference != NnExecutionProviderPreference::CoreML;
+            const bool allowCoreML = false;
+            if (providerPreference == NnExecutionProviderPreference::CoreML) {
+                qWarning() << "Ignoring" << kNnProviderEnvVar
+                           << "=coreml on non-Apple platforms; using CPU provider";
+            }
             #endif
 
             if (allowCuda) {
@@ -879,6 +919,18 @@ bool Comb::FrameBuffer::split3DnnTransform(FrameBuffer &nextFrame, qint32 frameI
                     tryCreateSession(cudaOptions, QStringLiteral("CUDA"));
                 } else {
                     qWarning() << "Unable to enable nnTransform3D CUDA provider:" << appendError;
+                }
+            }
+
+            if (!onnxReady && allowCoreML) {
+                Ort::SessionOptions coremlOptions;
+                configureSessionOptions(coremlOptions);
+
+                QString appendError;
+                if (appendCoreMLExecutionProvider(coremlOptions, appendError)) {
+                    tryCreateSession(coremlOptions, QStringLiteral("CoreML"));
+                } else {
+                    qWarning() << "Unable to enable nnTransform3D CoreML provider:" << appendError;
                 }
             }
 

@@ -87,7 +87,12 @@ endif()
 # 2. Locate external deep-learning and GPU dependencies
 # ==========================================
 
-find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_cxx_api.h PATHS ${ONNXRUNTIME_ROOT}/include $ENV{ONNXRUNTIME_ROOT}/include)
+find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_cxx_api.h PATHS
+    ${ONNXRUNTIME_ROOT}/include
+    ${ONNXRUNTIME_ROOT}/include/onnxruntime
+    $ENV{ONNXRUNTIME_ROOT}/include
+    $ENV{ONNXRUNTIME_ROOT}/include/onnxruntime
+)
 find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime PATHS ${ONNXRUNTIME_ROOT}/lib $ENV{ONNXRUNTIME_ROOT}/lib)
 
 if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)

@@ -52,6 +52,53 @@
                 runHook postInstall
               '';
             }
+          else if isDarwin then
+            # Microsoft prebuilt for CoreML EP (nixpkgs lacks it). 1.23.2
+            # is the last release with matching arm64+x86_64 thin builds,
+            # required for the universal DMG's per-arch lipo merge.
+            let
+              archSuffix =
+                if pkgsUnstable.stdenv.hostPlatform.isAarch64 then "arm64" else "x86_64";
+              archSha256 =
+                if pkgsUnstable.stdenv.hostPlatform.isAarch64
+                then "sha256-tNUTqysm8IjGaJHbvBQIFmcIdz18xBY9573KDpu7eFY="
+                else "sha256-0QNZ4WNHtX2ZWffoCiJaW0pm7X1+AHJ0oVyuhoNkhaY=";
+            in
+            pkgsUnstable.stdenvNoCC.mkDerivation rec {
+              pname = "onnxruntime-osx-${archSuffix}-prebuilt";
+              version = "1.23.2";
+              src = pkgsUnstable.fetchurl {
+                url = "https://github.com/microsoft/onnxruntime/releases/download/v${version}/onnxruntime-osx-${archSuffix}-${version}.tgz";
+                sha256 = archSha256;
+              };
+              sourceRoot = "onnxruntime-osx-${archSuffix}-${version}";
+              # stdenvNoCC omits cctools, so install_name_tool isn't on PATH.
+              # autoSignDarwinBinariesHook re-signs ad-hoc in fixupPhase after
+              # install_name_tool invalidates Microsoft's signature.
+              nativeBuildInputs = [
+                pkgsUnstable.cctools
+                pkgsUnstable.darwin.autoSignDarwinBinariesHook
+              ];
+              dontConfigure = true;
+              dontBuild = true;
+              # Strip Microsoft's broken onnxruntimeTargets.cmake (declares
+              # include/onnxruntime/ which the tgz doesn't ship) so
+              # find_package falls back to ONNXRUNTIME_ROOT include. Also
+              # rewrite the dylib's install_name from @rpath/... to its
+              # absolute store path (nix convention for a prebuilt) so we
+              # don't need nix-specific LC_RPATH workarounds in the built
+              # installables.
+              installPhase = ''
+                runHook preInstall
+                mkdir -p "$out"
+                cp -r ./* "$out"/
+                rm -rf "$out/lib/cmake"
+                install_name_tool -id \
+                  "$out/lib/libonnxruntime.${version}.dylib" \
+                  "$out/lib/libonnxruntime.${version}.dylib"
+                runHook postInstall
+              '';
+            }
           else
             pkgs.onnxruntime;
         cudaRuntimeDependencies = pkgs.lib.optionals isLinux [
@@ -125,6 +172,7 @@
             "-DAPP_COMMIT=${nixCommit}"
           ] ++ pkgs.lib.optionals isDarwin [
             "-DLDCHROMA_ENABLE_CUDA=OFF"
+            "-DONNXRUNTIME_ROOT=${onnxruntimePackage}"
           ] ++ pkgs.lib.optionals isLinux [
             "-DCUDAToolkit_ROOT=${cudaPackages.cudatoolkit}"
             "-DCMAKE_CUDA_HOST_COMPILER=${cudaHostCompiler}/bin/g++"

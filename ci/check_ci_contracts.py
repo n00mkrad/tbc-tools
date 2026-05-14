@@ -51,7 +51,6 @@ MACOS_REQUIRED_SNIPPETS = (
     "workflow_dispatch:",
     "workflow_call:",
     "macos-15-intel",
-    "LDDECODE_NNTRANSFORM3D_PROVIDER: cpu",
     "for item in result/bin/*; do",
     "result/share/tbc-video-export",
     "Missing vendored exporter tool: dist/tbc-tools.app/Contents/MacOS/tbc-video-export",
@@ -59,9 +58,9 @@ MACOS_REQUIRED_SNIPPETS = (
     "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
     "/nix/store/*)",
     "dep_unique_name()",
-    "verify_bundled_symbol_links()",
-    "Missing bundled symbol reference:",
-    "Bundled symbol verification failed.",
+    "verify_bundled_dependencies()",
+    "Unresolved bundled dependency:",
+    "Bundled dependency verification failed.",
 )
 
 RELEASE_REQUIRED_SNIPPETS = (

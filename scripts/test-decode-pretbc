@@ -77,6 +77,178 @@ def run_command(cmd, **kwopts):
     if rc != 0:
         die(cmd[0], 'failed with exit code', rc)
 
+def runtime_metadata_db(args):
+    """Return the metadata DB path used by the active decode pipeline."""
+    return args.runtime_db_file
+
+def count_table_rows(cursor, table_name):
+    """Count rows for capture_id=1 where available, otherwise count all rows."""
+    try:
+        cursor.execute(f"SELECT COUNT(*) AS row_count FROM {table_name} WHERE capture_id == 1")
+        return cursor.fetchone()['row_count']
+    except sqlite3.Error:
+        cursor.execute(f"SELECT COUNT(*) AS row_count FROM {table_name}")
+        return cursor.fetchone()['row_count']
+
+def compare_fresh_db_against_source(source_db_file, fresh_db_file):
+    """Compare key metadata invariants between source and fresh DB files."""
+
+    source_conn = None
+    fresh_conn = None
+    try:
+        source_conn = sqlite3.connect(source_db_file)
+        source_conn.row_factory = sqlite3.Row
+        source_cursor = source_conn.cursor()
+
+        fresh_conn = sqlite3.connect(fresh_db_file)
+        fresh_conn.row_factory = sqlite3.Row
+        fresh_cursor = fresh_conn.cursor()
+
+        fresh_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        fresh_tables = {row['name'] for row in fresh_cursor.fetchall()}
+        required_tables = {'capture', 'field_record', 'vbi', 'vits_metrics'}
+        missing_tables = sorted(required_tables - fresh_tables)
+        if missing_tables:
+            die(fresh_db_file, 'is missing required table(s):', ', '.join(missing_tables))
+
+        capture_columns = [
+            'video_sample_rate',
+            'active_video_start',
+            'active_video_end',
+            'field_width',
+            'field_height',
+            'number_of_sequential_fields',
+            'colour_burst_start',
+            'colour_burst_end',
+            'is_subcarrier_locked',
+            'is_widescreen',
+            'is_mapped',
+            'white_16b_ire',
+            'black_16b_ire',
+            'blanking_16b_ire',
+        ]
+
+        source_cursor.execute(
+            "SELECT " + ", ".join(capture_columns) + " FROM capture WHERE capture_id == 1"
+        )
+        source_capture_rows = source_cursor.fetchall()
+        if len(source_capture_rows) != 1:
+            die(source_db_file, 'could not find capture with id 1')
+
+        fresh_cursor.execute(
+            "SELECT " + ", ".join(capture_columns) + " FROM capture WHERE capture_id == 1"
+        )
+        fresh_capture_rows = fresh_cursor.fetchall()
+        if len(fresh_capture_rows) != 1:
+            die(fresh_db_file, 'could not find capture with id 1')
+
+        source_capture = source_capture_rows[0]
+        fresh_capture = fresh_capture_rows[0]
+        for column in capture_columns:
+            source_value = source_capture[column]
+            fresh_value = fresh_capture[column]
+            if source_value is None or fresh_value is None:
+                if source_value != fresh_value:
+                    die(
+                        fresh_db_file,
+                        'capture column',
+                        column,
+                        'mismatch:',
+                        source_value,
+                        'vs.',
+                        fresh_value,
+                    )
+                continue
+            if isinstance(source_value, float) or isinstance(fresh_value, float):
+                if abs(source_value - fresh_value) > 0.05:
+                    die(
+                        fresh_db_file,
+                        'capture column',
+                        column,
+                        'mismatch:',
+                        source_value,
+                        'vs.',
+                        fresh_value,
+                    )
+            elif source_value != fresh_value:
+                die(
+                    fresh_db_file,
+                    'capture column',
+                    column,
+                    'mismatch:',
+                    source_value,
+                    'vs.',
+                    fresh_value,
+                )
+
+        field_columns = ['field_id', 'disk_loc', 'field_phase_id', 'file_loc', 'is_first_field', 'sync_conf']
+        source_cursor.execute(
+            "SELECT " + ", ".join(field_columns) + " FROM field_record WHERE capture_id == 1 ORDER BY field_id"
+        )
+        source_fields = [tuple(row[column] for column in field_columns) for row in source_cursor.fetchall()]
+
+        fresh_cursor.execute(
+            "SELECT " + ", ".join(field_columns) + " FROM field_record WHERE capture_id == 1 ORDER BY field_id"
+        )
+        fresh_fields = [tuple(row[column] for column in field_columns) for row in fresh_cursor.fetchall()]
+
+        if len(source_fields) != len(fresh_fields):
+            die(
+                fresh_db_file,
+                'field_record row count mismatch:',
+                len(source_fields),
+                'vs.',
+                len(fresh_fields),
+            )
+
+        if source_fields != fresh_fields:
+            for index, (source_field, fresh_field) in enumerate(zip(source_fields, fresh_fields)):
+                if source_field != fresh_field:
+                    die(
+                        fresh_db_file,
+                        'field_record mismatch at index',
+                        index,
+                        ':',
+                        source_field,
+                        'vs.',
+                        fresh_field,
+                    )
+            die(fresh_db_file, 'field_record rows do not match source metadata')
+
+        source_vbi_rows = count_table_rows(source_cursor, 'vbi')
+        fresh_vbi_rows = count_table_rows(fresh_cursor, 'vbi')
+        if fresh_vbi_rows <= 0:
+            die(fresh_db_file, 'contains no VBI rows after fresh decode')
+        if fresh_vbi_rows != source_vbi_rows:
+            die(
+                fresh_db_file,
+                'vbi row count mismatch:',
+                source_vbi_rows,
+                'vs.',
+                fresh_vbi_rows,
+            )
+
+        source_vits_rows = count_table_rows(source_cursor, 'vits_metrics')
+        fresh_vits_rows = count_table_rows(fresh_cursor, 'vits_metrics')
+        if fresh_vits_rows <= 0:
+            die(fresh_db_file, 'contains no VITS metric rows after fresh decode')
+        if fresh_vits_rows != source_vits_rows:
+            die(
+                fresh_db_file,
+                'vits_metrics row count mismatch:',
+                source_vits_rows,
+                'vs.',
+                fresh_vits_rows,
+            )
+
+    except sqlite3.Error as e:
+        die(fresh_db_file, 'SQLite comparison error:', str(e))
+    finally:
+        if source_conn:
+            source_conn.close()
+        if fresh_conn:
+            fresh_conn.close()
+
 def copy_pretbc_files(args):
     """Copy pre-generated TBC files to the working directory."""
     
@@ -104,13 +276,19 @@ def copy_pretbc_files(args):
 
 def run_ld_process_vbi(args):
     """Run ld-process-vbi."""
-
-    clean(args, ['.tbc.json.bup', '.tbc.db.bup'])
+    clean_suffixes = ['.tbc.json.bup', '.tbc.db.bup']
+    if args.fresh_db_decode:
+        clean_suffixes += ['.fresh.tbc.db', '.fresh.tbc.db.bup']
+    clean(args, clean_suffixes)
 
     cmd = [resolve_tool(
         os.path.join(build_dir, 'bin', 'ld-process-vbi'),
         os.path.join(build_dir, 'src', 'ld-process-vbi', 'ld-process-vbi'),
     )]
+    if args.fresh_db_decode:
+        cmd += ['--nobackup']
+        cmd += ['--input-metadata', args.source_db_file]
+        cmd += ['--output-metadata', args.runtime_db_file]
     cmd += [args.output + '.tbc']
     run_command(cmd)
 
@@ -118,7 +296,7 @@ def run_ld_process_vbi(args):
         return
 
     # Read the SQLite database output
-    db_file = args.output + '.tbc.db'
+    db_file = runtime_metadata_db(args)
     if not os.path.exists(db_file):
         die(db_file, 'does not exist')
     
@@ -184,6 +362,9 @@ def run_ld_process_vbi(args):
         if conn:
             conn.close()
 
+    if args.fresh_db_decode:
+        compare_fresh_db_against_source(args.source_db_file, args.runtime_db_file)
+
 def run_ld_export_metadata(args):
     """Run tbc-export-metadata."""
 
@@ -196,21 +377,23 @@ def run_ld_export_metadata(args):
     cmd += ['--vits-csv', args.output + '.vits.csv']
     cmd += ['--vbi-csv', args.output + '.vbi.csv']
     cmd += ['--ffmetadata', args.output + '.ffmetadata']
-    cmd += [args.output + '.tbc.db']
+    cmd += [runtime_metadata_db(args)]
     run_command(cmd)
 
 def run_ld_export_decode_metadata(args):
     """Run tbc-export-metadata decode-export mode."""
-
-    json_file = args.output + '.tbc.export.json'
-    db_file = args.output + '.tbc.db'
+    json_suffix = '.tbc.export.json'
+    if args.fresh_db_decode:
+        json_suffix = '.fresh.tbc.export.json'
+    json_file = args.output + json_suffix
+    db_file = runtime_metadata_db(args)
 
     # Check if SQLite DB exists
     if not dry_run:
         if not os.path.exists(db_file):
             die(db_file, 'does not exist')
 
-    clean(args, ['.tbc.export.json'])
+    clean(args, [json_suffix])
 
     cmd = [resolve_tool(
         os.path.join(build_dir, 'bin', 'tbc-export-metadata'),
@@ -380,6 +563,8 @@ def run_ld_dropout_correct(args):
         os.path.join(build_dir, 'bin', 'ld-dropout-correct'),
         os.path.join(build_dir, 'src', 'ld-dropout-correct', 'ld-dropout-correct'),
     )]
+    cmd += ['--input-metadata', runtime_metadata_db(args)]
+    cmd += ['--output-metadata', args.output + '.doc.tbc.db']
     cmd += ['--overcorrect', args.output + '.tbc', args.output + '.doc.tbc']
     run_command(cmd)
 
@@ -393,6 +578,7 @@ def run_ld_chroma_decoder(args, decoder):
         os.path.join(build_dir, 'bin', 'ld-chroma-decoder'),
         os.path.join(build_dir, 'src', 'ld-chroma-decoder', 'ld-chroma-decoder'),
     )]
+    cmd += ['--input-metadata', args.output + '.doc.tbc.db']
     if decoder is not None:
         cmd += ['--decoder', decoder]
     cmd += [args.output + '.doc.tbc', rgb_file]
@@ -441,6 +627,9 @@ def main():
                        help='source has no EFM')
     group.add_argument('--no-efm-timecodes', action='store_true', dest='no_efm_timecodes',
                        help='source EFM has no timecodes')
+    group.add_argument('--fresh-db-decode', action='store_true',
+                       help='decode to a fresh SQLite metadata file and run pipeline against it '
+                            '(targeted regression/support check)')
     group.add_argument('--decoder', metavar='decoder', action='append',
                        dest='decoders', default=[],
                        help='use specific ld-chroma-decoder decoder '
@@ -466,6 +655,10 @@ def main():
     dry_run = args.dry_run
     if args.decoders == []:
         args.decoders = [None]
+    args.source_db_file = args.output + '.tbc.db'
+    args.runtime_db_file = args.output + '.tbc.db'
+    if args.fresh_db_decode:
+        args.runtime_db_file = args.output + '.fresh.tbc.db'
 
     if not os.path.exists(args.pretbc_input + '.tbc'):
         die('Pre-generated TBC file', args.pretbc_input + '.tbc', 'does not exist')

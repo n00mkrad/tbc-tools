@@ -347,4 +347,39 @@ if(BUILD_TESTING)
             --expect-vbi 9152512,15730528,15730528
             ${CMAKE_SOURCE_DIR}/test-data/pal/ggv-mb-1khz
     )
+
+    # Targeted support/regression checks:
+    # decode using a freshly generated SQLite metadata DB from current fixtures.
+    add_test(
+        NAME decode-pretbc-freshdb-ntsc-clv
+        COMMAND ${SCRIPTS_DIR}/test-decode-pretbc
+            --build ${CMAKE_BINARY_DIR}
+            --fresh-db-decode
+            --no-efm-timecodes
+            --expect-frames 4
+            --expect-bpsnr 37.6
+            --expect-vbi 9167913,15785241,15785241
+            ${CMAKE_SOURCE_DIR}/test-data/ntsc/issue176
+            ${CMAKE_BINARY_DIR}/testout/decode-freshdb-ntsc-clv
+    )
+    set_tests_properties(decode-pretbc-freshdb-ntsc-clv PROPERTIES
+        LABELS "decode-targeted;decode-regression"
+    )
+
+    add_test(
+        NAME decode-pretbc-freshdb-pal-clv
+        COMMAND ${SCRIPTS_DIR}/test-decode-pretbc
+            --build ${CMAKE_BINARY_DIR}
+            --fresh-db-decode
+            --pal
+            --no-efm
+            --expect-frames 9
+            --expect-bpsnr 30.3
+            --expect-vbi 0,8449774,8449774
+            ${CMAKE_SOURCE_DIR}/test-data/pal/kagemusha-leadout-cbar
+            ${CMAKE_BINARY_DIR}/testout/decode-freshdb-pal-clv
+    )
+    set_tests_properties(decode-pretbc-freshdb-pal-clv PROPERTIES
+        LABELS "decode-targeted;decode-regression"
+    )
 endif()

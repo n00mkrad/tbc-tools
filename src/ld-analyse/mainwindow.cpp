@@ -1009,6 +1009,29 @@ QVector<UserNoteMarker> userNoteMarkersFromVideoParameters(
     return normaliseUserNoteMarkers(combinedMarkers, totalFrames);
 }
 
+qint32 nextUserMarkerChapterFrame(const QVector<UserNoteMarker> &noteMarkers,
+                                  qint32 currentFrameNumber,
+                                  qint32 totalFrames)
+{
+    for (const UserNoteMarker &noteMarker : noteMarkers) {
+        if (noteMarker.frame > currentFrameNumber) {
+            return noteMarker.frame;
+        }
+    }
+    return totalFrames;
+}
+
+qint32 previousUserMarkerChapterFrame(const QVector<UserNoteMarker> &noteMarkers,
+                                      qint32 currentFrameNumber)
+{
+    for (qint32 i = noteMarkers.size() - 1; i >= 0; --i) {
+        if (noteMarkers.at(i).frame < currentFrameNumber) {
+            return noteMarkers.at(i).frame;
+        }
+    }
+    return 1;
+}
+
 QString serializeUserNoteMarkersJson(const QVector<UserNoteMarker> &noteMarkers)
 {
     if (noteMarkers.isEmpty()) {
@@ -1557,6 +1580,30 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
             tbcSource.setChromaDecoder(false);
             updateVideoPushButton();
         }
+    });
+
+    chapterSkipHoldDelayTimer = new QTimer(this);
+    chapterSkipHoldDelayTimer->setSingleShot(true);
+    chapterSkipHoldDelayTimer->setInterval(220);
+    chapterSkipHoldRepeatTimer = new QTimer(this);
+    chapterSkipHoldRepeatTimer->setSingleShot(false);
+    chapterSkipHoldRepeatTimer->setInterval(110);
+    connect(chapterSkipHoldDelayTimer, &QTimer::timeout, this, [this]() {
+        if (!chapterSkipHoldButton || !chapterSkipHoldButton->isDown() || !tbcSource.getIsSourceLoaded()) {
+            return;
+        }
+        chapterSkipHoldTriggered = true;
+        setPlaybackRunning(false);
+        skipFramesBy(chapterSkipHoldDeltaFrames);
+        chapterSkipHoldRepeatTimer->start();
+    });
+    connect(chapterSkipHoldRepeatTimer, &QTimer::timeout, this, [this]() {
+        if (!chapterSkipHoldButton || !chapterSkipHoldButton->isDown() || !tbcSource.getIsSourceLoaded()) {
+            chapterSkipHoldRepeatTimer->stop();
+            return;
+        }
+        setPlaybackRunning(false);
+        skipFramesBy(chapterSkipHoldDeltaFrames);
     });
     // Button press/release signals for chroma seek mode are auto-connected by Qt's auto-connection mechanism
 
@@ -3790,6 +3837,24 @@ void MainWindow::setCurrentField(qint32 number)
     showImage();
 }
 
+void MainWindow::skipFramesBy(qint32 frameDelta)
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        return;
+    }
+
+    const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+    const qint32 targetFrame = qBound<qint32>(1, currentFrameNumber + frameDelta, totalFrames);
+    if (targetFrame == currentFrameNumber) {
+        return;
+    }
+
+    setCurrentFrame(targetFrame);
+    const qint32 uiNumber = tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
+    updatePositionEditorValue(uiNumber);
+    ui->posHorizontalSlider->setValue(uiNumber);
+}
+
 void MainWindow::sanitizeCurrentPosition()
 {
     if (currentFrameNumber > tbcSource.getNumberOfFrames() || currentFieldNumber > tbcSource.getNumberOfFields()) {
@@ -5869,11 +5934,76 @@ void MainWindow::on_nextPushButton_released()
     exitChromaSeekMode(ui->nextPushButton);
 }
 
+void MainWindow::on_endPushButton_pressed()
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        return;
+    }
+    suppressEndButtonClick = false;
+    chapterSkipHoldButton = ui->endPushButton;
+    chapterSkipHoldDeltaFrames = 10;
+    chapterSkipHoldTriggered = false;
+    chapterSkipHoldDelayTimer->start();
+}
+
+void MainWindow::on_endPushButton_released()
+{
+    if (chapterSkipHoldButton == ui->endPushButton && chapterSkipHoldTriggered) {
+        suppressEndButtonClick = true;
+    }
+    chapterSkipHoldDelayTimer->stop();
+    chapterSkipHoldRepeatTimer->stop();
+    chapterSkipHoldButton = nullptr;
+    chapterSkipHoldDeltaFrames = 0;
+    chapterSkipHoldTriggered = false;
+}
+
+void MainWindow::on_startPushButton_pressed()
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        return;
+    }
+    suppressStartButtonClick = false;
+    chapterSkipHoldButton = ui->startPushButton;
+    chapterSkipHoldDeltaFrames = -10;
+    chapterSkipHoldTriggered = false;
+    chapterSkipHoldDelayTimer->start();
+}
+
+void MainWindow::on_startPushButton_released()
+{
+    if (chapterSkipHoldButton == ui->startPushButton && chapterSkipHoldTriggered) {
+        suppressStartButtonClick = true;
+    }
+    chapterSkipHoldDelayTimer->stop();
+    chapterSkipHoldRepeatTimer->stop();
+    chapterSkipHoldButton = nullptr;
+    chapterSkipHoldDeltaFrames = 0;
+    chapterSkipHoldTriggered = false;
+}
+
 // Skip to the next chapter (note: this button was repurposed from 'end frame')
 void MainWindow::on_endPushButton_clicked()
 {
+    if (suppressEndButtonClick) {
+        suppressEndButtonClick = false;
+        return;
+    }
     setPlaybackRunning(false);
-    setCurrentFrame(tbcSource.startOfNextChapter(currentFrameNumber));
+    const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+    qint32 targetFrame = currentFrameNumber;
+    if (tbcSource.hasChapterMap()) {
+        targetFrame = tbcSource.startOfNextChapter(currentFrameNumber);
+    } else {
+        const QVector<UserNoteMarker> userChapterMarkers = userNoteMarkersFromVideoParameters(
+            tbcSource.getVideoParameters(), totalFrames);
+        if (!userChapterMarkers.isEmpty()) {
+            targetFrame = nextUserMarkerChapterFrame(userChapterMarkers, currentFrameNumber, totalFrames);
+        } else {
+            targetFrame = qMin(totalFrames, currentFrameNumber + 10);
+        }
+    }
+    setCurrentFrame(targetFrame);
     auto uiNumber = currentFrameNumber;
 
     if (tbcSource.getFieldViewEnabled()) {
@@ -5887,8 +6017,25 @@ void MainWindow::on_endPushButton_clicked()
 // Skip to the start of chapter (note: this button was repurposed from 'start frame')
 void MainWindow::on_startPushButton_clicked()
 {
+    if (suppressStartButtonClick) {
+        suppressStartButtonClick = false;
+        return;
+    }
     setPlaybackRunning(false);
-    setCurrentFrame(tbcSource.startOfChapter(currentFrameNumber));
+    qint32 targetFrame = currentFrameNumber;
+    if (tbcSource.hasChapterMap()) {
+        targetFrame = tbcSource.startOfChapter(currentFrameNumber);
+    } else {
+        const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+        const QVector<UserNoteMarker> userChapterMarkers = userNoteMarkersFromVideoParameters(
+            tbcSource.getVideoParameters(), totalFrames);
+        if (!userChapterMarkers.isEmpty()) {
+            targetFrame = previousUserMarkerChapterFrame(userChapterMarkers, currentFrameNumber);
+        } else {
+            targetFrame = qMax<qint32>(1, currentFrameNumber - 10);
+        }
+    }
+    setCurrentFrame(targetFrame);
     auto uiNumber = currentFrameNumber;
 
     if (tbcSource.getFieldViewEnabled()) {

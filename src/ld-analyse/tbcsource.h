@@ -172,6 +172,7 @@ public:
     const Comb::Configuration &getNtscConfiguration() const;
     const MonoDecoder::MonoConfiguration &getMonoConfiguration() const;
     const OutputWriter::Configuration &getOutputConfiguration() const;
+    bool hasChapterMap() const;
 
     qint32 startOfNextChapter(qint32 currentFrameNumber);
     qint32 startOfChapter(qint32 currentFrameNumber);

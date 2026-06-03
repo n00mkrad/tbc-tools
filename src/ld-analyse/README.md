@@ -21,7 +21,11 @@ ld-analyse [options] <input.tbc>
    - Previous/Next buttons
    - Slider for quick navigation
    - Frame number entry
-   - Start/End buttons to jump to beginning/end
+   - Start/End buttons for chapter-style navigation:
+     - Uses LaserDisc VBI chapter map when available
+     - Falls back to user-defined timeline markers when no VBI chapters exist
+     - If neither chapter type exists, moves by 10 frames backward/forward
+     - Press-and-hold repeats 10-frame backward/forward skips continuously
 3. **View Options**: Click buttons to toggle
    - Video: Enable/disable video display
    - Aspect: Toggle aspect ratio correction

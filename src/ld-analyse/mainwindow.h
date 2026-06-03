@@ -121,6 +121,10 @@ private slots:
     void on_nextPushButton_released();
     void on_endPushButton_clicked();
     void on_startPushButton_clicked();
+    void on_endPushButton_pressed();
+    void on_endPushButton_released();
+    void on_startPushButton_pressed();
+    void on_startPushButton_released();
     void on_playPushButton_toggled(bool checked);
     void on_posNumberSpinBox_editingFinished();
     void on_posTimecodeLineEdit_editingFinished();
@@ -267,6 +271,13 @@ private:
     bool chromaSeekMode;
     bool originalChromaState;
     QTimer* seekTimer;
+    QTimer* chapterSkipHoldDelayTimer = nullptr;
+    QTimer* chapterSkipHoldRepeatTimer = nullptr;
+    QPushButton* chapterSkipHoldButton = nullptr;
+    qint32 chapterSkipHoldDeltaFrames = 0;
+    bool chapterSkipHoldTriggered = false;
+    bool suppressStartButtonClick = false;
+    bool suppressEndButtonClick = false;
 
     // Update GUI methods
     void setGuiEnabled(bool enabled);
@@ -293,6 +304,7 @@ private:
     void stepPlayback();
     void setCurrentFrame(qint32 frame);
     void setCurrentField(qint32 field);
+    void skipFramesBy(qint32 frameDelta);
     void sanitizeCurrentPosition();
 
 	// Image display methods

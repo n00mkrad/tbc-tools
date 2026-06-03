@@ -1232,6 +1232,11 @@ const OutputWriter::Configuration &TbcSource::getOutputConfiguration() const
     return outputConfiguration;
 }
 
+bool TbcSource::hasChapterMap() const
+{
+    return !chapterMap.isEmpty();
+}
+
 // Return the frame number of the start of the next chapter
 qint32 TbcSource::startOfNextChapter(qint32 currentFrameNumber)
 {

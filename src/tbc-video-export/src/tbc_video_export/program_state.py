@@ -182,14 +182,15 @@ class ProgramState:
     def total_frames(self) -> int:
         """Total frames detected from the TBC json."""
         tbc_frame_count = self.tbc_json.frame_count
-        start = self.opts.start or 0
+        start_frame = 1 if self.opts.start is None else max(1, self.opts.start)
+        remaining_frames = max(0, tbc_frame_count - (start_frame - 1))
         length = (
             self.opts.length
             if self.opts.length is not None
-            else tbc_frame_count - start
+            else remaining_frames
         )
 
-        return min(tbc_frame_count - start, max(0, length))
+        return min(remaining_frames, max(0, length))
 
     def __str__(self) -> str:
         """Return formatted string of program state."""

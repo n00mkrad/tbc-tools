@@ -199,10 +199,23 @@ class WrapperFFmpeg(Wrapper):
             return None, None
 
         fps = self._state.video_system_data.fps_fraction
-        start_frame = self._state.opts.start or 0
+        start_frame_one_based = self._state.opts.start
+        start_frame_zero_based = (
+            max(0, start_frame_one_based - 1)
+            if start_frame_one_based is not None
+            else 0
+        )
 
-        ss = f"{float(Fraction(start_frame) / fps):.6f}" if start_frame > 0 else None
-        t = f"{float(Fraction(self._state.total_frames) / fps):.6f}"
+        ss = (
+            f"{float(Fraction(start_frame_zero_based) / fps):.6f}"
+            if start_frame_zero_based > 0
+            else None
+        )
+        t = (
+            f"{float(Fraction(self._state.total_frames) / fps):.6f}"
+            if self._state.total_frames > 0
+            else None
+        )
         return ss, t
 
     def _get_audio_input_opts(self) -> FlatList:

@@ -182,6 +182,44 @@ class TestWrappersFFmpeg:
             ],
         ),
         WrapperTestCase(
+            id="audio trim start=1 does not seek",
+            input_tbc=f"{get_path('pal_svideo_5')}.tbc",
+            input_opts=[
+                "--start",
+                "1",
+                "--length",
+                "5",
+                "--audio-track",
+                audio_file,
+            ],
+            expected_opts=[
+                {"-t", "0.200000"},
+            ],
+            unexpected_opts=[
+                {"-ss", "0.040000"},
+                {"-t", "0.160000"},
+            ],
+        ),
+        WrapperTestCase(
+            id="audio trim seek uses start-1 frames",
+            input_tbc=f"{get_path('pal_svideo_5')}.tbc",
+            input_opts=[
+                "--start",
+                "2",
+                "--length",
+                "2",
+                "--audio-track",
+                audio_file,
+            ],
+            expected_opts=[
+                {"-ss", "0.040000"},
+                {"-t", "0.080000"},
+            ],
+            unexpected_opts=[
+                {"-ss", "0.080000"},
+            ],
+        ),
+        WrapperTestCase(
             id="advanced audio track",
             input_tbc=f"{get_path('pal_svideo')}.tbc",
             input_opts=[

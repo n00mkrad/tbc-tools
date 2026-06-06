@@ -3222,7 +3222,6 @@ void ExportDialog::on_exportButton_clicked()
         return;
     }
     const int startFrameOneBased = inPoint;
-    const int zeroBasedStartForAudioTrim = qMax(0, startFrameOneBased - 1);
     const int rangeLength = outPoint - inPoint + 1;
     const QString vitcFfmpegTimecode = firstValidVitcTimecodeForRange(metadataSnapshotPath,
                                                                        startFrameOneBased,
@@ -3234,20 +3233,6 @@ void ExportDialog::on_exportButton_clicked()
     }
 
     QStringList exportAudioTracks = collectAudioTracks();
-    if (!exportAudioTracks.isEmpty() && (zeroBasedStartForAudioTrim > 0 || rangeLength < totalFrames)) {
-        QString trimAudioErrorMessage;
-        if (!prepareTrimmedAudioTracks(zeroBasedStartForAudioTrim, rangeLength, &exportAudioTracks, &trimAudioErrorMessage)) {
-            cleanupTemporaryMetadataSnapshot();
-            const QString errorToShow = trimAudioErrorMessage.isEmpty()
-                                            ? tr("Could not prepare audio track range.")
-                                            : trimAudioErrorMessage;
-            appendStatus(errorToShow);
-            appendLog(errorToShow);
-            QMessageBox::warning(this, tr("Error"), errorToShow);
-            return;
-        }
-        appendLog(tr("Prepared %1 range-aligned audio track(s).").arg(exportAudioTracks.size()));
-    }
 
     QString errorMessage;
     const QStringList arguments = buildArguments(&errorMessage,

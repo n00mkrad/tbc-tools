@@ -264,6 +264,15 @@ QStringList defaultExecutableSearchDirs(const QString &currentInputFile)
         }
         candidateDirs << dirPath;
     };
+    const QString appFilePath = QCoreApplication::applicationFilePath();
+    if (!appFilePath.isEmpty()) {
+        const QFileInfo appFileInfo(appFilePath);
+        const QString canonicalAppFilePath = appFileInfo.canonicalFilePath();
+        if (!canonicalAppFilePath.isEmpty()) {
+            appendUniqueDir(QFileInfo(canonicalAppFilePath).absolutePath());
+        }
+        appendUniqueDir(appFileInfo.absolutePath());
+    }
 
     const QString appDir = QCoreApplication::applicationDirPath();
     if (!appDir.isEmpty()) {

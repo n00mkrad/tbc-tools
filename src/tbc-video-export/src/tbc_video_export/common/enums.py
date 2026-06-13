@@ -92,6 +92,8 @@ class ChromaDecoder(Enum):
     NTSC1D = "ntsc1d"
     NTSC2D = "ntsc2d"
     NTSC3D = "ntsc3d"
+    NNTRANSFORM3D = "nntransform3d"
+    NNTSC3D = "nntsc3d"
     NTSC3DNOADAPT = "ntsc3dnoadapt"
 
     def __str__(self) -> str:

@@ -104,6 +104,8 @@ class WrapperLDChromaDecoder(Wrapper):
                     ChromaDecoder.NTSC1D,
                     ChromaDecoder.NTSC2D,
                     ChromaDecoder.NTSC3D,
+                    ChromaDecoder.NNTRANSFORM3D,
+                    ChromaDecoder.NNTSC3D,
                     ChromaDecoder.NTSC3DNOADAPT,
                 }:
                     raise exceptions.InvalidChromaDecoderError(

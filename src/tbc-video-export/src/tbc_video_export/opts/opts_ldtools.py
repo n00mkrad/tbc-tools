@@ -187,6 +187,8 @@ def add_ldtool_opts(parent: argparse.ArgumentParser) -> None:
             f"  {ChromaDecoder.NTSC1D}\n"
             f"  {ChromaDecoder.NTSC2D} (default for NTSC S-Video and CVBS)\n"
             f"  {ChromaDecoder.NTSC3D} (default for NTSC CVBS LD)\n"
+            f"  {ChromaDecoder.NNTRANSFORM3D}\n"
+            f"  {ChromaDecoder.NNTSC3D}\n"
             f"  {ChromaDecoder.NTSC3DNOADAPT}"
             "\n\n"
         ),
@@ -209,6 +211,8 @@ def add_ldtool_opts(parent: argparse.ArgumentParser) -> None:
             f"  {ChromaDecoder.NTSC1D}\n"
             f"  {ChromaDecoder.NTSC2D}\n"
             f"  {ChromaDecoder.NTSC3D}\n"
+            f"  {ChromaDecoder.NNTRANSFORM3D}\n"
+            f"  {ChromaDecoder.NNTSC3D}\n"
             f"  {ChromaDecoder.NTSC3DNOADAPT}"
             "\n\n"
         ),

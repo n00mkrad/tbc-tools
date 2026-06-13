@@ -120,7 +120,7 @@ Container: is defined by the final item in the command `OUTPUT.mov` so .mov for 
 
 PAL options `pal2d`,`transform2d`, `transform3d`, `mono`
 
-NTSC options `ntsc1d`, `ntsc2d`, `ntsc3d`, `ntsc3dnoadapt`, `mono`
+NTSC options `ntsc1d`, `ntsc2d`, `ntsc3d`, `nntransform3d`, `nntsc3d`, `ntsc3dnoadapt`, `mono`
 
 
 ### Advanced Options

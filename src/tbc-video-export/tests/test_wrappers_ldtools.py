@@ -351,6 +351,34 @@ class TestWrappersChromaDecoder:
             tbc_type=TBCType.COMBINED,
         ),
         WrapperTestCase(
+            id="secam composite defaults to mono opts",
+            input_tbc=f"{get_path('pal_composite')}.tbc",
+            input_opts=[
+                "--input-tbc-json",
+                str(get_path("secam_composite.tbc.json")),
+            ],
+            expected_opts=[
+                {"-f", "mono"},
+                {"--input-json", str(get_path("secam_composite.tbc.json"))},
+                {"PIPE_IN", "PIPE_OUT"},
+            ],
+            tbc_type=TBCType.COMBINED,
+        ),
+        WrapperTestCase(
+            id="mesecam composite defaults to mono opts",
+            input_tbc=f"{get_path('pal_composite')}.tbc",
+            input_opts=[
+                "--input-tbc-json",
+                str(get_path("mesecam_composite.tbc.json")),
+            ],
+            expected_opts=[
+                {"-f", "mono"},
+                {"--input-json", str(get_path("mesecam_composite.tbc.json"))},
+                {"PIPE_IN", "PIPE_OUT"},
+            ],
+            tbc_type=TBCType.COMBINED,
+        ),
+        WrapperTestCase(
             id="pal invalid decoder (exception)",
             input_tbc=f"{get_path('pal_svideo')}.tbc",
             input_opts=["--chroma-decoder", "ntsc2d"],
@@ -487,6 +515,17 @@ class TestWrappersChromaDecoder:
             input_opts=[],
             expected_opts=[
                 {"-f", "ntsc3d"},
+                {"--input-json", f"{get_path('ntsc_composite')}.tbc.json"},
+                {"PIPE_IN", "PIPE_OUT"},
+            ],
+            tbc_type=TBCType.COMBINED,
+        ),
+        WrapperTestCase(
+            id="ntsc composite nntransform3d opts",
+            input_tbc=f"{get_path('ntsc_composite')}.tbc",
+            input_opts=["--chroma-decoder", "nntransform3d"],
+            expected_opts=[
+                {"-f", "nntransform3d"},
                 {"--input-json", f"{get_path('ntsc_composite')}.tbc.json"},
                 {"PIPE_IN", "PIPE_OUT"},
             ],

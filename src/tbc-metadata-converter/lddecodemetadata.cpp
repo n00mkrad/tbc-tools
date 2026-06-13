@@ -221,16 +221,63 @@ void LdDecodeMetaData::readFields(SqliteReader &reader, int captureId)
     }
 }
 
+static QString normaliseVideoSystemName(QString name)
+{
+    name = name.trimmed().toUpper();
+    name.replace('-', '_');
+    name.replace(' ', '_');
+    return name;
+}
+static bool isSecamFamilyVideoSystemName(const QString &name)
+{
+    const QString normalisedName = normaliseVideoSystemName(name);
+    return normalisedName == QStringLiteral("SECAM")
+           || normalisedName == QStringLiteral("MESECAM");
+}
 // Look up a video system by name.
 // Return true and set system if found; if not found, return false.
 bool parseVideoSystemName(QString name, VideoSystem &system)
 {
-    // Search VIDEO_SYSTEM_DEFAULTS for a matching name
+    const QString normalisedName = normaliseVideoSystemName(name);
+
+    // Search VIDEO_SYSTEM_DEFAULTS for a matching (normalised) name
     for (const auto &defaults: VIDEO_SYSTEM_DEFAULTS) {
-        if (name == defaults.name) {
+        if (normalisedName == normaliseVideoSystemName(QString(defaults.name))) {
             system = defaults.system;
             return true;
         }
+    }
+
+    // Legacy/alternate metadata aliases:
+    // - MPAL/PAL_M/PALM and Nlinha are treated as PAL-M (525-line PAL variants)
+    if (normalisedName == "MPAL" ||
+        normalisedName == "PALM" ||
+        normalisedName == "PAL_M" ||
+        normalisedName == "N_LINHA" ||
+        normalisedName == "NLINHA" ||
+        normalisedName == "PAL_N_LINHA" ||
+        normalisedName == "PAL_NLINHA") {
+        system = PAL_M;
+        return true;
+    }
+
+    // NTSC aliases used by some tooling/presets
+    if (normalisedName == "NTSCJ" ||
+        normalisedName == "NTSC_J") {
+        system = NTSC;
+        return true;
+    }
+
+    // PAL-family aliases currently emitted/accepted by vhs-decode workflows
+    // (mapped to PAL line-system defaults)
+    if (normalisedName == "SECAM" ||
+        normalisedName == "MESECAM" ||
+        normalisedName == "PALN" ||
+        normalisedName == "PAL_N" ||
+        normalisedName == "405" ||
+        normalisedName == "819") {
+        system = PAL;
+        return true;
     }
     return false;
 }
@@ -344,6 +391,8 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
     }
 
     reader.endObject();
+    const bool secamFamilySystem =
+        isSecamFamilyVideoSystemName(QString::fromStdString(systemString));
 
     // Work out which video system is being used
     if (systemString == "") {
@@ -358,6 +407,9 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
 
     if (blanking16bIre == -1) {
         blanking16bIre = black16bIre;
+    }
+    if (secamFamilySystem && chromaDecoder.trimmed().isEmpty()) {
+        chromaDecoder = QStringLiteral("mono");
     }
 
     isValid = true;
@@ -896,6 +948,7 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         }
 
         videoParameters.numberOfSequentialFields = numberOfSequentialFields;
+        const bool secamFamilySystem = isSecamFamilyVideoSystemName(system);
         if (!parseVideoSystemName(system, videoParameters.system)) {
             qCritical() << "Unknown video system:" << system;
             return false;
@@ -918,7 +971,10 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         videoParameters.sampleRate = videoSampleRate;
         videoParameters.isMapped = isMapped;
         videoParameters.tapeFormat = captureNotes;
-        videoParameters.chromaDecoder = chromaDecoder;
+        videoParameters.chromaDecoder =
+            (secamFamilySystem && chromaDecoder.trimmed().isEmpty())
+                ? QStringLiteral("mono")
+                : chromaDecoder;
         videoParameters.chromaGain = chromaGain;
         videoParameters.chromaPhase = chromaPhase;
         videoParameters.lumaNR = lumaNR;

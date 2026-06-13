@@ -609,6 +609,8 @@ bool isValidChromaDecoderForSystem(const QString &decoderName, int system)
         QStringLiteral("ntsc1d"),
         QStringLiteral("ntsc2d"),
         QStringLiteral("ntsc3d"),
+        QStringLiteral("nntransform3d"),
+        QStringLiteral("nntsc3d"),
         QStringLiteral("ntsc3dnoadapt"),
         QStringLiteral("mono")
     };
@@ -5314,16 +5316,18 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         args << QStringLiteral("--video-system") << videoSystemArg(videoParameters.system);
     }
 
+    QString normalizedDecoderName;
     if (!videoParameters.chromaDecoder.isEmpty()) {
-        const QString decoderName = videoParameters.chromaDecoder.trimmed().toLower();
-        if (isValidChromaDecoderForSystem(decoderName, videoParameters.system)) {
-            args << QStringLiteral("--chroma-decoder") << decoderName;
+        normalizedDecoderName = videoParameters.chromaDecoder.trimmed().toLower();
+        if (isValidChromaDecoderForSystem(normalizedDecoderName, videoParameters.system)) {
+            args << QStringLiteral("--chroma-decoder") << normalizedDecoderName;
         }
     }
-    if (videoParameters.chromaGain >= 0.0) {
+    const bool monoDecoderSelected = normalizedDecoderName == QStringLiteral("mono");
+    if (!monoDecoderSelected && videoParameters.chromaGain >= 0.0) {
         args << QStringLiteral("--chroma-gain") << QString::number(videoParameters.chromaGain, 'f', 6);
     }
-    if (videoParameters.chromaPhase != -1.0) {
+    if (!monoDecoderSelected && videoParameters.chromaPhase != -1.0) {
         args << QStringLiteral("--chroma-phase") << QString::number(videoParameters.chromaPhase, 'f', 3);
     }
     const bool isSplitSource = tbcSource && tbcSource->getSourceMode() != TbcSource::ONE_SOURCE;

@@ -142,6 +142,8 @@ Available decoders:
 | NTSC   | `NTSC1D`        |         |
 | NTSC   | `NTSC2D`        |         |
 | NTSC   | `NTSC3D`        |         |
+| NTSC   | `NNTRANSFORM3D` |         |
+| NTSC   | `NNTSC3D`       |         |
 | NTSC   | `NTSC3DNOADAPT` |         |
 
 
@@ -163,6 +165,8 @@ Available decoders:
 | NTSC   | `NTSC1D`        |             |
 | NTSC   | `NTSC2D`        | NTSC        |
 | NTSC   | `NTSC3D`        | NTSC CVBS   |
+| NTSC   | `NNTRANSFORM3D` |             |
+| NTSC   | `NNTSC3D`       |             |
 | NTSC   | `NTSC3DNOADAPT` |             |
 
 
@@ -230,8 +234,9 @@ Options:
                                               maximum is 32)
   -f, --decoder <decoder>                     Decoder to use (pal2d,
                                               transform2d, transform3d, ntsc1d,
-                                              ntsc2d, ntsc3d, ntsc3dnoadapt,
-                                              mono; default automatic)
+                                              ntsc2d, ntsc3d, nntransform3d,
+                                              nntsc3d, ntsc3dnoadapt, mono;
+                                              default automatic)
   -t, --threads <number>                      Specify the number of concurrent
                                               threads (default number of logical
                                               CPUs)

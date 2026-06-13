@@ -88,6 +88,12 @@ static QString normaliseVideoSystemName(QString name)
     name.replace(' ', '_');
     return name;
 }
+static bool isSecamFamilyVideoSystemName(const QString &name)
+{
+    const QString normalisedName = normaliseVideoSystemName(name);
+    return normalisedName == QStringLiteral("SECAM")
+           || normalisedName == QStringLiteral("MESECAM");
+}
 
 // Look up a video system by name.
 // Return true and set system if found; if not found, return false.
@@ -424,6 +430,8 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
     }
 
     reader.endObject();
+    const bool secamFamilySystem =
+        isSecamFamilyVideoSystemName(QString::fromStdString(systemString));
 
     // Work out which video system is being used
     if (systemString == "") {
@@ -438,6 +446,9 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
 
     if (blanking16bIre == -1) {
         blanking16bIre = black16bIre;
+    }
+    if (secamFamilySystem && chromaDecoder.trimmed().isEmpty()) {
+        chromaDecoder = QStringLiteral("mono");
     }
 
     isValid = true;
@@ -937,6 +948,7 @@ bool LdDecodeMetaData::read(QString fileName)
 
         // Set video parameters
         videoParameters.numberOfSequentialFields = numberOfSequentialFields;
+        const bool secamFamilySystem = isSecamFamilyVideoSystemName(system);
         if (!parseVideoSystemName(system, videoParameters.system)) {
             qCritical() << "Unknown video system:" << system;
             return false;
@@ -959,7 +971,10 @@ bool LdDecodeMetaData::read(QString fileName)
         videoParameters.sampleRate = videoSampleRate;
         videoParameters.isMapped = isMapped;
         videoParameters.tapeFormat = captureNotes;
-        videoParameters.chromaDecoder = chromaDecoder;
+        videoParameters.chromaDecoder =
+            (secamFamilySystem && chromaDecoder.trimmed().isEmpty())
+                ? QStringLiteral("mono")
+                : chromaDecoder;
         videoParameters.chromaGain = chromaGain;
         videoParameters.chromaPhase = chromaPhase;
         videoParameters.lumaNR = lumaNR;

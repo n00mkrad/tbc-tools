@@ -106,16 +106,33 @@ class TBCJsonHelper:
         return self._get_video_parameter("lumaNR")
 
     @cached_property
+    def source_video_system(self) -> str | None:
+        """Return source video-system string from videoParameters when available."""
+        return self._get_video_parameter("system")
+
+    @cached_property
+    def source_video_system_normalized(self) -> str | None:
+        """Return normalized source video-system string from metadata."""
+        if (system := self.source_video_system) is None:
+            return None
+        return system.replace("-", "_").lower()
+
+    @cached_property
+    def is_secam_system(self) -> bool:
+        """Return true when metadata declares SECAM/MESECAM."""
+        return self.source_video_system_normalized in {"secam", "mesecam"}
+
+    @cached_property
     def video_system(self) -> VideoSystem:
         """Return VideoSystem from TBC json."""
-        if "system" in self._json_data["videoParameters"]:
-            system = self._json_data["videoParameters"]["system"]
+        if (system := self.source_video_system) is not None:
+            normalized_system = self.source_video_system_normalized
 
             # search for PAL* or NTSC* in videoParameters.system
             # isSourcePal and isSourceNtsc sometimes used, but not
             # sure if it's worth checking for
-            match system.replace("-", "_").lower():
-                case VideoSystem.PAL.value:
+            match normalized_system:
+                case VideoSystem.PAL.value | "secam" | "mesecam":
                     return VideoSystem.PAL
 
                 case VideoSystem.PAL_M.value:

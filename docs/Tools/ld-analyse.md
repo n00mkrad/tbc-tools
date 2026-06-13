@@ -191,6 +191,14 @@ The Export tab exposes two metadata controls that map directly to supported `tbc
 
 These controls are independent. Disabling decode JSON attachment does not disable FFmpeg metadata/CC export, and disabling FFmpeg metadata/CC export does not disable normal video/audio export.
 
+### Export decoder defaults and mono behavior
+
+Export decoder selection follows metadata and profile settings, with the following behavior:
+
+* NTSC export accepts `nntransform3d` and `nntsc3d` decoder names.
+* If metadata video system is `SECAM` or `MESECAM` and no decoder override is set, export defaults to `mono`.
+* When export resolves to `mono`, chroma controls are omitted (`--chroma-gain` and `--chroma-phase` are not passed).
+
 ### Export tab dropout and field selection
 
 The Export tab includes two selectors for dropout-correction behavior:

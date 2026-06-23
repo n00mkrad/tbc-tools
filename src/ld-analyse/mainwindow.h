@@ -272,6 +272,7 @@ private:
     QTimer* yuvRangeScopeRefreshTimer = nullptr;
     bool yuvRangeScopeRefreshPending = false;
     qint64 yuvRangeScopeLastRefreshMs = 0;
+    YuvRangeSettings yuvRangeSettings;
     
     // Chroma toggle during seek
     bool chromaSeekMode;

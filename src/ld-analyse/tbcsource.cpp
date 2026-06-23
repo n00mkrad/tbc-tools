@@ -19,10 +19,67 @@
 
 #include "tbcsource.h"
 #include "tbc/logging.h"
+#include "yuvrangedialog.h"
 
 #include "sourcefield.h"
 
 namespace {
+struct YuvRangeScale {
+    double yScale = 0.0;
+    double cbScale = 0.0;
+    double crScale = 0.0;
+    double blackLevel = 0.0;
+    bool valid = false;
+};
+
+struct YuvCodeValues {
+    double y = 0.0;
+    double u = 128.0;
+    double v = 128.0;
+};
+
+YuvRangeScale makeYuvRangeScale(const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    static constexpr double oneMinusKb = 1.0 - 0.114;
+    static constexpr double oneMinusKr = 1.0 - 0.299;
+    static constexpr double kb = 0.49211104112248356308804691718185;
+    static constexpr double kr = 0.87728321993817866838972487283129;
+
+    YuvRangeScale scale;
+    const double signalRange = static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
+    if (signalRange <= 0.0) {
+        return scale;
+    }
+
+    scale.yScale = 219.0 / signalRange;
+    scale.cbScale = (112.0 / (oneMinusKb * kb)) / signalRange;
+    scale.crScale = (112.0 / (oneMinusKr * kr)) / signalRange;
+    scale.blackLevel = static_cast<double>(videoParameters.black16bIre);
+    scale.valid = true;
+    return scale;
+}
+
+YuvCodeValues convertComponentSampleToYuvCodeValues(double y, double u, double v, const YuvRangeScale &scale)
+{
+    YuvCodeValues codeValues;
+    codeValues.y = ((y - scale.blackLevel) * scale.yScale) + 16.0;
+    codeValues.u = (u * scale.cbScale) + 128.0;
+    codeValues.v = (v * scale.crScale) + 128.0;
+    return codeValues;
+}
+
+bool yuvRangeSettingsMatch(const YuvRangeSettings &settings,
+                           qint32 lumaMin,
+                           qint32 lumaMax,
+                           qint32 chromaMin,
+                           qint32 chromaMax)
+{
+    return settings.lumaMin == lumaMin
+           && settings.lumaMax == lumaMax
+           && settings.chromaMin == chromaMin
+           && settings.chromaMax == chromaMax;
+}
+
 QString backupFilenameWithTimestampFallback(const QString &inputMetadataFilename,
                                             const QString &backupSuffix)
 {
@@ -285,7 +342,8 @@ QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
 
 QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
                                 const LdDecodeMetaData::VideoParameters &videoParameters,
-                                const QSize &targetSize)
+                                const QSize &targetSize,
+                                const YuvRangeSettings &settings)
 {
     const qint32 requestedWidth = targetSize.width() > 0 ? targetSize.width() : videoParameters.fieldWidth;
     const qint32 requestedHeight = targetSize.height() > 0 ? targetSize.height() : videoParameters.fieldHeight;
@@ -308,8 +366,8 @@ QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
         return renderMessage(QStringLiteral("No YUV range data"));
     }
 
-    double signalRange = static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
-    if (signalRange <= 0.0) {
+    const YuvRangeScale rangeScale = makeYuvRangeScale(videoParameters);
+    if (!rangeScale.valid) {
         return renderMessage(QStringLiteral("Invalid video levels"));
     }
 
@@ -347,23 +405,15 @@ QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
         histogramChannel.total++;
     };
 
-    static constexpr double oneMinusKb = 1.0 - 0.114;
-    static constexpr double oneMinusKr = 1.0 - 0.299;
-    static constexpr double kb = 0.49211104112248356308804691718185;
-    static constexpr double kr = 0.87728321993817866838972487283129;
-    const double yScale = 219.0 / signalRange;
-    const double cbScale = (112.0 / (oneMinusKb * kb)) / signalRange;
-    const double crScale = (112.0 / (oneMinusKr * kr)) / signalRange;
-    const double blackLevel = static_cast<double>(videoParameters.black16bIre);
-
     for (qint32 sourceY = sourceYStart; sourceY < sourceYEnd; ++sourceY) {
         const double *yLine = componentFrame.y(sourceY);
         const double *uLine = componentFrame.u(sourceY);
         const double *vLine = componentFrame.v(sourceY);
         for (qint32 sourceX = sourceXStart; sourceX < sourceXEnd; ++sourceX) {
-            addSample(0, ((yLine[sourceX] - blackLevel) * yScale) + 16.0, 16, 235);
-            addSample(1, (uLine[sourceX] * cbScale) + 128.0, 16, 240);
-            addSample(2, (vLine[sourceX] * crScale) + 128.0, 16, 240);
+            const YuvCodeValues codeValues = convertComponentSampleToYuvCodeValues(yLine[sourceX], uLine[sourceX], vLine[sourceX], rangeScale);
+            addSample(0, codeValues.y, settings.lumaMin, settings.lumaMax);
+            addSample(1, codeValues.u, settings.chromaMin, settings.chromaMax);
+            addSample(2, codeValues.v, settings.chromaMin, settings.chromaMax);
         }
     }
 
@@ -413,7 +463,8 @@ QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
         const qint32 rowTop = headerTop + headerHeight;
         const QRect plotRect(leftAxisWidth, rowTop, plotWidth, rowHeight);
         const QRect statsRect(plotRect.left(), headerTop, plotRect.width(), headerHeight);
-        const qint32 legalHigh = channel == 0 ? 235 : 240;
+        const qint32 legalLow = channel == 0 ? settings.lumaMin : settings.chromaMin;
+        const qint32 legalHigh = channel == 0 ? settings.lumaMax : settings.chromaMax;
         const HistogramChannel &histogramChannel = channels[static_cast<size_t>(channel)];
 
         const QString statsText = QStringLiteral("below %1 (%2%)  above %3 (%4%)")
@@ -431,12 +482,14 @@ QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
                               statsText);
 
         const qint32 lowStartX = binToX(plotRect, 0);
-        const qint32 lowEndX = binToX(plotRect, 15);
+        const qint32 lowEndX = binToX(plotRect, legalLow - 1);
         const qint32 highStartX = binToX(plotRect, legalHigh + 1);
         const qint32 highEndX = binToX(plotRect, 255);
-        scopePainter.fillRect(QRect(lowStartX, plotRect.top(), qMax<qint32>(1, lowEndX - lowStartX + 1), plotRect.height()),
-                              QColor(150, 24, 24, 95));
-        if (highEndX >= highStartX) {
+        if (legalLow > 0) {
+            scopePainter.fillRect(QRect(lowStartX, plotRect.top(), qMax<qint32>(1, lowEndX - lowStartX + 1), plotRect.height()),
+                                  QColor(150, 24, 24, 95));
+        }
+        if (legalHigh < 255 && highEndX >= highStartX) {
             scopePainter.fillRect(QRect(highStartX, plotRect.top(), qMax<qint32>(1, highEndX - highStartX + 1), plotRect.height()),
                                   QColor(150, 24, 24, 95));
         }
@@ -449,7 +502,7 @@ QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
         }
 
         scopePainter.setPen(QPen(QColor(215, 215, 215, 210), 1, Qt::DashLine));
-        const qint32 lowX = binToX(plotRect, 16);
+        const qint32 lowX = binToX(plotRect, legalLow);
         const qint32 highX = binToX(plotRect, legalHigh);
         scopePainter.drawLine(lowX, plotRect.top(), lowX, plotRect.bottom());
         scopePainter.drawLine(highX, plotRect.top(), highX, plotRect.bottom());
@@ -471,7 +524,7 @@ QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
             const qint32 barHeight = qBound<qint32>(1,
                                                     static_cast<qint32>((std::sqrt(static_cast<double>(binCount)) / maxDensity) * static_cast<double>(plotRect.height() - 2)),
                                                     qMax<qint32>(1, plotRect.height() - 2));
-            const bool outOfRange = bin < 16 || bin > legalHigh;
+            const bool outOfRange = bin < legalLow || bin > legalHigh;
             const QColor barColor = outOfRange ? QColor(255, 72, 72) : channelColors[static_cast<size_t>(channel)];
             scopePainter.fillRect(QRect(binX,
                                          plotRect.bottom() - barHeight,
@@ -488,8 +541,21 @@ QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
     const QRect bottomLabelRect(leftAxisWidth, scopeHeight - bottomPadding, plotWidth, bottomPadding);
     scopePainter.drawText(bottomLabelRect,
                           Qt::AlignLeft | Qt::AlignVCenter,
-                          QStringLiteral("8-bit code values; Y legal 16-235, U/V legal 16-240"));
-    const std::array<qint32, 6> bottomValues = { 0, 16, 128, 235, 240, 255 };
+                          QStringLiteral("8-bit code values; Y legal %1-%2, U/V legal %3-%4")
+                              .arg(settings.lumaMin)
+                              .arg(settings.lumaMax)
+                              .arg(settings.chromaMin)
+                              .arg(settings.chromaMax));
+    const std::array<qint32, 8> bottomValues = {
+        0,
+        settings.lumaMin,
+        settings.chromaMin,
+        128,
+        settings.lumaMax,
+        settings.chromaMax,
+        240,
+        255
+    };
     for (const qint32 value : bottomValues) {
         const qint32 x = leftAxisWidth + ((value * qMax<qint32>(1, plotWidth - 1)) / 255);
         scopePainter.drawText(QRect(x - 18, scopeHeight - bottomPadding, 36, qMax<qint32>(12, bottomPadding / 2)),
@@ -499,6 +565,128 @@ QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
 
     scopePainter.end();
     return scopeImage.convertToFormat(QImage::Format_RGB32);
+}
+
+QImage renderYuvRangeOverlayImage(const ComponentFrame &componentFrame,
+                                  const LdDecodeMetaData::VideoParameters &videoParameters,
+                                  const YuvRangeSettings &settings,
+                                  TbcSource::ViewMode renderViewMode,
+                                  bool stretchField,
+                                  qint32 loadedFieldNumber)
+{
+    const qint32 frameWidth = componentFrame.getWidth();
+    const qint32 frameHeight = componentFrame.getHeight();
+    if (frameWidth <= 0 || frameHeight <= 0) {
+        return QImage();
+    }
+    if (renderViewMode == TbcSource::ViewMode::RGB_SCOPE_VIEW) {
+        return QImage();
+    }
+
+    const YuvRangeScale rangeScale = makeYuvRangeScale(videoParameters);
+    if (!rangeScale.valid) {
+        return QImage();
+    }
+
+    qint32 sourceXStart = qBound<qint32>(0, videoParameters.activeVideoStart, frameWidth - 1);
+    qint32 sourceXEnd = qBound<qint32>(sourceXStart + 1, videoParameters.activeVideoEnd, frameWidth);
+    qint32 sourceYStart = qBound<qint32>(0, videoParameters.firstActiveFrameLine, frameHeight - 1);
+    qint32 sourceYEnd = qBound<qint32>(sourceYStart + 1, videoParameters.lastActiveFrameLine, frameHeight);
+
+    if (sourceXEnd <= sourceXStart) {
+        sourceXStart = 0;
+        sourceXEnd = frameWidth;
+    }
+    if (sourceYEnd <= sourceYStart) {
+        sourceYStart = 0;
+        sourceYEnd = frameHeight;
+    }
+
+    QImage overlayImage(frameWidth, frameHeight, QImage::Format_ARGB32);
+    overlayImage.fill(Qt::transparent);
+    const qint32 overlayAlpha = qBound<qint32>(0, settings.overlayAlpha, 255);
+    const QRgb belowColor = qRgba(0, 255, 255, overlayAlpha);
+    const QRgb aboveColor = qRgba(0, 255, 0, overlayAlpha);
+
+    auto sampleOverlayColor = [&](qint32 sourceX, qint32 sourceY) {
+        if (sourceX < sourceXStart || sourceX >= sourceXEnd || sourceY < sourceYStart || sourceY >= sourceYEnd) {
+            return qRgba(0, 0, 0, 0);
+        }
+
+        const double *yLine = componentFrame.y(sourceY);
+        const double *uLine = componentFrame.u(sourceY);
+        const double *vLine = componentFrame.v(sourceY);
+        const YuvCodeValues codeValues = convertComponentSampleToYuvCodeValues(yLine[sourceX], uLine[sourceX], vLine[sourceX], rangeScale);
+        const bool belowRange = codeValues.y < settings.lumaMin
+                                || codeValues.u < settings.chromaMin
+                                || codeValues.v < settings.chromaMin;
+        const bool aboveRange = codeValues.y > settings.lumaMax
+                                || codeValues.u > settings.chromaMax
+                                || codeValues.v > settings.chromaMax;
+        if (aboveRange) {
+            return aboveColor;
+        }
+        return belowRange ? belowColor : qRgba(0, 0, 0, 0);
+    };
+
+    if (renderViewMode == TbcSource::ViewMode::FRAME_VIEW) {
+        for (qint32 sourceY = sourceYStart; sourceY < sourceYEnd; ++sourceY) {
+            QRgb *overlayLine = reinterpret_cast<QRgb *>(overlayImage.scanLine(sourceY));
+            for (qint32 sourceX = sourceXStart; sourceX < sourceXEnd; ++sourceX) {
+                const QRgb overlayColor = sampleOverlayColor(sourceX, sourceY);
+                if (qAlpha(overlayColor) > 0) {
+                    overlayLine[sourceX] = overlayColor;
+                }
+            }
+        }
+        return overlayImage;
+    }
+
+    if (renderViewMode == TbcSource::ViewMode::SPLIT_VIEW) {
+        for (qint32 sourceY = sourceYStart; sourceY < sourceYEnd; ++sourceY) {
+            const qint32 outputY = (sourceY / 2) + (sourceY % 2 == 0 ? 0 : (frameHeight / 2) + 1);
+            if (outputY < 0 || outputY >= frameHeight) {
+                continue;
+            }
+            QRgb *overlayLine = reinterpret_cast<QRgb *>(overlayImage.scanLine(outputY));
+            for (qint32 sourceX = sourceXStart; sourceX < sourceXEnd; ++sourceX) {
+                const QRgb overlayColor = sampleOverlayColor(sourceX, sourceY);
+                if (qAlpha(overlayColor) > 0) {
+                    overlayLine[sourceX] = overlayColor;
+                }
+            }
+        }
+        return overlayImage;
+    }
+
+    const qint32 fieldHeight = videoParameters.fieldHeight;
+    const qint32 startOffset = stretchField ? 0 : frameHeight / 4;
+    const qint32 outputHeight = stretchField ? frameHeight : fieldHeight;
+    qint32 fieldY = loadedFieldNumber % 2 ? 0 : 1;
+    qint32 maxFieldY = frameHeight - 1;
+    if (maxFieldY >= 0 && (maxFieldY % 2) != (fieldY % 2)) {
+        maxFieldY -= 1;
+    }
+
+    for (qint32 outputYLocal = 0; outputYLocal < outputHeight; ++outputYLocal) {
+        const qint32 outputY = outputYLocal + startOffset;
+        if (outputY >= 0 && outputY < frameHeight) {
+            const qint32 sourceY = qBound<qint32>(0, fieldY, qMax<qint32>(0, maxFieldY));
+            QRgb *overlayLine = reinterpret_cast<QRgb *>(overlayImage.scanLine(outputY));
+            for (qint32 sourceX = sourceXStart; sourceX < sourceXEnd; ++sourceX) {
+                const QRgb overlayColor = sampleOverlayColor(sourceX, sourceY);
+                if (qAlpha(overlayColor) > 0) {
+                    overlayLine[sourceX] = overlayColor;
+                }
+            }
+        }
+
+        if (!stretchField || outputYLocal % 2 != 0) {
+            fieldY += 2;
+        }
+    }
+
+    return overlayImage;
 }
 }
 
@@ -947,21 +1135,63 @@ QImage TbcSource::getRgbScopeImage(const QSize &targetSize)
     return rgbScopeCache;
 }
 
-QImage TbcSource::getYuvRangeScopeImage(const QSize &targetSize)
+QImage TbcSource::getYuvRangeScopeImage(const QSize &targetSize, const YuvRangeSettings &settings)
 {
     if (metadataOnly) return QImage();
     if (loadedFrameNumber == -1 && loadedFieldNumber == -1) return QImage();
 
     const QSize normalizedTargetSize = targetSize.expandedTo(QSize(1, 1));
-    if (yuvRangeScopeCacheValid && yuvRangeScopeCacheSize == normalizedTargetSize) {
+    if (yuvRangeScopeCacheValid
+        && yuvRangeScopeCacheSize == normalizedTargetSize
+        && yuvRangeSettingsMatch(settings,
+                                 yuvRangeScopeCacheLumaMin,
+                                 yuvRangeScopeCacheLumaMax,
+                                 yuvRangeScopeCacheChromaMin,
+                                 yuvRangeScopeCacheChromaMax)) {
         return yuvRangeScopeCache;
     }
 
     const ComponentFrame &componentFrame = getComponentFrame();
-    yuvRangeScopeCache = renderYuvRangeScopeImage(componentFrame, ldDecodeMetaData.getVideoParameters(), normalizedTargetSize);
+    yuvRangeScopeCache = renderYuvRangeScopeImage(componentFrame, ldDecodeMetaData.getVideoParameters(), normalizedTargetSize, settings);
     yuvRangeScopeCacheValid = true;
     yuvRangeScopeCacheSize = normalizedTargetSize;
+    yuvRangeScopeCacheLumaMin = settings.lumaMin;
+    yuvRangeScopeCacheLumaMax = settings.lumaMax;
+    yuvRangeScopeCacheChromaMin = settings.chromaMin;
+    yuvRangeScopeCacheChromaMax = settings.chromaMax;
     return yuvRangeScopeCache;
+}
+
+QImage TbcSource::getYuvRangeOverlayImage(const YuvRangeSettings &settings)
+{
+    if (metadataOnly) return QImage();
+    if (loadedFrameNumber == -1 && loadedFieldNumber == -1) return QImage();
+
+    if (yuvRangeOverlayCacheValid
+        && yuvRangeSettingsMatch(settings,
+                                 yuvRangeOverlayCacheLumaMin,
+                                 yuvRangeOverlayCacheLumaMax,
+                                 yuvRangeOverlayCacheChromaMin,
+                                 yuvRangeOverlayCacheChromaMax)
+        && yuvRangeOverlayCacheAlpha == settings.overlayAlpha
+        && yuvRangeOverlayCacheViewMode == viewMode
+        && yuvRangeOverlayCacheStretchField == stretchFieldOn
+        && yuvRangeOverlayCacheFieldNumber == loadedFieldNumber) {
+        return yuvRangeOverlayCache;
+    }
+
+    const ComponentFrame &componentFrame = getComponentFrame();
+    yuvRangeOverlayCache = renderYuvRangeOverlayImage(componentFrame, ldDecodeMetaData.getVideoParameters(), settings, viewMode, stretchFieldOn, loadedFieldNumber);
+    yuvRangeOverlayCacheValid = true;
+    yuvRangeOverlayCacheLumaMin = settings.lumaMin;
+    yuvRangeOverlayCacheLumaMax = settings.lumaMax;
+    yuvRangeOverlayCacheChromaMin = settings.chromaMin;
+    yuvRangeOverlayCacheChromaMax = settings.chromaMax;
+    yuvRangeOverlayCacheAlpha = settings.overlayAlpha;
+    yuvRangeOverlayCacheViewMode = viewMode;
+    yuvRangeOverlayCacheStretchField = stretchFieldOn;
+    yuvRangeOverlayCacheFieldNumber = loadedFieldNumber;
+    return yuvRangeOverlayCache;
 }
 
 // Method to get the number of available frames
@@ -1546,6 +1776,20 @@ void TbcSource::resetState()
     yuvRangeScopeCache = QImage();
     yuvRangeScopeCacheValid = false;
     yuvRangeScopeCacheSize = QSize();
+    yuvRangeScopeCacheLumaMin = 16;
+    yuvRangeScopeCacheLumaMax = 235;
+    yuvRangeScopeCacheChromaMin = 16;
+    yuvRangeScopeCacheChromaMax = 240;
+    yuvRangeOverlayCache = QImage();
+    yuvRangeOverlayCacheValid = false;
+    yuvRangeOverlayCacheLumaMin = 16;
+    yuvRangeOverlayCacheLumaMax = 235;
+    yuvRangeOverlayCacheChromaMin = 16;
+    yuvRangeOverlayCacheChromaMax = 240;
+    yuvRangeOverlayCacheAlpha = 180;
+    yuvRangeOverlayCacheViewMode = ViewMode::FRAME_VIEW;
+    yuvRangeOverlayCacheStretchField = false;
+    yuvRangeOverlayCacheFieldNumber = -1;
     cache = QImage();
     cacheValid = false;
 }
@@ -1561,6 +1805,7 @@ void TbcSource::invalidateImageCache()
     rgbScopeCacheSize = QSize();
     yuvRangeScopeCacheValid = false;
     yuvRangeScopeCacheSize = QSize();
+    yuvRangeOverlayCacheValid = false;
     cacheValid = false;
 }
 

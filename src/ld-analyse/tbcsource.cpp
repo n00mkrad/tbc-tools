@@ -282,6 +282,224 @@ QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
     scopePainter.end();
     return scopeImage.convertToFormat(QImage::Format_RGB32);
 }
+
+QImage renderYuvRangeScopeImage(const ComponentFrame &componentFrame,
+                                const LdDecodeMetaData::VideoParameters &videoParameters,
+                                const QSize &targetSize)
+{
+    const qint32 requestedWidth = targetSize.width() > 0 ? targetSize.width() : videoParameters.fieldWidth;
+    const qint32 requestedHeight = targetSize.height() > 0 ? targetSize.height() : videoParameters.fieldHeight;
+    const qint32 scopeWidth = qBound<qint32>(320, requestedWidth, 2048);
+    const qint32 scopeHeight = qBound<qint32>(220, requestedHeight, 1536);
+
+    auto renderMessage = [&](const QString &message) {
+        QImage messageImage(scopeWidth, scopeHeight, QImage::Format_RGB32);
+        messageImage.fill(Qt::black);
+        QPainter messagePainter(&messageImage);
+        messagePainter.setPen(QColor(210, 210, 210));
+        messagePainter.drawText(messageImage.rect(), Qt::AlignCenter, message);
+        messagePainter.end();
+        return messageImage;
+    };
+
+    const qint32 frameWidth = componentFrame.getWidth();
+    const qint32 frameHeight = componentFrame.getHeight();
+    if (frameWidth <= 0 || frameHeight <= 0) {
+        return renderMessage(QStringLiteral("No YUV range data"));
+    }
+
+    double signalRange = static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
+    if (signalRange <= 0.0) {
+        return renderMessage(QStringLiteral("Invalid video levels"));
+    }
+
+    qint32 sourceXStart = qBound<qint32>(0, videoParameters.activeVideoStart, frameWidth - 1);
+    qint32 sourceXEnd = qBound<qint32>(sourceXStart + 1, videoParameters.activeVideoEnd, frameWidth);
+    qint32 sourceYStart = qBound<qint32>(0, videoParameters.firstActiveFrameLine, frameHeight - 1);
+    qint32 sourceYEnd = qBound<qint32>(sourceYStart + 1, videoParameters.lastActiveFrameLine, frameHeight);
+
+    if (sourceXEnd <= sourceXStart) {
+        sourceXStart = 0;
+        sourceXEnd = frameWidth;
+    }
+    if (sourceYEnd <= sourceYStart) {
+        sourceYStart = 0;
+        sourceYEnd = frameHeight;
+    }
+
+    struct HistogramChannel {
+        std::array<quint64, 256> bins = {};
+        quint64 below = 0;
+        quint64 above = 0;
+        quint64 total = 0;
+    };
+    std::array<HistogramChannel, 3> channels;
+
+    auto addSample = [&](qint32 channel, double codeValue, qint32 legalLow, qint32 legalHigh) {
+        HistogramChannel &histogramChannel = channels[static_cast<size_t>(channel)];
+        if (codeValue < static_cast<double>(legalLow)) {
+            histogramChannel.below++;
+        } else if (codeValue > static_cast<double>(legalHigh)) {
+            histogramChannel.above++;
+        }
+        const qint32 bin = qBound<qint32>(0, static_cast<qint32>(std::floor(codeValue + 0.5)), 255);
+        histogramChannel.bins[static_cast<size_t>(bin)]++;
+        histogramChannel.total++;
+    };
+
+    static constexpr double oneMinusKb = 1.0 - 0.114;
+    static constexpr double oneMinusKr = 1.0 - 0.299;
+    static constexpr double kb = 0.49211104112248356308804691718185;
+    static constexpr double kr = 0.87728321993817866838972487283129;
+    const double yScale = 219.0 / signalRange;
+    const double cbScale = (112.0 / (oneMinusKb * kb)) / signalRange;
+    const double crScale = (112.0 / (oneMinusKr * kr)) / signalRange;
+    const double blackLevel = static_cast<double>(videoParameters.black16bIre);
+
+    for (qint32 sourceY = sourceYStart; sourceY < sourceYEnd; ++sourceY) {
+        const double *yLine = componentFrame.y(sourceY);
+        const double *uLine = componentFrame.u(sourceY);
+        const double *vLine = componentFrame.v(sourceY);
+        for (qint32 sourceX = sourceXStart; sourceX < sourceXEnd; ++sourceX) {
+            addSample(0, ((yLine[sourceX] - blackLevel) * yScale) + 16.0, 16, 235);
+            addSample(1, (uLine[sourceX] * cbScale) + 128.0, 16, 240);
+            addSample(2, (vLine[sourceX] * crScale) + 128.0, 16, 240);
+        }
+    }
+
+    QImage scopeImage(scopeWidth, scopeHeight, QImage::Format_RGB32);
+    scopeImage.fill(Qt::black);
+
+    const qint32 leftAxisWidth = qBound<qint32>(34, scopeWidth / 12, 76);
+    const qint32 rightPadding = qBound<qint32>(8, scopeWidth / 64, 18);
+    const qint32 topPadding = qBound<qint32>(6, scopeHeight / 60, 16);
+    const qint32 bottomPadding = qBound<qint32>(28, scopeHeight / 11, 62);
+    const qint32 rowGap = qBound<qint32>(6, scopeHeight / 55, 18);
+    const qint32 headerHeight = qBound<qint32>(18, scopeHeight / 30, 30);
+    const qint32 availableHeight = qMax<qint32>(24, scopeHeight - topPadding - bottomPadding - (rowGap * 2) - (headerHeight * 3));
+    const qint32 rowHeight = qMax<qint32>(1, availableHeight / 3);
+    const qint32 plotWidth = qMax<qint32>(1, scopeWidth - leftAxisWidth - rightPadding);
+
+    auto binToX = [&](const QRect &plotRect, qint32 bin) {
+        return plotRect.left() + ((qBound<qint32>(0, bin, 255) * qMax<qint32>(1, plotRect.width() - 1)) / 255);
+    };
+    auto percentText = [](quint64 count, quint64 total) {
+        if (total == 0) {
+            return QStringLiteral("0.000");
+        }
+        const double percent = (static_cast<double>(count) * 100.0) / static_cast<double>(total);
+        return QString::number(percent, 'f', percent < 1.0 ? 3 : 2);
+    };
+
+    QPainter scopePainter(&scopeImage);
+    scopePainter.setRenderHint(QPainter::Antialiasing, false);
+    QFont axisFont = scopePainter.font();
+    axisFont.setPointSize(qMax<qint32>(7, scopeHeight / 46));
+    scopePainter.setFont(axisFont);
+
+    const std::array<QString, 3> labels = {
+        QStringLiteral("Y"),
+        QStringLiteral("U"),
+        QStringLiteral("V")
+    };
+    const std::array<QColor, 3> channelColors = {
+        QColor(245, 245, 245),
+        QColor(96, 180, 255),
+        QColor(255, 118, 180)
+    };
+
+    for (qint32 channel = 0; channel < 3; ++channel) {
+        const qint32 headerTop = topPadding + (channel * (headerHeight + rowHeight + rowGap));
+        const qint32 rowTop = headerTop + headerHeight;
+        const QRect plotRect(leftAxisWidth, rowTop, plotWidth, rowHeight);
+        const QRect statsRect(plotRect.left(), headerTop, plotRect.width(), headerHeight);
+        const qint32 legalHigh = channel == 0 ? 235 : 240;
+        const HistogramChannel &histogramChannel = channels[static_cast<size_t>(channel)];
+
+        const QString statsText = QStringLiteral("below %1 (%2%)  above %3 (%4%)")
+            .arg(histogramChannel.below)
+            .arg(percentText(histogramChannel.below, histogramChannel.total))
+            .arg(histogramChannel.above)
+            .arg(percentText(histogramChannel.above, histogramChannel.total));
+        scopePainter.setPen(channelColors[static_cast<size_t>(channel)]);
+        scopePainter.drawText(QRect(2, headerTop, leftAxisWidth - 6, headerHeight),
+                              Qt::AlignRight | Qt::AlignVCenter,
+                              labels[static_cast<size_t>(channel)]);
+        scopePainter.setPen(QColor(220, 220, 220));
+        scopePainter.drawText(statsRect,
+                              Qt::AlignLeft | Qt::AlignVCenter,
+                              statsText);
+
+        const qint32 lowStartX = binToX(plotRect, 0);
+        const qint32 lowEndX = binToX(plotRect, 15);
+        const qint32 highStartX = binToX(plotRect, legalHigh + 1);
+        const qint32 highEndX = binToX(plotRect, 255);
+        scopePainter.fillRect(QRect(lowStartX, plotRect.top(), qMax<qint32>(1, lowEndX - lowStartX + 1), plotRect.height()),
+                              QColor(150, 24, 24, 95));
+        if (highEndX >= highStartX) {
+            scopePainter.fillRect(QRect(highStartX, plotRect.top(), qMax<qint32>(1, highEndX - highStartX + 1), plotRect.height()),
+                                  QColor(150, 24, 24, 95));
+        }
+
+        scopePainter.setPen(QPen(QColor(80, 80, 80), 1));
+        const std::array<qint32, 5> guideValues = { 0, 64, 128, 192, 255 };
+        for (const qint32 guideValue : guideValues) {
+            const qint32 guideX = binToX(plotRect, guideValue);
+            scopePainter.drawLine(guideX, plotRect.top(), guideX, plotRect.bottom());
+        }
+
+        scopePainter.setPen(QPen(QColor(215, 215, 215, 210), 1, Qt::DashLine));
+        const qint32 lowX = binToX(plotRect, 16);
+        const qint32 highX = binToX(plotRect, legalHigh);
+        scopePainter.drawLine(lowX, plotRect.top(), lowX, plotRect.bottom());
+        scopePainter.drawLine(highX, plotRect.top(), highX, plotRect.bottom());
+
+        quint64 maxBin = 0;
+        for (const quint64 binCount : histogramChannel.bins) {
+            maxBin = qMax(maxBin, binCount);
+        }
+        const double maxDensity = maxBin > 0 ? std::sqrt(static_cast<double>(maxBin)) : 1.0;
+        for (qint32 bin = 0; bin < 256; ++bin) {
+            const quint64 binCount = histogramChannel.bins[static_cast<size_t>(bin)];
+            if (binCount == 0) {
+                continue;
+            }
+
+            const qint32 binX = binToX(plotRect, bin);
+            const qint32 nextBinX = binToX(plotRect, qMin<qint32>(255, bin + 1));
+            const qint32 barWidth = qMax<qint32>(1, nextBinX - binX + 1);
+            const qint32 barHeight = qBound<qint32>(1,
+                                                    static_cast<qint32>((std::sqrt(static_cast<double>(binCount)) / maxDensity) * static_cast<double>(plotRect.height() - 2)),
+                                                    qMax<qint32>(1, plotRect.height() - 2));
+            const bool outOfRange = bin < 16 || bin > legalHigh;
+            const QColor barColor = outOfRange ? QColor(255, 72, 72) : channelColors[static_cast<size_t>(channel)];
+            scopePainter.fillRect(QRect(binX,
+                                         plotRect.bottom() - barHeight,
+                                         barWidth,
+                                         barHeight),
+                                  barColor);
+        }
+
+        scopePainter.setPen(QPen(QColor(150, 150, 150), 1));
+        scopePainter.drawRect(plotRect.adjusted(0, 0, -1, -1));
+    }
+
+    scopePainter.setPen(QColor(170, 170, 170));
+    const QRect bottomLabelRect(leftAxisWidth, scopeHeight - bottomPadding, plotWidth, bottomPadding);
+    scopePainter.drawText(bottomLabelRect,
+                          Qt::AlignLeft | Qt::AlignVCenter,
+                          QStringLiteral("8-bit code values; Y legal 16-235, U/V legal 16-240"));
+    const std::array<qint32, 6> bottomValues = { 0, 16, 128, 235, 240, 255 };
+    for (const qint32 value : bottomValues) {
+        const qint32 x = leftAxisWidth + ((value * qMax<qint32>(1, plotWidth - 1)) / 255);
+        scopePainter.drawText(QRect(x - 18, scopeHeight - bottomPadding, 36, qMax<qint32>(12, bottomPadding / 2)),
+                              Qt::AlignHCenter | Qt::AlignTop,
+                              QString::number(value));
+    }
+
+    scopePainter.end();
+    return scopeImage.convertToFormat(QImage::Format_RGB32);
+}
 }
 
 TbcSource::TbcSource(QObject *parent) : QObject(parent)
@@ -727,6 +945,23 @@ QImage TbcSource::getRgbScopeImage(const QSize &targetSize)
     rgbScopeCacheValid = true;
     rgbScopeCacheSize = normalizedTargetSize;
     return rgbScopeCache;
+}
+
+QImage TbcSource::getYuvRangeScopeImage(const QSize &targetSize)
+{
+    if (metadataOnly) return QImage();
+    if (loadedFrameNumber == -1 && loadedFieldNumber == -1) return QImage();
+
+    const QSize normalizedTargetSize = targetSize.expandedTo(QSize(1, 1));
+    if (yuvRangeScopeCacheValid && yuvRangeScopeCacheSize == normalizedTargetSize) {
+        return yuvRangeScopeCache;
+    }
+
+    const ComponentFrame &componentFrame = getComponentFrame();
+    yuvRangeScopeCache = renderYuvRangeScopeImage(componentFrame, ldDecodeMetaData.getVideoParameters(), normalizedTargetSize);
+    yuvRangeScopeCacheValid = true;
+    yuvRangeScopeCacheSize = normalizedTargetSize;
+    return yuvRangeScopeCache;
 }
 
 // Method to get the number of available frames
@@ -1308,6 +1543,9 @@ void TbcSource::resetState()
     rgbScopeCache = QImage();
     rgbScopeCacheValid = false;
     rgbScopeCacheSize = QSize();
+    yuvRangeScopeCache = QImage();
+    yuvRangeScopeCacheValid = false;
+    yuvRangeScopeCacheSize = QSize();
     cache = QImage();
     cacheValid = false;
 }
@@ -1321,6 +1559,8 @@ void TbcSource::invalidateImageCache()
     decodedFrameValid = false;
     rgbScopeCacheValid = false;
     rgbScopeCacheSize = QSize();
+    yuvRangeScopeCacheValid = false;
+    yuvRangeScopeCacheSize = QSize();
     cacheValid = false;
 }
 

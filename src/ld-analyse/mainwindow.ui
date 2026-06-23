@@ -767,6 +767,7 @@
     <addaction name="actionVectorscope"/>
     <addaction name="actionLine_scope"/>
     <addaction name="actionRGB_scope"/>
+    <addaction name="actionYUV_range_scope"/>
     <addaction name="actionField_timing_scope"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
@@ -905,6 +906,11 @@
   <action name="actionRGB_scope">
    <property name="text">
     <string>RGB scope...</string>
+   </property>
+  </action>
+  <action name="actionYUV_range_scope">
+   <property name="text">
+    <string>YUV range...</string>
    </property>
   </action>
   <action name="actionVectorscope">

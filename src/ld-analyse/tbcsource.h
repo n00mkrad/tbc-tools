@@ -129,6 +129,7 @@ public:
 
     QImage getImage();
     QImage getRgbScopeImage(const QSize &targetSize = QSize());
+    QImage getYuvRangeScopeImage(const QSize &targetSize = QSize());
     qint32 getNumberOfFrames() const;
     qint32 getNumberOfFields() const;
     bool getIsWidescreen() const;
@@ -250,6 +251,9 @@ private:
     QImage rgbScopeCache;
     bool rgbScopeCacheValid;
     QSize rgbScopeCacheSize;
+    QImage yuvRangeScopeCache;
+    bool yuvRangeScopeCacheValid;
+    QSize yuvRangeScopeCacheSize;
 
     // Chroma decoder configuration
     PalColour::Configuration palConfiguration;

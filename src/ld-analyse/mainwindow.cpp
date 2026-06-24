@@ -1347,6 +1347,8 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     // Set up dialogues
     oscilloscopeDialog = new OscilloscopeDialog(this);
     rgbScopeDialog = new RgbScopeDialog(this);
+    yuvRangeDialog = new YuvRangeDialog(this);
+    yuvRangeSettings = yuvRangeDialog->settings();
     vectorscopeDialog = new VectorscopeDialog(this);
     fieldTimingDialog = new FieldTimingDialog(this);
     aboutDialog = new AboutDialog(this);
@@ -1494,6 +1496,19 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
         }
         updateRgbScopeDialogue(false);
     });
+    connect(yuvRangeDialog, &YuvRangeDialog::renderTargetSizeChanged, this, [this](const QSize &) {
+        if (!yuvRangeDialog || !yuvRangeDialog->isVisible() || yuvRangeDialog->isMinimized()) {
+            return;
+        }
+        updateYuvRangeScopeDialogue(false);
+    });
+    connect(yuvRangeDialog, &YuvRangeDialog::settingsChanged, this, [this](const YuvRangeSettings &settings) {
+        yuvRangeSettings = settings;
+        if (yuvRangeDialog && yuvRangeDialog->isVisible() && !yuvRangeDialog->isMinimized()) {
+            updateYuvRangeScopeDialogue(true);
+        }
+        updateImageViewer();
+    });
 
     // Connect to the video parameters changed signal
     connect(videoParametersDialog, &VideoParametersDialog::videoParametersChanged, this, &MainWindow::videoParametersChangedSignalHandler);
@@ -1561,6 +1576,14 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
         rgbScopeRefreshPending = false;
         if (rgbScopeDialog && rgbScopeDialog->isVisible()) {
             updateRgbScopeDialogue(true);
+        }
+    });
+    yuvRangeScopeRefreshTimer = new QTimer(this);
+    yuvRangeScopeRefreshTimer->setSingleShot(true);
+    connect(yuvRangeScopeRefreshTimer, &QTimer::timeout, this, [this]() {
+        yuvRangeScopeRefreshPending = false;
+        if (yuvRangeDialog && yuvRangeDialog->isVisible()) {
+            updateYuvRangeScopeDialogue(true);
         }
     });
     
@@ -1760,6 +1783,7 @@ void MainWindow::setGuiEnabled(bool enabled)
     // Enable menu options
     ui->actionLine_scope->setEnabled(enabled);
     ui->actionRGB_scope->setEnabled(enabled);
+    ui->actionYUV_range_scope->setEnabled(enabled);
     ui->actionVectorscope->setEnabled(enabled);
     ui->actionField_timing_scope->setEnabled(enabled);
     ui->actionVBI->setEnabled(enabled);
@@ -2124,6 +2148,7 @@ void MainWindow::updateGuiLoaded()
         ui->actionSave_frame_as_PNG->setEnabled(false);
         ui->actionLine_scope->setEnabled(false);
         ui->actionRGB_scope->setEnabled(false);
+        ui->actionYUV_range_scope->setEnabled(false);
         ui->actionVectorscope->setEnabled(false);
         ui->actionField_timing_scope->setEnabled(false);
     }
@@ -2232,11 +2257,17 @@ void MainWindow::updateGuiUnloaded()
     chromaDecoderConfigDialog->hide();
     fieldTimingDialog->hide();
     rgbScopeDialog->hide();
+    yuvRangeDialog->hide();
     if (rgbScopeRefreshTimer) {
         rgbScopeRefreshTimer->stop();
     }
     rgbScopeRefreshPending = false;
     rgbScopeLastRefreshMs = 0;
+    if (yuvRangeScopeRefreshTimer) {
+        yuvRangeScopeRefreshTimer->stop();
+    }
+    yuvRangeScopeRefreshPending = false;
+    yuvRangeScopeLastRefreshMs = 0;
     updateTimelineMarkers();
     updateNotesViewerState();
 
@@ -2578,6 +2609,9 @@ void MainWindow::updateImage()
     if (rgbScopeDialog->isVisible() && !rgbScopeDialog->isMinimized()) {
         updateRgbScopeDialogue();
     }
+    if (yuvRangeDialog->isVisible() && !yuvRangeDialog->isMinimized()) {
+        updateYuvRangeScopeDialogue();
+    }
     if (vectorscopeDialog->isVisible()) {
         updateVectorscopeDialogue();
     }
@@ -2776,6 +2810,17 @@ void MainWindow::updateImageViewer()
         const int height = static_cast<int>(scaleFactor * pixmap.size().height());
         QPixmap scaledPixmap = pixmap.scaled(width, height,
                                              Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+        if (yuvRangeSettings.overlayEnabled && !tbcSource.getIsMetadataOnly()) {
+            const QImage overlayImage = tbcSource.getYuvRangeOverlayImage(yuvRangeSettings);
+            if (!overlayImage.isNull() && overlayImage.width() > 0 && overlayImage.height() > 0) {
+                const QPixmap scaledOverlay = QPixmap::fromImage(overlayImage).scaled(
+                    scaledPixmap.size(), Qt::IgnoreAspectRatio, Qt::FastTransformation);
+                QPainter painter(&scaledPixmap);
+                painter.setRenderHint(QPainter::Antialiasing, false);
+                painter.drawPixmap(0, 0, scaledOverlay);
+            }
+        }
 
         if (showExportBoundary) {
             const QVector<QRect> activeRects = getActiveVideoRects();
@@ -3339,6 +3384,36 @@ void MainWindow::updateRgbScopeDialogue(bool force)
     if (rgbScopeRefreshTimer && rgbScopeRefreshPending) {
         rgbScopeRefreshTimer->stop();
         rgbScopeRefreshPending = false;
+    }
+}
+
+void MainWindow::updateYuvRangeScopeDialogue(bool force)
+{
+    if (!yuvRangeDialog || !tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        return;
+    }
+    if (asyncFrameRenderInProgress && shouldRenderFrameAsync()) {
+        return;
+    }
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 minRefreshIntervalMs = playbackRunning ? 180 : 80;
+    if (!force && yuvRangeScopeLastRefreshMs > 0) {
+        const qint64 elapsedMs = nowMs - yuvRangeScopeLastRefreshMs;
+        if (elapsedMs < minRefreshIntervalMs) {
+            if (yuvRangeScopeRefreshTimer && !yuvRangeScopeRefreshPending) {
+                yuvRangeScopeRefreshPending = true;
+                yuvRangeScopeRefreshTimer->start(static_cast<int>(minRefreshIntervalMs - elapsedMs));
+            }
+            return;
+        }
+    }
+
+    yuvRangeDialog->showScopeImage(tbcSource.getYuvRangeScopeImage(yuvRangeDialog->scopeRenderTargetSize(), yuvRangeSettings));
+    yuvRangeScopeLastRefreshMs = nowMs;
+    if (yuvRangeScopeRefreshTimer && yuvRangeScopeRefreshPending) {
+        yuvRangeScopeRefreshTimer->stop();
+        yuvRangeScopeRefreshPending = false;
     }
 }
 
@@ -5056,6 +5131,21 @@ void MainWindow::on_actionRGB_scope_triggered()
     rgbScopeDialog->raise();
     rgbScopeDialog->activateWindow();
 }
+
+// Display the YUV range scope pop-out view
+void MainWindow::on_actionYUV_range_scope_triggered()
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        return;
+    }
+    if (!yuvRangeDialog->isVisible()) {
+        yuvRangeDialog->show();
+    }
+    updateYuvRangeScopeDialogue(true);
+    yuvRangeDialog->raise();
+    yuvRangeDialog->activateWindow();
+}
+
 // Display the field timing scope view
 void MainWindow::on_actionField_timing_scope_triggered()
 {

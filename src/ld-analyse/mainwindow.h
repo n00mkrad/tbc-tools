@@ -36,6 +36,7 @@
 
 #include "oscilloscopedialog.h"
 #include "rgbscopedialog.h"
+#include "yuvrangedialog.h"
 #include "vectorscopedialog.h"
 #include "fieldtimingdialog.h"
 #include "aboutdialog.h"
@@ -83,6 +84,7 @@ private slots:
     void on_actionSave_Metadata_triggered();
     void on_actionLine_scope_triggered();
     void on_actionRGB_scope_triggered();
+    void on_actionYUV_range_scope_triggered();
     void on_actionVectorscope_triggered();
     void on_actionField_timing_scope_triggered();
     void on_actionTBC_Tools_Wiki_triggered();
@@ -210,6 +212,7 @@ private:
     // Dialogues
     OscilloscopeDialog* oscilloscopeDialog;
     RgbScopeDialog *rgbScopeDialog;
+    YuvRangeDialog *yuvRangeDialog;
     VectorscopeDialog* vectorscopeDialog;
     FieldTimingDialog* fieldTimingDialog;
     AboutDialog* aboutDialog;
@@ -266,6 +269,10 @@ private:
     QTimer* rgbScopeRefreshTimer = nullptr;
     bool rgbScopeRefreshPending = false;
     qint64 rgbScopeLastRefreshMs = 0;
+    QTimer* yuvRangeScopeRefreshTimer = nullptr;
+    bool yuvRangeScopeRefreshPending = false;
+    qint64 yuvRangeScopeLastRefreshMs = 0;
+    YuvRangeSettings yuvRangeSettings;
     
     // Chroma toggle during seek
     bool chromaSeekMode;
@@ -339,6 +346,7 @@ private:
     void cleanupTempMetadataFile();
     void updateOscilloscopeDialogue();
     void updateRgbScopeDialogue(bool force = false);
+    void updateYuvRangeScopeDialogue(bool force = false);
     void updateVectorscopeDialogue();
     void updateFieldTimingDialogue();
     void populateThemesMenu();

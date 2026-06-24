@@ -33,6 +33,8 @@
 #include "comb.h"
 #include "monodecoder.h"
 
+struct YuvRangeSettings;
+
 class TbcSource : public QObject
 {
     Q_OBJECT
@@ -129,6 +131,8 @@ public:
 
     QImage getImage();
     QImage getRgbScopeImage(const QSize &targetSize = QSize());
+    QImage getYuvRangeScopeImage(const QSize &targetSize, const YuvRangeSettings &settings);
+    QImage getYuvRangeOverlayImage(const YuvRangeSettings &settings);
     qint32 getNumberOfFrames() const;
     qint32 getNumberOfFields() const;
     bool getIsWidescreen() const;
@@ -250,6 +254,23 @@ private:
     QImage rgbScopeCache;
     bool rgbScopeCacheValid;
     QSize rgbScopeCacheSize;
+    QImage yuvRangeScopeCache;
+    bool yuvRangeScopeCacheValid;
+    QSize yuvRangeScopeCacheSize;
+    qint32 yuvRangeScopeCacheLumaMin;
+    qint32 yuvRangeScopeCacheLumaMax;
+    qint32 yuvRangeScopeCacheChromaMin;
+    qint32 yuvRangeScopeCacheChromaMax;
+    QImage yuvRangeOverlayCache;
+    bool yuvRangeOverlayCacheValid;
+    qint32 yuvRangeOverlayCacheLumaMin;
+    qint32 yuvRangeOverlayCacheLumaMax;
+    qint32 yuvRangeOverlayCacheChromaMin;
+    qint32 yuvRangeOverlayCacheChromaMax;
+    qint32 yuvRangeOverlayCacheAlpha;
+    ViewMode yuvRangeOverlayCacheViewMode;
+    bool yuvRangeOverlayCacheStretchField;
+    qint32 yuvRangeOverlayCacheFieldNumber;
 
     // Chroma decoder configuration
     PalColour::Configuration palConfiguration;

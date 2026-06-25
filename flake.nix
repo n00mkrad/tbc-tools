@@ -152,6 +152,7 @@
             qt6.qtbase
             qt6.qtsvg
             fftw
+            flac
             ffmpeg
             sqlite
             libGL
@@ -192,6 +193,7 @@
             qt6.qtbase
             qt6.qtsvg
             fftw
+            flac
             ffmpeg
             sqlite
             libGL

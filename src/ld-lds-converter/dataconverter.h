@@ -28,13 +28,28 @@
 #include <QObject>
 #include <QDebug>
 #include <QFile>
+#include <FLAC/stream_encoder.h>
 
 class DataConverter : public QObject
 {
     Q_OBJECT
 public:
-    explicit DataConverter(QString inputFileNameParam, QString outputFileNameParam, bool isPackingParam, bool isRIFFParam, QObject *parent = nullptr);
+    enum class OutputFormat {
+        Flac,
+        S16Raw,
+        RiffWave
+    };
+
+    explicit DataConverter(QString inputFileNameParam,
+                           QString outputFileNameParam,
+                           bool isPackingParam,
+                           OutputFormat outputFormatParam,
+                           int flacSampleRateParam = 40000,
+                           int flacCompressionLevelParam = 5,
+                           QObject *parent = nullptr);
     bool process(void);
+    static QString outputExtensionForFormat(OutputFormat outputFormatParam);
+    static QString defaultOutputPath(const QString &inputFileNameParam, bool isPackingParam, OutputFormat outputFormatParam);
 
 signals:
 
@@ -44,18 +59,24 @@ private:
     QString inputFileName;
     QString outputFileName;
     bool isPacking;
-    bool isRIFF;
+    OutputFormat outputFormat;
+    int flacSampleRate;
+    int flacCompressionLevel;
 
     QFile *inputFileHandle;
     QFile *outputFileHandle;
+    FLAC__StreamEncoder *flacEncoder;
 
     // Private methods
     bool openInputFile(void);
     void closeInputFile(void);
     bool openOutputFile(void);
     void closeOutputFile(void);
-    void packFile(void);
-    void unpackFile(void);
+    bool openFlacEncoder(void);
+    bool writeRiffHeader(void);
+    bool writeUnpackedSamples(const qint16 *samples, qint32 sampleCount);
+    bool packFile(void);
+    bool unpackFile(void);
 };
 
 #endif // DATACONVERTER_H

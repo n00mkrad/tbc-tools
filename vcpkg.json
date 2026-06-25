@@ -12,6 +12,7 @@
     },
     "qtsvg",
     "fftw3",
+    "flac",
     "ffmpeg",
     "sqlite3"
   ],

@@ -185,6 +185,7 @@ jobs:
           "bzip2", `
           "double-conversion", `
           "fftw3", `
+          "flac", `
           "freetype", `
           "getopt-win32", `
           "harfbuzz", `

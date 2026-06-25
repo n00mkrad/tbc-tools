@@ -24,14 +24,71 @@
 
 #include "dataconverter.h"
 #include "tbc/logging.h"
+#include <FLAC/stream_encoder.h>
 
-DataConverter::DataConverter(QString inputFileNameParam, QString outputFileNameParam, bool isPackingParam, bool isRIFFParam, QObject *parent) : QObject(parent)
+#include <QByteArray>
+#include <QDir>
+#include <QFileInfo>
+#include <QVector>
+#include <QVersionNumber>
+
+#include <algorithm>
+#include <cstdio>
+
+DataConverter::DataConverter(QString inputFileNameParam,
+                             QString outputFileNameParam,
+                             bool isPackingParam,
+                             OutputFormat outputFormatParam,
+                             int flacSampleRateParam,
+                             int flacCompressionLevelParam,
+                             QObject *parent)
+    : QObject(parent),
+      inputFileName(inputFileNameParam),
+      outputFileName(outputFileNameParam),
+      isPacking(isPackingParam),
+      outputFormat(outputFormatParam),
+      flacSampleRate(std::max(1, flacSampleRateParam)),
+      flacCompressionLevel(std::clamp(flacCompressionLevelParam, 0, 8)),
+      inputFileHandle(nullptr),
+      outputFileHandle(nullptr),
+      flacEncoder(nullptr)
 {
-    // Store the configuration parameters
-    inputFileName = inputFileNameParam;
-    outputFileName = outputFileNameParam;
-    isPacking = isPackingParam;
-    isRIFF = isRIFFParam;
+}
+
+QString DataConverter::outputExtensionForFormat(OutputFormat outputFormatParam)
+{
+    switch (outputFormatParam) {
+    case OutputFormat::Flac:
+        return QStringLiteral(".flac");
+    case OutputFormat::S16Raw:
+        return QStringLiteral(".s16");
+    case OutputFormat::RiffWave:
+        return QStringLiteral(".wav");
+    }
+
+    return QStringLiteral(".bin");
+}
+
+QString DataConverter::defaultOutputPath(const QString &inputFileNameParam,
+                                         bool isPackingParam,
+                                         OutputFormat outputFormatParam)
+{
+    const QFileInfo inputInfo(inputFileNameParam);
+    if (inputFileNameParam.trimmed().isEmpty()) {
+        return QString();
+    }
+
+    QString baseName = inputInfo.completeBaseName();
+    if (baseName.isEmpty()) {
+        baseName = inputInfo.fileName();
+    }
+    if (baseName.isEmpty()) {
+        return QString();
+    }
+
+    const QString extension = isPackingParam ? QStringLiteral(".lds") : outputExtensionForFormat(outputFormatParam);
+    const QString directoryPath = inputInfo.path().isEmpty() ? QStringLiteral(".") : inputInfo.path();
+    return QDir(directoryPath).filePath(baseName + extension);
 }
 
 // Method to process the conversion of the file
@@ -46,12 +103,12 @@ bool DataConverter::process(void)
     // Open the output file
     if (!openOutputFile()) {
         qCritical("Could not open output file!");
+        closeInputFile();
         return false;
     }
 
     // Packing or unpacking?
-    if (isPacking) packFile();
-    else unpackFile();
+    const bool conversionSucceeded = isPacking ? packFile() : unpackFile();
 
     // Close the input file
     closeInputFile();
@@ -59,8 +116,8 @@ bool DataConverter::process(void)
     // Close the output file
     closeOutputFile();
 
-    // Exit with success
-    return true;
+    // Exit with result
+    return conversionSucceeded;
 }
 
 // Method to open the input file for reading
@@ -108,9 +165,13 @@ void DataConverter::closeInputFile(void)
 // Method to open the output file for writing
 bool DataConverter::openOutputFile(void)
 {
+    if (!isPacking && outputFormat == OutputFormat::Flac) {
+        return openFlacEncoder();
+    }
+
     // Do we have a file name for the output file?
     if (outputFileName.isEmpty()) {
-        // No output file name was specified, using stdin instead
+        // No output file name was specified, using stdout instead
         tbcDebugStream() << "No output filename was provided, using stdout";
         outputFileHandle = new QFile;
         if (!outputFileHandle->open(stdout, QIODevice::WriteOnly)) {
@@ -136,9 +197,59 @@ bool DataConverter::openOutputFile(void)
     return true;
 }
 
+bool DataConverter::openFlacEncoder(void)
+{
+    const QString flacVersionString = QString::fromLatin1(FLAC__VERSION_STRING);
+    const QVersionNumber detectedFlacVersion = QVersionNumber::fromString(flacVersionString);
+    const QVersionNumber minimumSupportedFlacVersion(1, 5, 0);
+    if (!detectedFlacVersion.isNull() &&
+        QVersionNumber::compare(detectedFlacVersion, minimumSupportedFlacVersion) < 0) {
+        qCritical("libFLAC %s is too old; version 1.5.0 or newer is required", FLAC__VERSION_STRING);
+        return false;
+    }
+    flacEncoder = FLAC__stream_encoder_new();
+    if (flacEncoder == nullptr) {
+        qCritical("Could not create FLAC encoder instance");
+        return false;
+    }
+
+    FLAC__stream_encoder_set_channels(flacEncoder, 1);
+    FLAC__stream_encoder_set_bits_per_sample(flacEncoder, 16);
+    FLAC__stream_encoder_set_sample_rate(flacEncoder, static_cast<unsigned>(flacSampleRate));
+    FLAC__stream_encoder_set_compression_level(flacEncoder, static_cast<unsigned>(flacCompressionLevel));
+    FLAC__stream_encoder_set_streamable_subset(flacEncoder, true);
+    FLAC__stream_encoder_set_verify(flacEncoder, true);
+
+    FLAC__StreamEncoderInitStatus initStatus;
+    if (outputFileName.isEmpty()) {
+        tbcDebugStream() << "No output filename was provided, writing FLAC output to stdout";
+        initStatus = FLAC__stream_encoder_init_FILE(flacEncoder, stdout, nullptr, nullptr);
+    } else {
+        const QByteArray encodedFileName = QFile::encodeName(outputFileName);
+        initStatus = FLAC__stream_encoder_init_file(flacEncoder, encodedFileName.constData(), nullptr, nullptr);
+    }
+
+    if (initStatus != FLAC__STREAM_ENCODER_INIT_STATUS_OK) {
+        qCritical("Could not initialise FLAC encoder: %s", FLAC__StreamEncoderInitStatusString[initStatus]);
+        FLAC__stream_encoder_delete(flacEncoder);
+        flacEncoder = nullptr;
+        return false;
+    }
+
+    return true;
+}
+
 // Method to close the output file
 void DataConverter::closeOutputFile(void)
 {
+    if (flacEncoder != nullptr) {
+        if (!FLAC__stream_encoder_finish(flacEncoder)) {
+            qWarning("Finalizing FLAC encoder failed");
+        }
+        FLAC__stream_encoder_delete(flacEncoder);
+        flacEncoder = nullptr;
+    }
+
     // Is an output file open?
     if (outputFileHandle != nullptr) {
         outputFileHandle->close();
@@ -149,8 +260,68 @@ void DataConverter::closeOutputFile(void)
     outputFileHandle = nullptr;
 }
 
+bool DataConverter::writeRiffHeader(void)
+{
+    if (outputFileHandle == nullptr) {
+        qCritical("No output file handle available for RIFF output");
+        return false;
+    }
+
+    // Writes a WAV RIFF header, 40k, mono, 16-bit signed
+    const QString riffHex = QStringLiteral("52494646FFFFFFFF57415645666D74201000000001000100409C000088580100020010004C4953541A000000494E464F495346540E0000004C61766635382E32392E3130300064617461FFFFFFFF");
+    const QByteArray riffArray = QByteArray::fromHex(riffHex.toLatin1());
+    const qint64 bytesWritten = outputFileHandle->write(riffArray);
+    if (bytesWritten != riffArray.size()) {
+        qCritical("Could not write RIFF header to output file");
+        return false;
+    }
+    return true;
+}
+
+bool DataConverter::writeUnpackedSamples(const qint16 *samples, qint32 sampleCount)
+{
+    if (sampleCount <= 0 || samples == nullptr) {
+        return true;
+    }
+
+    if (!isPacking && outputFormat == OutputFormat::Flac) {
+        if (flacEncoder == nullptr) {
+            qCritical("FLAC encoder is not initialised");
+            return false;
+        }
+
+        QVector<FLAC__int32> flacBuffer(sampleCount);
+        for (qint32 samplePointer = 0; samplePointer < sampleCount; samplePointer++) {
+            flacBuffer[samplePointer] = samples[samplePointer];
+        }
+
+        if (!FLAC__stream_encoder_process_interleaved(flacEncoder,
+                                                      flacBuffer.constData(),
+                                                      static_cast<unsigned>(sampleCount))) {
+            const FLAC__StreamEncoderState flacState = FLAC__stream_encoder_get_state(flacEncoder);
+            qCritical("Could not write FLAC output: %s", FLAC__StreamEncoderStateString[flacState]);
+            return false;
+        }
+        return true;
+    }
+
+    if (outputFileHandle == nullptr) {
+        qCritical("Output file handle is not initialised");
+        return false;
+    }
+
+    const qint64 outputBytes = static_cast<qint64>(sampleCount) * static_cast<qint64>(sizeof(qint16));
+    const qint64 bytesWritten = outputFileHandle->write(reinterpret_cast<const char *>(samples), outputBytes);
+    if (bytesWritten != outputBytes) {
+        qCritical("Could not write to output file");
+        return false;
+    }
+
+    return true;
+}
+
 // Method to pack 16-bit data into 10-bit data
-void DataConverter::packFile(void)
+bool DataConverter::packFile(void)
 {
     tbcDebugStream() << "DataConverter::packFile(): Packing";
     QByteArray inputBuffer;
@@ -158,8 +329,8 @@ void DataConverter::packFile(void)
     bool isComplete = false;
 
     while(!isComplete) {
-        // Input buffer must be divisible by 5 bytes due to 10-bit data format
-        qint32 bufferSizeInBytes = (20 * 1024 * 1024); // = 20MiBytes
+        // Input buffer must be divisible by 8 bytes due to output packing
+        const qint32 bufferSizeInBytes = (20 * 1024 * 1024); // = 20MiBytes
         inputBuffer.resize(bufferSizeInBytes);
 
         // Every 4 input words (8 bytes) is 5 output bytes
@@ -169,28 +340,34 @@ void DataConverter::packFile(void)
         qint64 receivedBytes = 0;
         qint32 totalReceivedBytes = 0;
         do {
-            receivedBytes = inputFileHandle->read(reinterpret_cast<char *>(inputBuffer.data() + totalReceivedBytes), inputBuffer.size() - totalReceivedBytes);
-            if (receivedBytes > 0) totalReceivedBytes += receivedBytes;
+            receivedBytes = inputFileHandle->read(reinterpret_cast<char *>(inputBuffer.data() + totalReceivedBytes),
+                                                  inputBuffer.size() - totalReceivedBytes);
+            if (receivedBytes > 0) totalReceivedBytes += static_cast<qint32>(receivedBytes);
         } while (receivedBytes > 0 && totalReceivedBytes < bufferSizeInBytes);
 
         // Check for end of file
         if (receivedBytes == 0) isComplete = true;
 
         if (totalReceivedBytes != 0) {
-            // If we didn't fill the input buffer, resize it
-            if (bufferSizeInBytes != totalReceivedBytes) {
-                inputBuffer.resize(totalReceivedBytes);
-                outputBuffer.resize((totalReceivedBytes / 8) * 5);
+            const qint32 usableBytes = (totalReceivedBytes / 8) * 8;
+            if (usableBytes != totalReceivedBytes) {
+                qWarning() << "Input byte count is not aligned to 16-bit sample groups; dropping trailing"
+                           << (totalReceivedBytes - usableBytes) << "bytes";
             }
-            tbcDebugStream() << "DataConverter::packFile(): Got" << totalReceivedBytes << "bytes from input file";
+            if (usableBytes == 0) {
+                continue;
+            }
+
+            inputBuffer.resize(usableBytes);
+            outputBuffer.resize((usableBytes / 8) * 5);
+            tbcDebugStream() << "DataConverter::packFile(): Got" << usableBytes << "aligned bytes from input file";
 
             qint32 word0, word1, word2, word3;
             qint32 outputBufferPointer = 0;
 
             qint16 *input = reinterpret_cast<qint16 *>(inputBuffer.data());
 
-            for (qint32 wordPointer = 0; wordPointer < (totalReceivedBytes / 2); wordPointer += 4) {
-
+            for (qint32 wordPointer = 0; wordPointer < (usableBytes / 2); wordPointer += 4) {
                 word0 = (input[wordPointer + 0] / 64) + 512;
                 word1 = (input[wordPointer + 1] / 64) + 512;
                 word2 = (input[wordPointer + 2] / 64) + 512;
@@ -207,10 +384,11 @@ void DataConverter::packFile(void)
             }
 
             // Write the output buffer to the output file
-            if (!outputFileHandle->write(reinterpret_cast<char *>(outputBuffer.data()),
-                                         outputBuffer.size())) {
-                // File write failed
+            const qint64 bytesWritten = outputFileHandle->write(reinterpret_cast<const char *>(outputBuffer.data()),
+                                                                outputBuffer.size());
+            if (bytesWritten != outputBuffer.size()) {
                 qCritical("Could not write to output file!");
+                return false;
             }
             tbcDebugStream() << "DataConverter::packFile(): Wrote" << outputBuffer.size() << "bytes to output file";
         } else {
@@ -219,51 +397,52 @@ void DataConverter::packFile(void)
             isComplete = true;
         }
     }
+
+    return true;
 }
 
 // Method to unpack 10-bit data into 16-bit data
-void DataConverter::unpackFile(void)
+bool DataConverter::unpackFile(void)
 {
     tbcDebugStream() << "DataConversion::unpackFile(): Unpacking";
     QByteArray inputBuffer;
     QByteArray outputBuffer;
     bool isComplete = false;
 
-    // Are we writing a RIFF header?
-    if (isRIFF) {
-            // Writes a WAV RIFF header, 40k, mono, 16-bit signed
-            QString riffHex = "52494646FFFFFFFF57415645666D74201000000001000100409C000088580100020010004C4953541A000000494E464F495346540E0000004C61766635382E32392E3130300064617461FFFFFFFF";
-            QByteArray riffArray = QByteArray::fromHex(riffHex.toLatin1());
-            outputFileHandle->write(riffArray);
-        }
-        
+    if (outputFormat == OutputFormat::RiffWave && !writeRiffHeader()) {
+        return false;
+    }
 
     while(!isComplete) {
         // Input buffer must be divisible by 5 bytes due to 10-bit data format
-        qint32 bufferSizeInBytes = (5 * 1024 * 1024) * 4; // 5MiB * 4 = 20MiBytes
+        const qint32 bufferSizeInBytes = (5 * 1024 * 1024) * 4; // 5MiB * 4 = 20MiBytes
         inputBuffer.fill(0, bufferSizeInBytes);
-
-        // Every 5 input bytes is 4 output words (8 bytes)
-        outputBuffer.resize((bufferSizeInBytes / 5) * 8);
 
         // Fill the input buffer with data
         qint64 receivedBytes = 0;
         qint32 totalReceivedBytes = 0;
         do {
-            receivedBytes = inputFileHandle->read(reinterpret_cast<char *>(inputBuffer.data() + totalReceivedBytes), bufferSizeInBytes - totalReceivedBytes);
-            if (receivedBytes > 0) totalReceivedBytes += receivedBytes;
+            receivedBytes = inputFileHandle->read(reinterpret_cast<char *>(inputBuffer.data() + totalReceivedBytes),
+                                                  bufferSizeInBytes - totalReceivedBytes);
+            if (receivedBytes > 0) totalReceivedBytes += static_cast<qint32>(receivedBytes);
         } while (receivedBytes > 0 && totalReceivedBytes < bufferSizeInBytes);
 
         // Check for end of file
         if (receivedBytes == 0) isComplete = true;
 
         if (totalReceivedBytes != 0) {
-            // If we didn't fill the input buffer, resize it
-            if (bufferSizeInBytes != totalReceivedBytes) {
-                inputBuffer.resize(totalReceivedBytes);
-                outputBuffer.resize((totalReceivedBytes / 5) * 8);
+            const qint32 completeInputBytes = (totalReceivedBytes / 5) * 5;
+            if (completeInputBytes != totalReceivedBytes) {
+                qWarning() << "Input byte count is not aligned to packed 10-bit groups; dropping trailing"
+                           << (totalReceivedBytes - completeInputBytes) << "bytes";
             }
-            tbcDebugStream() << "DataConverter::unpackFile(): Got" << totalReceivedBytes << "bytes from input file";
+            if (completeInputBytes == 0) {
+                continue;
+            }
+
+            // Every 5 input bytes is 4 output words (8 bytes)
+            outputBuffer.resize((completeInputBytes / 5) * 8);
+            tbcDebugStream() << "DataConverter::unpackFile(): Got" << completeInputBytes << "aligned bytes from input file";
 
             char byte0, byte1, byte2, byte3, byte4;
             qint32 word0, word1, word2, word3;
@@ -271,7 +450,7 @@ void DataConverter::unpackFile(void)
 
             qint16 *output = reinterpret_cast<qint16 *>(outputBuffer.data());
 
-            for (qint32 bytePointer = 0; bytePointer < totalReceivedBytes; bytePointer += 5) {
+            for (qint32 bytePointer = 0; bytePointer < completeInputBytes; bytePointer += 5) {
                 // Unpack the 5 bytes into 4x 10-bit values
 
                 // Unpacked:                 Packed:
@@ -301,17 +480,17 @@ void DataConverter::unpackFile(void)
                 outputBufferPointer += 4;
             }
 
-            // Write the output buffer to the output file
-            if (!outputFileHandle->write(reinterpret_cast<char *>(outputBuffer.data()),
-                                         outputBuffer.size())) {
-                // File write failed
-                qCritical("Could not write to output file!");
+            if (!writeUnpackedSamples(output, outputBufferPointer)) {
+                return false;
             }
-            tbcDebugStream() << "DataConverter::unpackFile(): Wrote" << outputBuffer.size() << "bytes to output file";
+
+            tbcDebugStream() << "DataConverter::unpackFile(): Wrote" << outputBuffer.size() << "bytes of decoded s16 data";
         } else {
             // Input file is empty
             tbcDebugStream() << "DataConverter::unpackFile(): Got zero bytes from input file";
             isComplete = true;
         }
     }
+
+    return true;
 }

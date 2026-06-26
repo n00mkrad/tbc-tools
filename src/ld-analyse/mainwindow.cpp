@@ -1342,6 +1342,19 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     }
     connect(vectorscopeSelectionPushButton, &QPushButton::toggled,
             this, &MainWindow::on_vectorscopeSelectionPushButton_toggled);
+    primariesActionGroup = new QActionGroup(this);
+    primariesActionGroup->setExclusive(true);
+    primariesActionGroup->addAction(ui->actionPrimariesDefault);
+    primariesActionGroup->addAction(ui->actionPrimariesBt601);
+    primariesActionGroup->addAction(ui->actionPrimariesBt470M);
+    ui->actionPrimariesDefault->setChecked(true);
+    transferActionGroup = new QActionGroup(this);
+    transferActionGroup->setExclusive(true);
+    transferActionGroup->addAction(ui->actionTransferAsIs);
+    transferActionGroup->addAction(ui->actionTransferBt709);
+    transferActionGroup->addAction(ui->actionTransferGamma22);
+    transferActionGroup->addAction(ui->actionTransferGamma28);
+    ui->actionTransferAsIs->setChecked(true);
     populateThemesMenu();
 
     // Set up dialogues
@@ -5915,6 +5928,76 @@ void MainWindow::on_actionZoom_3x_triggered()
     scaleFactor = 3.0;
     updateImageViewer();
 	MainWindow::resize_on_aspect();
+}
+
+void MainWindow::on_actionPrimariesDefault_triggered()
+{
+    applyInputPrimaries(TbcSource::InputPrimaries::Default);
+}
+
+void MainWindow::on_actionPrimariesBt601_triggered()
+{
+    applyInputPrimaries(TbcSource::InputPrimaries::Bt601);
+}
+
+void MainWindow::on_actionPrimariesBt470M_triggered()
+{
+    applyInputPrimaries(TbcSource::InputPrimaries::Bt470M);
+}
+
+void MainWindow::on_actionTransferAsIs_triggered()
+{
+    applyInputTransfer(TbcSource::InputTransfer::AsIs);
+}
+
+void MainWindow::on_actionTransferBt709_triggered()
+{
+    applyInputTransfer(TbcSource::InputTransfer::Bt709);
+}
+
+void MainWindow::on_actionTransferGamma22_triggered()
+{
+    applyInputTransfer(TbcSource::InputTransfer::Gamma22);
+}
+
+void MainWindow::on_actionTransferGamma28_triggered()
+{
+    applyInputTransfer(TbcSource::InputTransfer::Gamma28);
+}
+
+void MainWindow::applyInputPrimaries(TbcSource::InputPrimaries primaries)
+{
+    if (tbcSource.getInputPrimaries() == primaries) {
+        return;
+    }
+    tbcSource.setInputPrimaries(primaries);
+    refreshInputColorSettings();
+}
+
+void MainWindow::applyInputTransfer(TbcSource::InputTransfer transfer)
+{
+    if (tbcSource.getInputTransfer() == transfer) {
+        return;
+    }
+    tbcSource.setInputTransfer(transfer);
+    refreshInputColorSettings();
+}
+
+void MainWindow::refreshInputColorSettings()
+{
+    if (asyncFrameRenderInProgress) {
+        cancelInFlightAsyncFrameRender();
+    }
+
+    asyncFrameImage = QImage();
+    if (!tbcSource.getIsSourceLoaded()) {
+        return;
+    }
+
+    updateImageViewer();
+    if (rgbScopeDialog && rgbScopeDialog->isVisible() && !rgbScopeDialog->isMinimized()) {
+        updateRgbScopeDialogue(true);
+    }
 }
 
 // Show closed captions

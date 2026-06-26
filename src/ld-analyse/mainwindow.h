@@ -102,6 +102,13 @@ private slots:
     void on_actionZoom_1x_triggered();
     void on_actionZoom_2x_triggered();
     void on_actionZoom_3x_triggered();
+    void on_actionPrimariesDefault_triggered();
+    void on_actionPrimariesBt601_triggered();
+    void on_actionPrimariesBt470M_triggered();
+    void on_actionTransferAsIs_triggered();
+    void on_actionTransferBt709_triggered();
+    void on_actionTransferGamma22_triggered();
+    void on_actionTransferGamma28_triggered();
     void on_actionClosed_Captions_triggered();
     void on_actionVideo_parameters_triggered();
     void on_actionChroma_decoder_configuration_triggered();
@@ -349,6 +356,9 @@ private:
     void updateYuvRangeScopeDialogue(bool force = false);
     void updateVectorscopeDialogue();
     void updateFieldTimingDialogue();
+    void applyInputPrimaries(TbcSource::InputPrimaries primaries);
+    void applyInputTransfer(TbcSource::InputTransfer transfer);
+    void refreshInputColorSettings();
     void populateThemesMenu();
     void applyThemeStyle(const QString &styleName);
     void mouseScanLineSelect(qint32 oX, qint32 oY);
@@ -361,6 +371,8 @@ private:
     UiStateSnapshot captureUiStateSnapshot() const;
     void applyUiStateSnapshot(const UiStateSnapshot &snapshot);
     QActionGroup *themesActionGroup = nullptr;
+    QActionGroup *primariesActionGroup = nullptr;
+    QActionGroup *transferActionGroup = nullptr;
     QAction *saveAllModesPngAction = nullptr;
     QAction *copyCurrentDisplayAction = nullptr;
     QAction *notesViewerAction = nullptr;

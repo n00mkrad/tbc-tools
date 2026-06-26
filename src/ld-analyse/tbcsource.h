@@ -118,6 +118,22 @@ public:
     bool getRgbScopeViewEnabled() const;
     bool getStretchField() const;
 
+    enum class InputPrimaries {
+        Default,
+        Bt601,
+        Bt470M
+    };
+    enum class InputTransfer {
+        AsIs,
+        Bt709,
+        Gamma22,
+        Gamma28
+    };
+    void setInputPrimaries(InputPrimaries primaries);
+    InputPrimaries getInputPrimaries() const;
+    void setInputTransfer(InputTransfer transfer);
+    InputTransfer getInputTransfer() const;
+
     enum SourceMode {
         ONE_SOURCE,
         LUMA_SOURCE,
@@ -275,9 +291,11 @@ private:
     // Chroma decoder configuration
     PalColour::Configuration palConfiguration;
     Comb::Configuration ntscConfiguration;
-	MonoDecoder::MonoConfiguration monoConfiguration;
+    MonoDecoder::MonoConfiguration monoConfiguration;
     OutputWriter::Configuration outputConfiguration;
     ChromaDecodeMode chromaDecodeMode = HYBRID_CHROMA_MODE;
+    InputPrimaries inputPrimaries = InputPrimaries::Default;
+    InputTransfer inputTransfer = InputTransfer::AsIs;
 	bool combine = false;
 
     // Chapter map
@@ -285,7 +303,9 @@ private:
 
     void resetState();
     void invalidateImageCache();
+    void invalidateRgbImageCache();
     void configureChromaDecoder();
+    void configureOutputWriter();
     void loadInputFields();
     void decodeFrame();
     QImage generateQImage(ViewMode renderViewMode, const QSize &targetSize = QSize());

@@ -782,11 +782,30 @@
     <property name="title">
      <string>View</string>
     </property>
+    <widget class="QMenu" name="menuPrimaries">
+     <property name="title">
+      <string>Primaries</string>
+     </property>
+     <addaction name="actionPrimariesDefault"/>
+     <addaction name="actionPrimariesBt601"/>
+     <addaction name="actionPrimariesBt470M"/>
+    </widget>
+    <widget class="QMenu" name="menuTransfer">
+     <property name="title">
+      <string>Transfer</string>
+     </property>
+     <addaction name="actionTransferAsIs"/>
+     <addaction name="actionTransferBt709"/>
+     <addaction name="actionTransferGamma22"/>
+     <addaction name="actionTransferGamma28"/>
+    </widget>
     <addaction name="actionZoom_In"/>
     <addaction name="actionZoom_Out"/>
     <addaction name="actionZoom_1x"/>
     <addaction name="actionZoom_2x"/>
     <addaction name="actionZoom_3x"/>
+    <addaction name="menuPrimaries"/>
+    <addaction name="menuTransfer"/>
     <addaction name="separator"/>
     <addaction name="toggleAutoResize"/>
     <addaction name="actionResizeFrameWithWindow"/>
@@ -977,6 +996,68 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+3</string>
+   </property>
+  </action>
+  <action name="actionPrimariesDefault">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Default</string>
+   </property>
+  </action>
+  <action name="actionPrimariesBt601">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>BT.601 (system-aware)</string>
+   </property>
+  </action>
+  <action name="actionPrimariesBt470M">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>BT.470M</string>
+   </property>
+  </action>
+  <action name="actionTransferAsIs">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>As-is</string>
+   </property>
+  </action>
+  <action name="actionTransferBt709">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>BT.709</string>
+   </property>
+  </action>
+  <action name="actionTransferGamma22">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Gamma 2.2</string>
+   </property>
+  </action>
+  <action name="actionTransferGamma28">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Gamma 2.8</string>
    </property>
   </action>
   <action name="toggleAutoResize">

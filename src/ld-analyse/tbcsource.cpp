@@ -12,9 +12,13 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <QColorSpace>
+#include <QColorTransform>
 #include <QDir>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QPointF>
+#include <QRgba64>
 #include <QStringList>
 
 #include "tbcsource.h"
@@ -24,6 +28,48 @@
 #include "sourcefield.h"
 
 namespace {
+QColorSpace makeInputRgbColorSpace(TbcSource::InputPrimaries primaries,
+                                   TbcSource::InputTransfer transfer,
+                                   VideoSystem system)
+{
+    QPointF whitePoint(0.3127, 0.3290);
+    QPointF redPoint(0.640, 0.330);
+    QPointF greenPoint(0.300, 0.600);
+    QPointF bluePoint(0.150, 0.060);
+    if (primaries == TbcSource::InputPrimaries::Bt601) {
+        if (system == PAL) {
+            // 625-line BT.601 uses BT.470BG primaries.
+            greenPoint = QPointF(0.290, 0.600);
+        } else {
+            // 525-line BT.601 uses SMPTE-170M primaries.
+            redPoint = QPointF(0.630, 0.340);
+            greenPoint = QPointF(0.310, 0.595);
+            bluePoint = QPointF(0.155, 0.070);
+        }
+    } else if (primaries == TbcSource::InputPrimaries::Bt470M) {
+        // BT.470M defines NTSC 1953 primaries and illuminant C.
+        whitePoint = QPointF(0.310, 0.316);
+        redPoint = QPointF(0.670, 0.330);
+        greenPoint = QPointF(0.210, 0.710);
+        bluePoint = QPointF(0.140, 0.080);
+    }
+
+    QColorSpace::TransferFunction transferFunction = QColorSpace::TransferFunction::SRgb;
+    float gamma = 0.0f;
+    if (transfer == TbcSource::InputTransfer::Bt709) {
+        // Qt exposes the common BT.709-family transfer curve as Bt2020.
+        transferFunction = QColorSpace::TransferFunction::Bt2020;
+    } else if (transfer == TbcSource::InputTransfer::Gamma22) {
+        transferFunction = QColorSpace::TransferFunction::Gamma;
+        gamma = 2.2f;
+    } else if (transfer == TbcSource::InputTransfer::Gamma28) {
+        transferFunction = QColorSpace::TransferFunction::Gamma;
+        gamma = 2.8f;
+    }
+
+    return QColorSpace(whitePoint, redPoint, greenPoint, bluePoint, transferFunction, gamma);
+}
+
 struct YuvRangeScale {
     double yScale = 0.0;
     double cbScale = 0.0;
@@ -894,6 +940,36 @@ void TbcSource::setViewMode(ViewMode _viewMode)
 {
     invalidateImageCache();
     viewMode = _viewMode;
+}
+
+void TbcSource::setInputPrimaries(TbcSource::InputPrimaries primaries)
+{
+    if (inputPrimaries == primaries) {
+        return;
+    }
+
+    inputPrimaries = primaries;
+    invalidateRgbImageCache();
+}
+
+TbcSource::InputPrimaries TbcSource::getInputPrimaries() const
+{
+    return inputPrimaries;
+}
+
+void TbcSource::setInputTransfer(TbcSource::InputTransfer transfer)
+{
+    if (inputTransfer == transfer) {
+        return;
+    }
+
+    inputTransfer = transfer;
+    invalidateRgbImageCache();
+}
+
+TbcSource::InputTransfer TbcSource::getInputTransfer() const
+{
+    return inputTransfer;
 }
 
 // Method to set stretch field mode (true = on)
@@ -1809,6 +1885,14 @@ void TbcSource::invalidateImageCache()
     cacheValid = false;
 }
 
+// Mark only RGB-derived images invalid while retaining decoded component data.
+void TbcSource::invalidateRgbImageCache()
+{
+    rgbScopeCacheValid = false;
+    rgbScopeCacheSize = QSize();
+    cacheValid = false;
+}
+
 // Configure the chroma decoder for its settings and the VideoParameters
 void TbcSource::configureChromaDecoder()
 {
@@ -1829,8 +1913,13 @@ void TbcSource::configureChromaDecoder()
     }
 	monoDecoder.updateConfiguration(decodeVideoParameters, monoConfiguration);
 
-    // Configure the OutputWriter.
-    // Because we have padding disabled, this won't change the VideoParameters.
+    configureOutputWriter();
+}
+
+void TbcSource::configureOutputWriter()
+{
+    // Because padding is disabled in ld-analyse, this does not change the stored VideoParameters.
+    LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
     outputWriter.updateConfiguration(videoParameters, outputConfiguration);
 }
 
@@ -2041,6 +2130,7 @@ QImage TbcSource::generateQImage(ViewMode renderViewMode, const QSize &targetSiz
     // Create RGB32 data and set h/w + offsets
     QVector<QRgb> rgbData;
     qint32 inputHeight, inputWidth, fieldHeight, inputOffset, outputOffset;
+    const bool colorManaged = chromaOn && (inputPrimaries != InputPrimaries::Default || inputTransfer != InputTransfer::AsIs);
 
     if (chromaOn) {
         // Show debug information
@@ -2067,12 +2157,22 @@ QImage TbcSource::generateQImage(ViewMode renderViewMode, const QSize &targetSiz
 
         const auto rgb48Ptr = reinterpret_cast<quint16 *>(outputFrame.data());
         rgbData.reserve(inputHeight * inputWidth * 3);
+        const QColorSpace sourceColorSpace = colorManaged ? makeInputRgbColorSpace(inputPrimaries, inputTransfer, videoParameters.system) : QColorSpace();
+        const QColorTransform colorTransform = colorManaged
+                                                   ? sourceColorSpace.transformationToColorSpace(QColorSpace(QColorSpace::SRgb))
+                                                   : QColorTransform();
 
         // Create RGB32 from RGB48
         for (auto i = 0; i < inputHeight * inputWidth * 3; i += 3) {
-            rgbData.push_back(qRgb(static_cast<qint32>(rgb48Ptr[i + 0] / 256),
-                                   static_cast<qint32>(rgb48Ptr[i + 1] / 256),
-                                   static_cast<qint32>(rgb48Ptr[i + 2] / 256)));
+            if (colorManaged) {
+                // Transform at 16-bit precision before reducing the display image to RGB32.
+                const QRgba64 displayPixel = colorTransform.map(QRgba64::fromRgba64(rgb48Ptr[i + 0], rgb48Ptr[i + 1], rgb48Ptr[i + 2], 65535));
+                rgbData.push_back(qRgb(displayPixel.red8(), displayPixel.green8(), displayPixel.blue8()));
+            } else {
+                rgbData.push_back(qRgb(static_cast<qint32>(rgb48Ptr[i + 0] / 256),
+                                       static_cast<qint32>(rgb48Ptr[i + 1] / 256),
+                                       static_cast<qint32>(rgb48Ptr[i + 2] / 256)));
+            }
         }
     } else {
         // Show debug information
@@ -2110,7 +2210,10 @@ QImage TbcSource::generateQImage(ViewMode renderViewMode, const QSize &targetSiz
     }
 
     if (renderViewMode == ViewMode::RGB_SCOPE_VIEW) {
-        const QImage scopeImage = renderRgbParadeScopeImage(rgbData, frameWidth, frameHeight, videoParameters, targetSize);
+        QImage scopeImage = renderRgbParadeScopeImage(rgbData, frameWidth, frameHeight, videoParameters, targetSize);
+        if (!scopeImage.isNull() && chromaOn && colorManaged) {
+            scopeImage.setColorSpace(QColorSpace(QColorSpace::SRgb));
+        }
         return scopeImage.isNull() ? outputImage : scopeImage;
     }
 
@@ -2162,6 +2265,10 @@ QImage TbcSource::generateQImage(ViewMode renderViewMode, const QSize &targetSiz
             }
             break;
         }
+    }
+
+    if (chromaOn && colorManaged) {
+        outputImage.setColorSpace(QColorSpace(QColorSpace::SRgb));
     }
 
     return outputImage;

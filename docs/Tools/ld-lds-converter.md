@@ -20,7 +20,7 @@ Options:
 --flac                     Shortcut for --format flac
 -r, --riff                 Shortcut for --format riff (legacy mode)
 --sample-rate <hz>         FLAC sample rate in Hz (default: 40000)
---compression-level <0-8>  FLAC compression level (default: 5)
+--compression-level <0-8>  FLAC compression level (default: 8)
 ```
 
 Examples:

@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>560</width>
-    <height>210</height>
+    <height>250</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -116,6 +116,42 @@
       <widget class="QPushButton" name="convertButton">
        <property name="text">
         <string>Convert</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="progressLayout">
+     <item>
+      <widget class="QProgressBar" name="progressBar">
+       <property name="minimum">
+        <number>0</number>
+       </property>
+       <property name="maximum">
+        <number>100</number>
+       </property>
+       <property name="value">
+        <number>0</number>
+       </property>
+       <property name="textVisible">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="progressPercentLabel">
+       <property name="minimumSize">
+        <size>
+         <width>48</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+       </property>
+       <property name="text">
+        <string>0%</string>
        </property>
       </widget>
      </item>

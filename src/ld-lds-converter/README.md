@@ -35,7 +35,7 @@ ld-lds-converter [options]
 - `--s16` Shortcut for `--format s16`
 - `-r, --riff` Shortcut for `--format riff` (legacy)
 - `--sample-rate <hz>` FLAC sample rate (default: `40000`)
-- `--compression-level <0-8>` FLAC compression level (default: `5`)
+- `--compression-level <0-8>` FLAC compression level (default: `8`)
 
 ## Examples
 ```bash

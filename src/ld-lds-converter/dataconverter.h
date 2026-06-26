@@ -45,13 +45,14 @@ public:
                            bool isPackingParam,
                            OutputFormat outputFormatParam,
                            int flacSampleRateParam = 40000,
-                           int flacCompressionLevelParam = 5,
+                           int flacCompressionLevelParam = 8,
                            QObject *parent = nullptr);
     bool process(void);
     static QString outputExtensionForFormat(OutputFormat outputFormatParam);
     static QString defaultOutputPath(const QString &inputFileNameParam, bool isPackingParam, OutputFormat outputFormatParam);
 
 signals:
+    void progressUpdated(qint64 processedBytes, qint64 totalBytes);
 
 public slots:
 
@@ -66,6 +67,8 @@ private:
     QFile *inputFileHandle;
     QFile *outputFileHandle;
     FLAC__StreamEncoder *flacEncoder;
+    qint64 totalInputBytes;
+    qint64 processedInputBytes;
 
     // Private methods
     bool openInputFile(void);

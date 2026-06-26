@@ -64,6 +64,9 @@ private:
     void updateOutputPathFromInput(bool forceUpdate);
     bool isLikelyLdsFile(const QString &filePath) const;
     DataConverter::OutputFormat selectedOutputFormat() const;
+    void setConversionControlsEnabled(bool enabled);
+    void resetProgressDisplay();
+    void updateProgressDisplay(qint64 processedBytes, qint64 totalBytes);
 
     Ui::ConverterDialog *ui;
     QString sourceDirectory;

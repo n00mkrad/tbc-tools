@@ -30,21 +30,153 @@
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPalette>
 #include <QSignalBlocker>
 #include <QUrl>
+#include <algorithm>
 
 namespace {
 QString normalizePathForCurrentPlatform(const QString &path)
 {
-    const QString trimmedPath = path.trimmed();
-    if (trimmedPath.isEmpty()) {
+    QString normalizedInput = path.trimmed();
+    if (normalizedInput.isEmpty()) {
         return QString();
     }
-    const QString normalized = QDir::cleanPath(QDir::fromNativeSeparators(trimmedPath));
+
+    const QUrl inputUrl(normalizedInput);
+    if (inputUrl.isValid() && inputUrl.scheme().compare(QStringLiteral("file"), Qt::CaseInsensitive) == 0) {
+        const QString localFile = inputUrl.toLocalFile();
+        if (!localFile.isEmpty()) {
+            normalizedInput = localFile;
+        }
+    }
+
+    const QString normalized = QDir::cleanPath(QDir::fromNativeSeparators(normalizedInput));
     return QDir::toNativeSeparators(normalized);
+}
+
+void applyHighContrastStylesheet(QWidget *widget)
+{
+    if (widget == nullptr) {
+        return;
+    }
+
+    const bool isDarkBackground = widget->palette().color(QPalette::Window).lightnessF() < 0.5;
+    if (isDarkBackground) {
+        widget->setStyleSheet(QStringLiteral(
+            "QDialog#ConverterDialog {"
+            "  background-color: #202124;"
+            "  color: #F5F7FA;"
+            "}"
+            "QDialog#ConverterDialog QLabel {"
+            "  color: #F5F7FA;"
+            "}"
+            "QDialog#ConverterDialog QLineEdit,"
+            "QDialog#ConverterDialog QComboBox {"
+            "  background-color: #2C2F33;"
+            "  color: #F5F7FA;"
+            "  border: 1px solid #5F6368;"
+            "  border-radius: 4px;"
+            "  padding: 4px;"
+            "  selection-background-color: #8AB4F8;"
+            "  selection-color: #202124;"
+            "}"
+            "QDialog#ConverterDialog QLineEdit {"
+            "  placeholder-text-color: #D0D4D9;"
+            "}"
+            "QDialog#ConverterDialog QComboBox QAbstractItemView {"
+            "  background-color: #2C2F33;"
+            "  color: #F5F7FA;"
+            "  selection-background-color: #8AB4F8;"
+            "  selection-color: #202124;"
+            "}"
+            "QDialog#ConverterDialog QPushButton {"
+            "  background-color: #3C4043;"
+            "  color: #F5F7FA;"
+            "  border: 1px solid #5F6368;"
+            "  border-radius: 4px;"
+            "  padding: 4px 10px;"
+            "}"
+            "QDialog#ConverterDialog QPushButton:hover {"
+            "  background-color: #4A4F53;"
+            "}"
+            "QDialog#ConverterDialog QPushButton:pressed {"
+            "  background-color: #303336;"
+            "}"
+            "QDialog#ConverterDialog QProgressBar {"
+            "  background-color: #2C2F33;"
+            "  color: #F5F7FA;"
+            "  border: 1px solid #5F6368;"
+            "  border-radius: 4px;"
+            "  text-align: center;"
+            "}"
+            "QDialog#ConverterDialog QProgressBar::chunk {"
+            "  background-color: #8AB4F8;"
+            "}"
+            "QDialog#ConverterDialog QLabel#progressPercentLabel {"
+            "  color: #F5F7FA;"
+            "}"));
+        return;
+    }
+
+    widget->setStyleSheet(QStringLiteral(
+        "QDialog#ConverterDialog {"
+        "  background-color: #F5F6F8;"
+        "  color: #16181C;"
+        "}"
+        "QDialog#ConverterDialog QLabel {"
+        "  color: #16181C;"
+        "}"
+        "QDialog#ConverterDialog QLineEdit,"
+        "QDialog#ConverterDialog QComboBox {"
+        "  background-color: #FFFFFF;"
+        "  color: #16181C;"
+        "  border: 1px solid #8E949B;"
+        "  border-radius: 4px;"
+        "  padding: 4px;"
+        "  selection-background-color: #0B57D0;"
+        "  selection-color: #FFFFFF;"
+        "}"
+        "QDialog#ConverterDialog QLineEdit {"
+        "  placeholder-text-color: #5F6368;"
+        "}"
+        "QDialog#ConverterDialog QComboBox QAbstractItemView {"
+        "  background-color: #FFFFFF;"
+        "  color: #16181C;"
+        "  selection-background-color: #0B57D0;"
+        "  selection-color: #FFFFFF;"
+        "}"
+        "QDialog#ConverterDialog QPushButton {"
+        "  background-color: #E5E8EC;"
+        "  color: #16181C;"
+        "  border: 1px solid #8E949B;"
+        "  border-radius: 4px;"
+        "  padding: 4px 10px;"
+        "}"
+        "QDialog#ConverterDialog QPushButton:hover {"
+        "  background-color: #D8DDE3;"
+        "}"
+        "QDialog#ConverterDialog QPushButton:pressed {"
+        "  background-color: #C9D0D8;"
+        "}"
+        "QDialog#ConverterDialog QProgressBar {"
+        "  background-color: #FFFFFF;"
+        "  color: #16181C;"
+        "  border: 1px solid #8E949B;"
+        "  border-radius: 4px;"
+        "  text-align: center;"
+        "}"
+        "QDialog#ConverterDialog QProgressBar::chunk {"
+        "  background-color: #0B57D0;"
+        "}"
+        "QDialog#ConverterDialog QLabel#progressPercentLabel {"
+        "  color: #16181C;"
+        "}"));
 }
 } // namespace
 
@@ -56,6 +188,8 @@ ConverterDialog::ConverterDialog(QWidget *parent)
 {
     ui->setupUi(this);
     setAcceptDrops(true);
+    applyHighContrastStylesheet(this);
+    resetProgressDisplay();
 
     if (ui->outputFormatComboBox) {
         ui->outputFormatComboBox->clear();
@@ -67,6 +201,7 @@ ConverterDialog::ConverterDialog(QWidget *parent)
     if (ui->inputLineEdit) {
         connect(ui->inputLineEdit, &QLineEdit::textChanged, this, [this]() {
             updateOutputPathFromInput(false);
+            resetProgressDisplay();
             if (ui->statusLabel) {
                 ui->statusLabel->clear();
             }
@@ -188,6 +323,7 @@ void ConverterDialog::on_inputBrowseButton_clicked()
     }
 
     setDefaultInput(inputFileName);
+    resetProgressDisplay();
     if (ui->statusLabel) {
         ui->statusLabel->clear();
     }
@@ -217,6 +353,7 @@ void ConverterDialog::on_outputBrowseButton_clicked()
 
     userEditedOutput = true;
     ui->outputLineEdit->setText(normalizePathForCurrentPlatform(outputFileName));
+    resetProgressDisplay();
     if (ui->statusLabel) {
         ui->statusLabel->clear();
     }
@@ -253,11 +390,25 @@ void ConverterDialog::on_convertButton_clicked()
     }
 
     DataConverter converter(inputFileName, outputFileName, false, format);
-    if (!converter.process()) {
+    connect(&converter, &DataConverter::progressUpdated,
+            this, &ConverterDialog::updateProgressDisplay);
+
+    if (ui->statusLabel) {
+        ui->statusLabel->setText(tr("Converting..."));
+    }
+    resetProgressDisplay();
+    setConversionControlsEnabled(false);
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
+    const bool conversionOk = converter.process();
+
+    setConversionControlsEnabled(true);
+    if (!conversionOk) {
         ui->statusLabel->setText(tr("Conversion failed."));
         QMessageBox::warning(this, tr("Error"), tr("Could not convert the selected file."));
         return;
     }
+    updateProgressDisplay(1, 1);
 
     ui->statusLabel->setText(tr("Conversion complete."));
 }
@@ -266,6 +417,7 @@ void ConverterDialog::on_outputFormatComboBox_currentIndexChanged(int index)
 {
     Q_UNUSED(index)
     updateOutputPathFromInput(false);
+    resetProgressDisplay();
 }
 
 void ConverterDialog::updateOutputPathFromInput(bool forceUpdate)
@@ -293,7 +445,9 @@ void ConverterDialog::updateOutputPathFromInput(bool forceUpdate)
 
 bool ConverterDialog::isLikelyLdsFile(const QString &filePath) const
 {
-    return QFileInfo(filePath).suffix().compare(QStringLiteral("lds"), Qt::CaseInsensitive) == 0;
+    return QFileInfo(normalizePathForCurrentPlatform(filePath))
+               .suffix()
+               .compare(QStringLiteral("lds"), Qt::CaseInsensitive) == 0;
 }
 
 DataConverter::OutputFormat ConverterDialog::selectedOutputFormat() const
@@ -303,4 +457,57 @@ DataConverter::OutputFormat ConverterDialog::selectedOutputFormat() const
         return DataConverter::OutputFormat::Flac;
     }
     return static_cast<DataConverter::OutputFormat>(formatData.toInt());
+}
+
+void ConverterDialog::setConversionControlsEnabled(bool enabled)
+{
+    if (ui->convertButton) {
+        ui->convertButton->setEnabled(enabled);
+    }
+    if (ui->inputBrowseButton) {
+        ui->inputBrowseButton->setEnabled(enabled);
+    }
+    if (ui->outputBrowseButton) {
+        ui->outputBrowseButton->setEnabled(enabled);
+    }
+    if (ui->inputLineEdit) {
+        ui->inputLineEdit->setEnabled(enabled);
+    }
+    if (ui->outputLineEdit) {
+        ui->outputLineEdit->setEnabled(enabled);
+    }
+    if (ui->outputFormatComboBox) {
+        ui->outputFormatComboBox->setEnabled(enabled);
+    }
+}
+
+void ConverterDialog::resetProgressDisplay()
+{
+    if (ui->progressBar) {
+        ui->progressBar->setRange(0, 100);
+        ui->progressBar->setValue(0);
+    }
+    if (ui->progressPercentLabel) {
+        ui->progressPercentLabel->setText(tr("0%"));
+    }
+}
+
+void ConverterDialog::updateProgressDisplay(qint64 processedBytes, qint64 totalBytes)
+{
+    if (ui->progressBar == nullptr || ui->progressPercentLabel == nullptr) {
+        return;
+    }
+
+    if (totalBytes <= 0) {
+        ui->progressBar->setRange(0, 0);
+        ui->progressPercentLabel->setText(tr("--%"));
+    } else {
+        const qint64 clampedProcessed = std::clamp(processedBytes, static_cast<qint64>(0), totalBytes);
+        const int percentage = static_cast<int>((clampedProcessed * 100) / totalBytes);
+        ui->progressBar->setRange(0, 100);
+        ui->progressBar->setValue(percentage);
+        ui->progressPercentLabel->setText(tr("%1%").arg(percentage));
+    }
+
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }

@@ -27,8 +27,13 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QColor>
+#include <QPalette>
+#include <QStringList>
+#include <QUrl>
 #include <QtGlobal>
 #include <cstdio>
+#include <clocale>
 #ifdef Q_OS_WIN
 #include <io.h>
 #else
@@ -40,13 +45,152 @@
 #include "dataconverter.h"
 
 namespace {
+void ldLdsConverterMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+{
+    if (type == QtWarningMsg &&
+        msg.contains(QStringLiteral("fromIccProfile: failed size sanity"), Qt::CaseInsensitive)) {
+        // Benign warning from malformed ICC data published by some desktop environments.
+        return;
+    }
+    debugOutputHandler(type, context, msg);
+}
+
+
+void ensureUtf8ProcessLocale()
+{
+    const char *activeLocale = setlocale(LC_ALL, nullptr);
+    const QByteArray activeLocaleValue = activeLocale != nullptr ? QByteArray(activeLocale) : QByteArray();
+
+    const bool alreadyUtf8 = activeLocaleValue.toLower().contains("utf-8");
+    if (alreadyUtf8) {
+        return;
+    }
+
+    const QList<QByteArray> utf8LocaleCandidates = {
+        qgetenv("LC_ALL").trimmed(),
+        qgetenv("LC_CTYPE").trimmed(),
+        qgetenv("LANG").trimmed(),
+        QByteArrayLiteral("C.UTF-8"),
+        QByteArrayLiteral("en_GB.UTF-8"),
+        QByteArrayLiteral("en_US.UTF-8")
+    };
+
+    for (const QByteArray &candidateRaw : utf8LocaleCandidates) {
+        const QByteArray localeCandidate = candidateRaw.trimmed();
+        if (localeCandidate.isEmpty()) {
+            continue;
+        }
+        if (!localeCandidate.toLower().contains("utf-8")) {
+            continue;
+        }
+
+        if (setlocale(LC_ALL, localeCandidate.constData()) != nullptr) {
+            qputenv("LC_ALL", localeCandidate);
+            qputenv("LANG", localeCandidate);
+            qputenv("LC_CTYPE", localeCandidate);
+            return;
+        }
+    }
+
+    qputenv("LC_ALL", QByteArrayLiteral("C.UTF-8"));
+    qputenv("LANG", QByteArrayLiteral("C.UTF-8"));
+    qputenv("LC_CTYPE", QByteArrayLiteral("C.UTF-8"));
+    if (setlocale(LC_ALL, "C.UTF-8") != nullptr) {
+        return;
+    }
+    setlocale(LC_ALL, "");
+}
+
+void sanitizeGtkModulesEnvironment()
+{
+    QByteArray gtkModulesValue = qgetenv("GTK_MODULES");
+    if (gtkModulesValue.isEmpty()) {
+        return;
+    }
+
+    QString normalizedModules = QString::fromLocal8Bit(gtkModulesValue);
+    normalizedModules.replace(QLatin1Char(';'), QLatin1Char(':'));
+    normalizedModules.replace(QLatin1Char(','), QLatin1Char(':'));
+
+    const QStringList moduleList = normalizedModules.split(QLatin1Char(':'), Qt::SkipEmptyParts);
+    QStringList filteredModules;
+    bool removedModule = false;
+    for (const QString &moduleName : moduleList) {
+        const QString trimmedModuleName = moduleName.trimmed();
+        if (trimmedModuleName.compare(QStringLiteral("xapp-gtk3-module"), Qt::CaseInsensitive) == 0) {
+            removedModule = true;
+            continue;
+        }
+        if (!trimmedModuleName.isEmpty()) {
+            filteredModules << trimmedModuleName;
+        }
+    }
+
+    if (!removedModule) {
+        return;
+    }
+    if (filteredModules.isEmpty()) {
+        qunsetenv("GTK_MODULES");
+        return;
+    }
+
+    qputenv("GTK_MODULES", filteredModules.join(QLatin1Char(':')).toLocal8Bit());
+}
+
+void enforceFusionStyleEnvironment()
+{
+    qputenv("QT_STYLE_OVERRIDE", QByteArrayLiteral("Fusion"));
+}
+
+void applyUnifiedDarkFusionPalette(QApplication &application)
+{
+    application.setStyle(QStringLiteral("Fusion"));
+
+    QPalette palette;
+    palette.setColor(QPalette::Window, QColor(0x20, 0x21, 0x24));
+    palette.setColor(QPalette::WindowText, QColor(0xF5, 0xF7, 0xFA));
+    palette.setColor(QPalette::Base, QColor(0x2C, 0x2F, 0x33));
+    palette.setColor(QPalette::AlternateBase, QColor(0x25, 0x27, 0x2B));
+    palette.setColor(QPalette::ToolTipBase, QColor(0x2C, 0x2F, 0x33));
+    palette.setColor(QPalette::ToolTipText, QColor(0xF5, 0xF7, 0xFA));
+    palette.setColor(QPalette::Text, QColor(0xF5, 0xF7, 0xFA));
+    palette.setColor(QPalette::Button, QColor(0x3C, 0x40, 0x43));
+    palette.setColor(QPalette::ButtonText, QColor(0xF5, 0xF7, 0xFA));
+    palette.setColor(QPalette::BrightText, QColor(0xFF, 0x55, 0x55));
+    palette.setColor(QPalette::Highlight, QColor(0x8A, 0xB4, 0xF8));
+    palette.setColor(QPalette::HighlightedText, QColor(0x20, 0x21, 0x24));
+
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(0x9A, 0xA0, 0xA6));
+    palette.setColor(QPalette::Disabled, QPalette::Text, QColor(0x9A, 0xA0, 0xA6));
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(0x9A, 0xA0, 0xA6));
+    palette.setColor(QPalette::Disabled, QPalette::Highlight, QColor(0x5F, 0x63, 0x68));
+    palette.setColor(QPalette::Disabled, QPalette::HighlightedText, QColor(0xD0, 0xD4, 0xD9));
+
+    application.setPalette(palette);
+}
+
+void sanitizeGuiStartupEnvironment()
+{
+    ensureUtf8ProcessLocale();
+    sanitizeGtkModulesEnvironment();
+    enforceFusionStyleEnvironment();
+}
 QString normalizePathForCurrentPlatform(const QString &path)
 {
-    const QString trimmedPath = path.trimmed();
-    if (trimmedPath.isEmpty()) {
+    QString normalizedInput = path.trimmed();
+    if (normalizedInput.isEmpty()) {
         return QString();
     }
-    const QString normalized = QDir::cleanPath(QDir::fromNativeSeparators(trimmedPath));
+
+    const QUrl inputUrl(normalizedInput);
+    if (inputUrl.isValid() && inputUrl.scheme().compare(QStringLiteral("file"), Qt::CaseInsensitive) == 0) {
+        const QString localFile = inputUrl.toLocalFile();
+        if (!localFile.isEmpty()) {
+            normalizedInput = localFile;
+        }
+    }
+
+    const QString normalized = QDir::cleanPath(QDir::fromNativeSeparators(normalizedInput));
     return QDir::toNativeSeparators(normalized);
 }
 
@@ -133,13 +277,17 @@ int main(int argc, char *argv[])
 {
     // Set 'binary mode' for stdin and stdout on Windows
     setBinaryMode();
+    ensureUtf8ProcessLocale();
 
     // Install the local debug message handler
-    setDebug(true);
-    qInstallMessageHandler(debugOutputHandler);
+    setDebug(false);
+    qInstallMessageHandler(ldLdsConverterMessageHandler);
 
     if (wantsGui(argc, argv)) {
+        sanitizeGuiStartupEnvironment();
+        QApplication::setDesktopSettingsAware(false);
         QApplication a(argc, argv);
+        applyUnifiedDarkFusionPalette(a);
 
         QCoreApplication::setApplicationName("ld-lds-converter");
         QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
@@ -278,8 +426,8 @@ int main(int argc, char *argv[])
     parser.addOption(flacSampleRateOption);
 
     QCommandLineOption flacCompressionLevelOption(QStringList() << "compression-level",
-                                                  QCoreApplication::translate("main", "FLAC compression level 0-8 (default: 5)"),
-                                                  QCoreApplication::translate("main", "level"), "5");
+                                                  QCoreApplication::translate("main", "FLAC compression level 0-8 (default: 8)"),
+                                                  QCoreApplication::translate("main", "level"), "8");
     parser.addOption(flacCompressionLevelOption);
 
     // Process the command line arguments given by the user

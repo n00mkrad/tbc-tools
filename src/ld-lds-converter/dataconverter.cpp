@@ -51,7 +51,9 @@ DataConverter::DataConverter(QString inputFileNameParam,
       flacCompressionLevel(std::clamp(flacCompressionLevelParam, 0, 8)),
       inputFileHandle(nullptr),
       outputFileHandle(nullptr),
-      flacEncoder(nullptr)
+      flacEncoder(nullptr),
+      totalInputBytes(0),
+      processedInputBytes(0)
 {
 }
 
@@ -99,6 +101,7 @@ bool DataConverter::process(void)
         qCritical("Could not open input file!");
         return false;
     }
+    emit progressUpdated(processedInputBytes, totalInputBytes);
 
     // Open the output file
     if (!openOutputFile()) {
@@ -109,6 +112,11 @@ bool DataConverter::process(void)
 
     // Packing or unpacking?
     const bool conversionSucceeded = isPacking ? packFile() : unpackFile();
+
+    if (totalInputBytes > 0) {
+        processedInputBytes = totalInputBytes;
+        emit progressUpdated(processedInputBytes, totalInputBytes);
+    }
 
     // Close the input file
     closeInputFile();
@@ -123,6 +131,8 @@ bool DataConverter::process(void)
 // Method to open the input file for reading
 bool DataConverter::openInputFile(void)
 {
+    totalInputBytes = 0;
+    processedInputBytes = 0;
     // Do we have a file name for the input file?
     if (inputFileName.isEmpty()) {
         // No source input file name was specified, using stdin instead
@@ -142,6 +152,7 @@ bool DataConverter::openInputFile(void)
             tbcDebugStream() << "Could not open" << inputFileName << "as input file";
             return false;
         }
+        totalInputBytes = std::max<qint64>(0, inputFileHandle->size());
         tbcDebugStream() << "DataConverter::openInputFile(): Input file is" << inputFileName << "and is" << inputFileHandle->size() << "bytes in length";
     }
 
@@ -391,6 +402,12 @@ bool DataConverter::packFile(void)
                 return false;
             }
             tbcDebugStream() << "DataConverter::packFile(): Wrote" << outputBuffer.size() << "bytes to output file";
+
+            processedInputBytes += totalReceivedBytes;
+            if (totalInputBytes > 0) {
+                processedInputBytes = std::min(processedInputBytes, totalInputBytes);
+            }
+            emit progressUpdated(processedInputBytes, totalInputBytes);
         } else {
             // Input file is empty
             tbcDebugStream() << "DataConverter::packFile(): Got zero bytes from input file";
@@ -485,6 +502,12 @@ bool DataConverter::unpackFile(void)
             }
 
             tbcDebugStream() << "DataConverter::unpackFile(): Wrote" << outputBuffer.size() << "bytes of decoded s16 data";
+
+            processedInputBytes += totalReceivedBytes;
+            if (totalInputBytes > 0) {
+                processedInputBytes = std::min(processedInputBytes, totalInputBytes);
+            }
+            emit progressUpdated(processedInputBytes, totalInputBytes);
         } else {
             // Input file is empty
             tbcDebugStream() << "DataConverter::unpackFile(): Got zero bytes from input file";

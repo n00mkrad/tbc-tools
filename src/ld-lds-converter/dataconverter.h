@@ -48,6 +48,8 @@ public:
                            int flacCompressionLevelParam = 8,
                            QObject *parent = nullptr);
     bool process(void);
+    void requestCancel();
+    bool wasCancelled() const;
     static QString outputExtensionForFormat(OutputFormat outputFormatParam);
     static QString defaultOutputPath(const QString &inputFileNameParam, bool isPackingParam, OutputFormat outputFormatParam);
 
@@ -69,6 +71,8 @@ private:
     FLAC__StreamEncoder *flacEncoder;
     qint64 totalInputBytes;
     qint64 processedInputBytes;
+    bool cancelRequested;
+    bool conversionCancelled;
 
     // Private methods
     bool openInputFile(void);

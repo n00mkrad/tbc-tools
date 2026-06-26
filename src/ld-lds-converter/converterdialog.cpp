@@ -184,7 +184,9 @@ ConverterDialog::ConverterDialog(QWidget *parent)
     : QDialog(parent),
       ui(new Ui::ConverterDialog),
       sourceDirectory(QDir::homePath()),
-      userEditedOutput(false)
+      userEditedOutput(false),
+      activeConverter(nullptr),
+      cancelRequestedByUser(false)
 {
     ui->setupUi(this);
     setAcceptDrops(true);
@@ -392,18 +394,33 @@ void ConverterDialog::on_convertButton_clicked()
     DataConverter converter(inputFileName, outputFileName, false, format);
     connect(&converter, &DataConverter::progressUpdated,
             this, &ConverterDialog::updateProgressDisplay);
+    activeConverter = &converter;
+    cancelRequestedByUser = false;
 
     if (ui->statusLabel) {
         ui->statusLabel->setText(tr("Converting..."));
     }
+    if (ui->stopButton) {
+        ui->stopButton->setText(tr("Stop"));
+        ui->stopButton->setEnabled(true);
+    }
     resetProgressDisplay();
     setConversionControlsEnabled(false);
-    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
 
     const bool conversionOk = converter.process();
 
     setConversionControlsEnabled(true);
+    activeConverter = nullptr;
+    if (ui->stopButton) {
+        ui->stopButton->setEnabled(false);
+        ui->stopButton->setText(tr("Stop"));
+    }
     if (!conversionOk) {
+        if (converter.wasCancelled() || cancelRequestedByUser) {
+            ui->statusLabel->setText(tr("Conversion cancelled."));
+            return;
+        }
         ui->statusLabel->setText(tr("Conversion failed."));
         QMessageBox::warning(this, tr("Error"), tr("Could not convert the selected file."));
         return;
@@ -411,6 +428,23 @@ void ConverterDialog::on_convertButton_clicked()
     updateProgressDisplay(1, 1);
 
     ui->statusLabel->setText(tr("Conversion complete."));
+}
+
+void ConverterDialog::on_stopButton_clicked()
+{
+    if (activeConverter == nullptr) {
+        return;
+    }
+
+    cancelRequestedByUser = true;
+    activeConverter->requestCancel();
+    if (ui->statusLabel) {
+        ui->statusLabel->setText(tr("Stopping..."));
+    }
+    if (ui->stopButton) {
+        ui->stopButton->setEnabled(false);
+        ui->stopButton->setText(tr("Stopping..."));
+    }
 }
 
 void ConverterDialog::on_outputFormatComboBox_currentIndexChanged(int index)
@@ -509,5 +543,5 @@ void ConverterDialog::updateProgressDisplay(qint64 processedBytes, qint64 totalB
         ui->progressPercentLabel->setText(tr("%1%").arg(percentage));
     }
 
-    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
 }

@@ -53,8 +53,20 @@ DataConverter::DataConverter(QString inputFileNameParam,
       outputFileHandle(nullptr),
       flacEncoder(nullptr),
       totalInputBytes(0),
-      processedInputBytes(0)
+      processedInputBytes(0),
+      cancelRequested(false),
+      conversionCancelled(false)
 {
+}
+
+void DataConverter::requestCancel()
+{
+    cancelRequested = true;
+}
+
+bool DataConverter::wasCancelled() const
+{
+    return conversionCancelled;
 }
 
 QString DataConverter::outputExtensionForFormat(OutputFormat outputFormatParam)
@@ -96,6 +108,7 @@ QString DataConverter::defaultOutputPath(const QString &inputFileNameParam,
 // Method to process the conversion of the file
 bool DataConverter::process(void)
 {
+    conversionCancelled = false;
     // Open the input file
     if (!openInputFile()) {
         qCritical("Could not open input file!");
@@ -113,7 +126,7 @@ bool DataConverter::process(void)
     // Packing or unpacking?
     const bool conversionSucceeded = isPacking ? packFile() : unpackFile();
 
-    if (totalInputBytes > 0) {
+    if (conversionSucceeded && totalInputBytes > 0) {
         processedInputBytes = totalInputBytes;
         emit progressUpdated(processedInputBytes, totalInputBytes);
     }
@@ -340,6 +353,11 @@ bool DataConverter::packFile(void)
     bool isComplete = false;
 
     while(!isComplete) {
+        if (cancelRequested) {
+            conversionCancelled = true;
+            qWarning("Conversion cancelled by user");
+            return false;
+        }
         // Input buffer must be divisible by 8 bytes due to output packing
         const qint32 bufferSizeInBytes = (20 * 1024 * 1024); // = 20MiBytes
         inputBuffer.resize(bufferSizeInBytes);
@@ -379,6 +397,11 @@ bool DataConverter::packFile(void)
             qint16 *input = reinterpret_cast<qint16 *>(inputBuffer.data());
 
             for (qint32 wordPointer = 0; wordPointer < (usableBytes / 2); wordPointer += 4) {
+                if ((wordPointer & 0x3FFF) == 0 && cancelRequested) {
+                    conversionCancelled = true;
+                    qWarning("Conversion cancelled by user");
+                    return false;
+                }
                 word0 = (input[wordPointer + 0] / 64) + 512;
                 word1 = (input[wordPointer + 1] / 64) + 512;
                 word2 = (input[wordPointer + 2] / 64) + 512;
@@ -431,6 +454,11 @@ bool DataConverter::unpackFile(void)
     }
 
     while(!isComplete) {
+        if (cancelRequested) {
+            conversionCancelled = true;
+            qWarning("Conversion cancelled by user");
+            return false;
+        }
         // Input buffer must be divisible by 5 bytes due to 10-bit data format
         const qint32 bufferSizeInBytes = (5 * 1024 * 1024) * 4; // 5MiB * 4 = 20MiBytes
         inputBuffer.fill(0, bufferSizeInBytes);
@@ -468,6 +496,11 @@ bool DataConverter::unpackFile(void)
             qint16 *output = reinterpret_cast<qint16 *>(outputBuffer.data());
 
             for (qint32 bytePointer = 0; bytePointer < completeInputBytes; bytePointer += 5) {
+                if ((bytePointer & 0x3FFF) == 0 && cancelRequested) {
+                    conversionCancelled = true;
+                    qWarning("Conversion cancelled by user");
+                    return false;
+                }
                 // Unpack the 5 bytes into 4x 10-bit values
 
                 // Unpacked:                 Packed:

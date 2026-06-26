@@ -58,6 +58,7 @@ private slots:
     void on_inputBrowseButton_clicked();
     void on_outputBrowseButton_clicked();
     void on_convertButton_clicked();
+    void on_stopButton_clicked();
     void on_outputFormatComboBox_currentIndexChanged(int index);
 
 private:
@@ -71,6 +72,8 @@ private:
     Ui::ConverterDialog *ui;
     QString sourceDirectory;
     bool userEditedOutput;
+    DataConverter *activeConverter;
+    bool cancelRequestedByUser;
 };
 
 #endif // CONVERTERDIALOG_H

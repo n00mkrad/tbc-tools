@@ -27,6 +27,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QFileInfo>
 #include <QColor>
 #include <QPalette>
 #include <QStringList>
@@ -227,7 +228,23 @@ bool wantsGui(int argc, char *argv[])
         return isatty(fileno(stdin)) != 0;
 #endif
     };
+    const auto stdinIsDevNull = []() -> bool {
+#if defined(Q_OS_LINUX)
+        const QFileInfo stdinDescriptor(QStringLiteral("/proc/self/fd/0"));
+        if (!stdinDescriptor.exists() || !stdinDescriptor.isSymLink()) {
+            return false;
+        }
+        return QDir::cleanPath(stdinDescriptor.symLinkTarget()) == QStringLiteral("/dev/null");
+#else
+        return false;
+#endif
+    };
     if (argc <= 1) {
+        // Launching from desktop/file-manager often maps stdin to /dev/null.
+        // Preserve GUI launch in that case while keeping redirected pipe/file CLI behaviour.
+        if (!stdinIsInteractive() && stdinIsDevNull()) {
+            return true;
+        }
         // Keep legacy CLI piping behavior when stdin is redirected.
         return stdinIsInteractive();
     }

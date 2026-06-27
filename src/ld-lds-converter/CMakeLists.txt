@@ -24,3 +24,29 @@ target_link_libraries(ld-lds-converter PRIVATE
 )
 
 install(TARGETS ld-lds-converter)
+
+if(BUILD_TESTING)
+    add_test(
+        NAME ld-lds-converter-help
+        COMMAND ld-lds-converter --help
+    )
+    set_tests_properties(ld-lds-converter-help PROPERTIES
+        PASS_REGULAR_EXPRESSION "Output format for unpack mode: flac \\(default\\), s16 or riff;FLAC compression level 0-8 \\(default: 8\\)"
+    )
+
+    add_test(
+        NAME ld-lds-converter-invalid-format
+        COMMAND ld-lds-converter --unpack --format invalid
+    )
+    set_tests_properties(ld-lds-converter-invalid-format PROPERTIES
+        WILL_FAIL TRUE
+    )
+
+    add_test(
+        NAME ld-lds-converter-invalid-compression-level
+        COMMAND ld-lds-converter --compression-level 9
+    )
+    set_tests_properties(ld-lds-converter-invalid-compression-level PROPERTIES
+        WILL_FAIL TRUE
+    )
+endif()

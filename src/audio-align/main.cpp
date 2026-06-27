@@ -25,6 +25,7 @@
 
 #include "audioalignmentdialog.h"
 #include "tbc/logging.h"
+#include "tbc/uistyle.h"
 namespace {
 // Cross-platform function to detect if system is in dark mode
 bool isDarkModeEnabled()
@@ -97,23 +98,10 @@ int main(int argc, char *argv[])
     setDebug(true);
     qInstallMessageHandler(debugOutputHandler);
 
-    // Some environments set QT_STYLE_OVERRIDE=Adwaita-Dark, which Qt6 may not provide.
-    // Normalize unsupported overrides to Fusion to avoid low-contrast fallbacks.
-    const QByteArray styleOverride = qgetenv("QT_STYLE_OVERRIDE").trimmed();
-    const QStringList availableStyles = QStyleFactory::keys();
-    if (!styleOverride.isEmpty()) {
-        const QString requestedStyle = QString::fromLocal8Bit(styleOverride);
-        const bool styleSupported = availableStyles.contains(requestedStyle, Qt::CaseInsensitive);
-        if (!styleSupported && availableStyles.contains(QStringLiteral("Fusion"), Qt::CaseInsensitive)) {
-            qputenv("QT_STYLE_OVERRIDE", QByteArrayLiteral("Fusion"));
-        }
-    }
+    tbc::ui::normalizeUnsupportedStyleOverrideToFusion();
 
     QApplication app(argc, argv);
-    // Use Fusion on all platforms when available for consistent widget styling.
-    if (QStyleFactory::keys().contains(QStringLiteral("Fusion"), Qt::CaseInsensitive)) {
-        app.setStyle(QStringLiteral("Fusion"));
-    }
+    tbc::ui::applyFusionStyleIfAvailable(app);
 
     // Set application name and version
     QCoreApplication::setApplicationName("tbc-audio-align");
@@ -173,6 +161,7 @@ int main(int argc, char *argv[])
         app.setProperty("isDarkTheme", true);
         applyDarkTheme(app);
     }
+    tbc::ui::enforceInputWidgetContrast(app);
 
     AudioAlignmentDialog dialog;
     if (parser.isSet(sourceDirectoryOption)) {

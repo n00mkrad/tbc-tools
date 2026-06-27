@@ -16,6 +16,7 @@
 #include <QThread>
 
 #include "tbc/logging.h"
+#include "tbc/uistyle.h"
 #include "jsonconverter.h"
 #include "metadataconversiondialog.h"
 
@@ -44,7 +45,10 @@ int main(int argc, char *argv[])
     setDebug(true);
     qInstallMessageHandler(debugOutputHandler);
     if (wantsGui(argc, argv)) {
+        tbc::ui::normalizeUnsupportedStyleOverrideToFusion();
         QApplication a(argc, argv);
+        tbc::ui::applyFusionStyleIfAvailable(a);
+        tbc::ui::enforceInputWidgetContrast(a);
 
         QCoreApplication::setApplicationName("tbc-metadata-converter");
         QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));

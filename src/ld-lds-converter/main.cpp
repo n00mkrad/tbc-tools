@@ -41,6 +41,7 @@
 #endif
 
 #include "tbc/logging.h"
+#include "tbc/uistyle.h"
 #include "converterdialog.h"
 #include "dataconverter.h"
 
@@ -147,24 +148,24 @@ void applyUnifiedDarkFusionPalette(QApplication &application)
     application.setStyle(QStringLiteral("Fusion"));
 
     QPalette palette;
-    palette.setColor(QPalette::Window, QColor(0x20, 0x21, 0x24));
-    palette.setColor(QPalette::WindowText, QColor(0xF5, 0xF7, 0xFA));
-    palette.setColor(QPalette::Base, QColor(0x2C, 0x2F, 0x33));
-    palette.setColor(QPalette::AlternateBase, QColor(0x25, 0x27, 0x2B));
-    palette.setColor(QPalette::ToolTipBase, QColor(0x2C, 0x2F, 0x33));
-    palette.setColor(QPalette::ToolTipText, QColor(0xF5, 0xF7, 0xFA));
-    palette.setColor(QPalette::Text, QColor(0xF5, 0xF7, 0xFA));
-    palette.setColor(QPalette::Button, QColor(0x3C, 0x40, 0x43));
-    palette.setColor(QPalette::ButtonText, QColor(0xF5, 0xF7, 0xFA));
+    palette.setColor(QPalette::Window, QColor(53, 53, 53));
+    palette.setColor(QPalette::WindowText, QColor(255, 255, 255));
+    palette.setColor(QPalette::Base, QColor(25, 25, 25));
+    palette.setColor(QPalette::AlternateBase, QColor(64, 64, 64));
+    palette.setColor(QPalette::ToolTipBase, QColor(53, 53, 53));
+    palette.setColor(QPalette::ToolTipText, QColor(255, 255, 255));
+    palette.setColor(QPalette::Text, QColor(255, 255, 255));
+    palette.setColor(QPalette::Button, QColor(53, 53, 53));
+    palette.setColor(QPalette::ButtonText, QColor(255, 255, 255));
     palette.setColor(QPalette::BrightText, QColor(0xFF, 0x55, 0x55));
-    palette.setColor(QPalette::Highlight, QColor(0x8A, 0xB4, 0xF8));
-    palette.setColor(QPalette::HighlightedText, QColor(0x20, 0x21, 0x24));
+    palette.setColor(QPalette::Highlight, QColor(42, 130, 218));
+    palette.setColor(QPalette::HighlightedText, QColor(255, 255, 255));
 
-    palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(0x9A, 0xA0, 0xA6));
-    palette.setColor(QPalette::Disabled, QPalette::Text, QColor(0x9A, 0xA0, 0xA6));
-    palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(0x9A, 0xA0, 0xA6));
-    palette.setColor(QPalette::Disabled, QPalette::Highlight, QColor(0x5F, 0x63, 0x68));
-    palette.setColor(QPalette::Disabled, QPalette::HighlightedText, QColor(0xD0, 0xD4, 0xD9));
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(160, 160, 160));
+    palette.setColor(QPalette::Disabled, QPalette::Text, QColor(160, 160, 160));
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(160, 160, 160));
+    palette.setColor(QPalette::Disabled, QPalette::Highlight, QColor(80, 80, 80));
+    palette.setColor(QPalette::Disabled, QPalette::HighlightedText, QColor(255, 255, 255));
 
     application.setPalette(palette);
 }
@@ -288,6 +289,7 @@ int main(int argc, char *argv[])
         QApplication::setDesktopSettingsAware(false);
         QApplication a(argc, argv);
         applyUnifiedDarkFusionPalette(a);
+        tbc::ui::enforceInputWidgetContrast(a);
 
         QCoreApplication::setApplicationName("ld-lds-converter");
         QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));

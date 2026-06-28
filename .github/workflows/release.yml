@@ -303,7 +303,7 @@ jobs:
         env:
           PREVIOUS_TAG: ${{ steps.previous-tag.outputs.previous_tag }}
         run: |
-          NOTES_FILE="$(mktemp)"
+          API_NOTES_FILE="$(mktemp)"
           if [ -n "$PREVIOUS_TAG" ]; then
             gh api \
               --method POST \
@@ -311,15 +311,30 @@ jobs:
               "/repos/${{ github.repository }}/releases/generate-notes" \
               -f tag_name="$RELEASE_TAG" \
               -f previous_tag_name="$PREVIOUS_TAG" \
-              --jq '.body' > "$NOTES_FILE"
+              --jq '.body' > "$API_NOTES_FILE"
           else
             gh api \
               --method POST \
               -H "Accept: application/vnd.github+json" \
               "/repos/${{ github.repository }}/releases/generate-notes" \
               -f tag_name="$RELEASE_TAG" \
-              --jq '.body' > "$NOTES_FILE"
+              --jq '.body' > "$API_NOTES_FILE"
           fi
+
+          # GitHub's generate-notes API only lists merged pull requests and
+          # "New Contributors", which omits direct commits pushed to the
+          # default branch. Build a granular, commit-based changelog from git
+          # history (grouped by component, each change citing its hash) and
+          # preserve only the "New Contributors" section from the API output.
+          NOTES_FILE="$(mktemp)"
+          python3 scripts/release/generate_release_notes.py \
+            --repo "${{ github.repository }}" \
+            --tag "$RELEASE_TAG" \
+            --previous-tag "$PREVIOUS_TAG" \
+            --api-notes-file "$API_NOTES_FILE" \
+            --output "$NOTES_FILE"
+          echo "Final release notes:"
+          cat "$NOTES_FILE"
           echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Ensure published GitHub release exists

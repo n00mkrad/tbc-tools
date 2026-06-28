@@ -801,6 +801,7 @@
     <addaction name="actionFix_JSON_SNR"/>
     <addaction name="actionAuto_Audio_Align"/>
     <addaction name="actionEFM_Handler"/>
+    <addaction name="actionLDS_Converter"/>
     <addaction name="separator"/>
     <addaction name="actionMetadata_Status"/>
     <addaction name="actionMetadata_Conversion"/>
@@ -885,6 +886,11 @@
   <action name="actionEFM_Handler">
    <property name="text">
     <string>EFM Handler...</string>
+   </property>
+  </action>
+  <action name="actionLDS_Converter">
+   <property name="text">
+    <string>LDS Converter...</string>
    </property>
   </action>
   <action name="actionExit">

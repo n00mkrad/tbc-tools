@@ -5071,6 +5071,33 @@ void MainWindow::on_actionEFM_Handler_triggered()
     efmHandlerDialog->activateWindow();
     statusBar()->showMessage(tr("Opened EFM Handler. Configure EFM/AC3 stages and run the pipeline."), 5000);
 }
+
+void MainWindow::on_actionLDS_Converter_triggered()
+{
+    const QString toolPath = resolveExternalExecutable({QStringLiteral("ld-lds-converter")});
+    if (toolPath.isEmpty()) {
+        QMessageBox::warning(this, tr("Tool not found"),
+                             tr("ld-lds-converter was not found in PATH or alongside the application."));
+        return;
+    }
+
+    const QStringList toolArguments = {QStringLiteral("--gui")};
+    const QString workingDirectory = QFileInfo(toolPath).absolutePath();
+    qint64 launchedProcessId = 0;
+    const bool started = QProcess::startDetached(toolPath,
+                                                 toolArguments,
+                                                 workingDirectory,
+                                                 &launchedProcessId);
+    if (!started) {
+        QMessageBox::warning(this, tr("Launch failed"),
+                             tr("Could not launch ld-lds-converter as an independent application."));
+        return;
+    }
+
+    if (statusBar()) {
+        statusBar()->showMessage(tr("Opened LDS Converter as an independent application."), 5000);
+    }
+}
 // Start saving the modified metadata
 void MainWindow::on_actionSave_Metadata_triggered()
 {

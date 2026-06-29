@@ -201,15 +201,32 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($archDir)) { throw "Unsupported arch '${{ matrix.arch }}' for MSVC CRT lookup" }
           $redistRoots = @("C:\Program Files\Microsoft Visual Studio\2022", "C:\Program Files (x86)\Microsoft Visual Studio\2022")
           $crtDir = $null
+          # Collect every vcruntime140.dll under the VS 2022 install for this arch. The
+          # windows-2022 runner ships BOTH the VS 2019 (VC142, 14.29) and VS 2022 (VC143)
+          # redistributables; the previous "Select-Object -First 1" grabbed whichever the
+          # recursive enumeration hit first, which was the older VC142 CRT. Bundling the
+          # VC142 MSVCP140.dll / vcruntime140*.dll with VC143-built binaries is an ABI
+          # mismatch that crashes the GUI executables at startup (STATUS_DLL_INIT_FAILED
+          # 0xC0000142, access violation inside MSVCP140.dll). Prefer the desktop (non-
+          # onecore) VS 2022 (VC143) CRT with the highest version, which matches the build.
+          $candidates = @()
           foreach ($root in $redistRoots) {
             if (-not (Test-Path $root)) { continue }
-            $hit = Get-ChildItem -Path $root -Recurse -ErrorAction SilentlyContinue -Filter "vcruntime140.dll" |
-              Where-Object { $_.FullName -match "\\$archDir\\Microsoft\.VC[0-9]+\.CRT\\" } |
-              Select-Object -First 1
-            if ($hit) { $crtDir = Split-Path $hit.FullName; break }
+            $candidates += Get-ChildItem -Path $root -Recurse -ErrorAction SilentlyContinue -Filter "vcruntime140.dll" |
+              Where-Object { $_.FullName -match "\\$archDir\\Microsoft\.VC[0-9]+\.CRT\\" }
           }
-          if (-not $crtDir) { throw "MSVC CRT directory not found under VS 2022 redist for arch $archDir" }
-          Write-Host "Using MSVC CRT from: $crtDir"
+          if ($candidates.Count -eq 0) { throw "MSVC CRT directory not found under VS 2022 redist for arch $archDir" }
+          $hit = $candidates | Where-Object { $_.FullName -match 'Microsoft\.VC143\.CRT' -and $_.FullName -notmatch '\\onecore\\' } | Sort-Object -Descending { [version]$_.VersionInfo.FileVersion } | Select-Object -First 1
+          if (-not $hit) {
+            $hit = $candidates | Where-Object { $_.FullName -match 'Microsoft\.VC143\.CRT' } | Sort-Object -Descending { [version]$_.VersionInfo.FileVersion } | Select-Object -First 1
+          }
+          if (-not $hit) {
+            $hit = $candidates | Sort-Object -Descending { [version]$_.VersionInfo.FileVersion } | Select-Object -First 1
+            Write-Warning "VS 2022 (VC143) MSVC CRT not found for arch $archDir; using newest available: $($hit.FullName)"
+          }
+          $crtDir = Split-Path $hit.FullName
+          $crtVersion = (Get-Item (Join-Path $crtDir 'vcruntime140.dll')).VersionInfo.FileVersion
+          Write-Host "Using MSVC CRT from: $crtDir (vcruntime140.dll $($crtVersion))"
           foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
             $src = Join-Path $crtDir $dll
             if (Test-Path $src) {

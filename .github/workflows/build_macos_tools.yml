@@ -151,15 +151,59 @@ jobs:
           # Copy binaries to MacOS folder
           cp -r dist/bin/* dist/tbc-tools.app/Contents/MacOS/
           
-          # Copy share payload needed by vendored tbc-video-export runtime
-          if [ -d "result/share/tbc-video-export" ]; then
-            cp -R result/share/tbc-video-export dist/tbc-tools.app/Contents/share/
-          fi
-          
           # Copy scripts if they exist
           if [ -d "scripts" ]; then
             find scripts -maxdepth 1 -perm -111 -type f -exec cp {} dist/tbc-tools.app/Contents/MacOS/ \; 2>/dev/null || true
           fi
+
+          # Copy AAA (Auto Audio Align) vendor payload. The "Build with Nix" loop
+          # above uses `[ -f "$item" ]` which skips the result/bin/vendor directory,
+          # so the vendored VhsDecodeAutoAudioAlign.exe + Binah.dll (Mono-runnable
+          # .NET assemblies) are missing from the .app. audioalignmentutil.cpp
+          # resolves them relative to the app dir (Contents/MacOS), so bundle them
+          # at Contents/MacOS/vendor/vhs_decode_auto_audio_align/. Host Mono is a
+          # documented end-user requirement on macOS.
+          AAA_VENDOR_SRC="result/bin/vendor/vhs_decode_auto_audio_align"
+          AAA_VENDOR_DST="dist/tbc-tools.app/Contents/MacOS/vendor/vhs_decode_auto_audio_align"
+          if [ ! -f "$AAA_VENDOR_SRC/VhsDecodeAutoAudioAlign.exe" ] || [ ! -f "$AAA_VENDOR_SRC/Binah.dll" ]; then
+            echo "Missing AAA vendor payload under $AAA_VENDOR_SRC"
+            exit 1
+          fi
+          mkdir -p "$AAA_VENDOR_DST"
+          cp -a "$AAA_VENDOR_SRC/." "$AAA_VENDOR_DST/"
+          echo "Bundled AAA vendor payload to $AAA_VENDOR_DST"
+
+      - name: Build self-contained tbc-video-export (PyInstaller)
+        # Replace the CMake bash wrapper (which execs a *host* Python with host
+        # site-packages) with a PyInstaller --onefile Mach-O binary that bundles
+        # the interpreter and all deps. Built as a thin native binary for the
+        # current runner arch so the build-universal-macos lipo merge unifies it.
+        run: |
+          EXPORTER_ROOT="${{ github.workspace }}/src/tbc-video-export"
+          PYTHON_BIN="/usr/bin/python3"
+          if [ ! -x "$PYTHON_BIN" ]; then
+            PYTHON_BIN="$(command -v python3 || true)"
+          fi
+          if [ -z "$PYTHON_BIN" ]; then
+            echo "No python3 found for PyInstaller build"
+            exit 1
+          fi
+          "$PYTHON_BIN" -m pip install --upgrade pip
+          "$PYTHON_BIN" -m pip install pyinstaller dunamai
+          export PYTHONPATH="$EXPORTER_ROOT/src"
+          cd "$EXPORTER_ROOT"
+          mkdir -p build
+          "$PYTHON_BIN" pyinstaller/build_macos.py
+          cd "${{ github.workspace }}"
+          BUILT="$EXPORTER_ROOT/dist/tbc-video-export"
+          if [ ! -f "$BUILT" ]; then
+            echo "PyInstaller did not produce $BUILT"
+            exit 1
+          fi
+          # Overwrite the CMake bash wrapper in the .app with the self-contained binary.
+          cp -f "$BUILT" dist/tbc-tools.app/Contents/MacOS/tbc-video-export
+          chmod +x dist/tbc-tools.app/Contents/MacOS/tbc-video-export
+          echo "Bundled self-contained tbc-video-export PyInstaller binary"
 
       - name: Verify app executable architecture
         run: |
@@ -450,8 +494,19 @@ jobs:
             echo "Missing vendored exporter tool: dist/tbc-tools.app/Contents/MacOS/tbc-video-export"
             exit 1
           fi
-          if [ ! -d "dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export" ]; then
-            echo "Missing vendored exporter package payload: dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export"
+          # tbc-video-export is now a self-contained PyInstaller Mach-O binary,
+          # not a bash wrapper + package source. Verify it is a Mach-O executable.
+          if ! file "dist/tbc-tools.app/Contents/MacOS/tbc-video-export" 2>/dev/null | grep -q "Mach-O"; then
+            echo "tbc-video-export is not a Mach-O binary (expected PyInstaller --onefile): dist/tbc-tools.app/Contents/MacOS/tbc-video-export"
+            exit 1
+          fi
+          # AAA (Auto Audio Align) vendor payload must be bundled at the resolver path.
+          if [ ! -f "dist/tbc-tools.app/Contents/MacOS/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe" ]; then
+            echo "Missing AAA vendor payload: dist/tbc-tools.app/Contents/MacOS/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe"
+            exit 1
+          fi
+          if [ ! -f "dist/tbc-tools.app/Contents/MacOS/vendor/vhs_decode_auto_audio_align/Binah.dll" ]; then
+            echo "Missing AAA vendor payload: dist/tbc-tools.app/Contents/MacOS/vendor/vhs_decode_auto_audio_align/Binah.dll"
             exit 1
           fi
           FW_DIR="dist/tbc-tools.app/Contents/Frameworks"
@@ -547,9 +602,9 @@ jobs:
             sed -n '1,80p' /tmp/tbc-video-export-version.log || true
             exit 1
           fi
-          if find dist/tbc-tools.app/Contents/share/tbc-video-export -type d -name "__pycache__" | grep -q .; then
+          if find dist/tbc-tools.app/Contents -type d -name "__pycache__" | grep -q .; then
             echo "Bytecode caches were generated inside signed app payload."
-            find dist/tbc-tools.app/Contents/share/tbc-video-export -type d -name "__pycache__"
+            find dist/tbc-tools.app/Contents -type d -name "__pycache__"
             exit 1
           fi
           if ! codesign --verify --deep --strict --verbose=2 "dist/tbc-tools.app"; then

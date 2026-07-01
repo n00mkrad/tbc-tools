@@ -11,6 +11,8 @@ LINUX_WORKFLOW = ROOT / ".github/workflows/build_linux_tools.yml"
 MACOS_WORKFLOW = ROOT / ".github/workflows/build_macos_tools.yml"
 RELEASE_WORKFLOW = ROOT / ".github/workflows/release.yml"
 WINDOWS_REQUIREMENTS = ROOT / "src/tbc-video-export/pyinstaller/requirements-build-windows.txt"
+LINUX_BUILD_REQUIREMENTS = ROOT / "src/tbc-video-export/pyinstaller/requirements-build-linux.txt"
+LINUX_PYINSTALLER_SCRIPT = ROOT / "src/tbc-video-export/pyinstaller/build_linux.py"
 BUNDLE_VERIFY_SCRIPT = ROOT / "ci/verify_linux_bundle.sh"
 
 XCB_RUNTIME_LIBS = (
@@ -43,6 +45,8 @@ WINDOWS_REQUIRED_SNIPPETS = (
     "Commit updated dedicated cache repository (workflow_dispatch only)",
     "CI_CACHE_REPO_TOKEN",
     "tbc-video-export.exe --dump-default-config",
+    "Copy AAA (Auto Audio Align) vendor payload to release directory",
+    "AAA vendor payload missing under",
 )
 
 LINUX_REQUIRED_SNIPPETS = (
@@ -52,6 +56,8 @@ LINUX_REQUIRED_SNIPPETS = (
     "for item in result/bin/*; do",
     "bash ci/verify_linux_bundle.sh x86-appimage release/tbc-tools-x86_64.AppImage",
     "bash ci/verify_linux_bundle.sh arm64-release release",
+    "requirements-build-linux.txt",
+    "pyinstaller/build_linux.py",
 )
 
 MACOS_REQUIRED_SNIPPETS = (
@@ -59,15 +65,17 @@ MACOS_REQUIRED_SNIPPETS = (
     "workflow_call:",
     "macos-15-intel",
     "for item in result/bin/*; do",
-    "result/share/tbc-video-export",
     "Missing vendored exporter tool: dist/tbc-tools.app/Contents/MacOS/tbc-video-export",
-    "Missing vendored exporter package payload: dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export",
     "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
     "/nix/store/*)",
     "dep_unique_name()",
     "verify_bundled_dependencies()",
     "Unresolved bundled dependency:",
     "Bundled dependency verification failed.",
+    "Bundled AAA vendor payload to $AAA_VENDOR_DST",
+    "Build self-contained tbc-video-export (PyInstaller)",
+    "tbc-video-export is not a Mach-O binary",
+    "Missing AAA vendor payload: dist/tbc-tools.app/Contents/MacOS/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe",
 )
 
 RELEASE_REQUIRED_SNIPPETS = (
@@ -85,8 +93,11 @@ BUNDLE_VERIFY_REQUIRED_SNIPPETS = (
     'run_smoke_test "arm64-launcher-tbc-video-export"',
     'require_path "$ROOT/usr/bin/tbc-video-export"',
     'require_path "$TARGET/bin/tbc-video-export"',
-    'require_path "$ROOT/usr/share/tbc-video-export/src/tbc_video_export/__main__.py"',
-    'require_path "$TARGET/share/tbc-video-export/src/tbc_video_export/__main__.py"',
+    'require_path "$ROOT/usr/bin/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe"',
+    'require_path "$ROOT/usr/bin/vendor/vhs_decode_auto_audio_align/Binah.dll"',
+    'require_path "$TARGET/bin/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe"',
+    'require_path "$TARGET/bin/vendor/vhs_decode_auto_audio_align/Binah.dll"',
+    'tbc-video-export is not an ELF binary',
 )
 
 WINDOWS_REQUIRED_PACKAGES = (
@@ -127,6 +138,8 @@ def main() -> int:
         MACOS_WORKFLOW,
         RELEASE_WORKFLOW,
         WINDOWS_REQUIREMENTS,
+        LINUX_BUILD_REQUIREMENTS,
+        LINUX_PYINSTALLER_SCRIPT,
         BUNDLE_VERIFY_SCRIPT,
     ):
         if not required_file.exists():
@@ -153,6 +166,9 @@ def main() -> int:
 
     for snippet in BUNDLE_VERIFY_REQUIRED_SNIPPETS:
         check_contains(BUNDLE_VERIFY_SCRIPT, snippet, errors)
+
+    # PyInstaller build step must appear in both Linux jobs (x86 container + arm64).
+    check_count_at_least(LINUX_WORKFLOW, "Build self-contained tbc-video-export (PyInstaller)", 2, errors)
 
     requirements_content = WINDOWS_REQUIREMENTS.read_text(encoding="utf-8")
     requirements_lines = {

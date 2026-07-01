@@ -164,6 +164,21 @@ jobs:
 
       - name: Copy binaries to release directory
         run: Get-ChildItem -Recurse -Path build\\bin\\* -Include *.exe, *.dll | Copy-Item -Destination release\\
+      - name: Copy AAA (Auto Audio Align) vendor payload to release directory
+        # The "Copy binaries" step flattens *.exe/*.dll to the release root, which
+        # breaks the AAA resolver path (<appDir>\vendor\vhs_decode_auto_audio_align\)
+        # that audioalignmentutil.cpp expects for ld-analyse/tbc-audio-align.
+        # Restore the vendored VhsDecodeAutoAudioAlign.exe + Binah.dll under their
+        # resolver-expected subdir so the AAA feature works in the Windows release.
+        run: |
+          $vendorSrc = "build\\bin\\vendor\\vhs_decode_auto_audio_align"
+          $vendorDst = "release\\vendor\\vhs_decode_auto_audio_align"
+          if (-not (Test-Path "$vendorSrc\\VhsDecodeAutoAudioAlign.exe") -or -not (Test-Path "$vendorSrc\\Binah.dll")) {
+            throw "AAA vendor payload missing under $vendorSrc"
+          }
+          New-Item -ItemType Directory -Force -Path $vendorDst | Out-Null
+          Copy-Item -Path "$vendorSrc\\*" -Destination $vendorDst -Recurse -Force
+          Write-Host "Bundled AAA vendor payload to $vendorDst"
       - name: Copy ONNX Runtime DLLs to release directory
         run: |
           $onnxLibDir = "$env:ONNXRUNTIME_ROOT\\lib"
@@ -393,8 +408,11 @@ jobs:
             "release\\FLAC.dll",
             "release\\ld-lds-converter.exe",
             "release\\ld-analyse.exe",
+            "release\\tbc-video-export.exe",
             "release\\vcruntime140.dll",
-            "release\\vcruntime140_1.dll"
+            "release\\vcruntime140_1.dll",
+            "release\\vendor\\vhs_decode_auto_audio_align\\VhsDecodeAutoAudioAlign.exe",
+            "release\\vendor\\vhs_decode_auto_audio_align\\Binah.dll"
           )
           $missing = @()
           foreach ($f in $required) { if (-not (Test-Path $f)) { $missing += $f } }

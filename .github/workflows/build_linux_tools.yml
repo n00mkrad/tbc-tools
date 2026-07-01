@@ -46,7 +46,7 @@ jobs:
           FORCE_DNF=1 /usr/bin/crb enable
           dnf clean metadata
           dnf makecache --refresh
-          dnf --assumeyes --refresh install sudo git file xz ca-certificates patchelf libglvnd-opengl libglvnd-glx libglvnd-egl fftw-devel ffmpeg-devel ffmpeg pkgconf-pkg-config make cmake gcc-c++ python3
+          dnf --assumeyes --refresh install sudo git file xz ca-certificates patchelf libglvnd-opengl libglvnd-glx libglvnd-egl fftw-devel ffmpeg-devel ffmpeg pkgconf-pkg-config make cmake gcc-c++ python3 python3.11 python3.11-pip
           CI_USER="$(id -un)"
           echo "${CI_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ci-nopasswd
           chmod 0440 /etc/sudoers.d/ci-nopasswd
@@ -248,6 +248,29 @@ jobs:
             "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf"
           done
 
+      - name: Build self-contained tbc-video-export (PyInstaller)
+        # Replace the CMake bash wrapper (which execs a *host* Python with host
+        # site-packages) with a PyInstaller --onefile ELF binary that bundles the
+        # interpreter and all deps. Built with the container's system python3.11
+        # (glibc 2.28 baseline) so the bootloader uses the standard /lib64 loader
+        # and runs on any glibc >= 2.28 Linux without Nix store paths.
+        run: |
+          cd src/tbc-video-export
+          python3.11 -m pip install --upgrade pip
+          python3.11 -m pip install -r pyinstaller/requirements-build-linux.txt
+          export PYTHONPATH="$PWD/src"
+          mkdir -p build
+          python3.11 pyinstaller/build_linux.py
+          cd ../..
+          if [ ! -f src/tbc-video-export/dist/tbc-video-export ]; then
+            echo "PyInstaller did not produce src/tbc-video-export/dist/tbc-video-export"
+            exit 1
+          fi
+          # Overwrite the CMake bash wrapper with the self-contained ELF binary.
+          cp -f src/tbc-video-export/dist/tbc-video-export AppDir/usr/bin/tbc-video-export
+          chmod +x AppDir/usr/bin/tbc-video-export
+          echo "Bundled self-contained tbc-video-export PyInstaller binary"
+
       - name: Download linuxdeploy and build AppImage
         run: |
           curl -LJO ${{ env.APPIMAGE_URL }}
@@ -376,6 +399,11 @@ jobs:
             if echo "$base" | grep -Eq "$SKIP_LIB_REGEX"; then
               continue
             fi
+            # PyInstaller --onefile binaries self-extract their own libs; do not
+            # rewrite their rpath (would corrupt the bootloader archive).
+            if [ "$base" = "tbc-video-export" ]; then
+              continue
+            fi
             if ! "$PATCH_ELF_BIN" --print-rpath "$elf" >/dev/null 2>&1; then
               continue
             fi
@@ -388,6 +416,11 @@ jobs:
               [ -f "$exe" ] || continue
               [ -x "$exe" ] || continue
               if ! head -c 4 "$exe" 2>/dev/null | grep -q $'\177ELF'; then
+                continue
+              fi
+              # PyInstaller --onefile binaries must use the host loader, not the
+              # AppImage's bundled glibc loader (they self-extract their own libs).
+              if [ "$(basename "$exe")" = "tbc-video-export" ]; then
                 continue
               fi
               local name
@@ -488,6 +521,11 @@ jobs:
           run_target() {
             local target="$1"
             shift
+            # PyInstaller --onefile binaries self-extract and must run with the
+            # host loader, not the AppImage's bundled glibc loader/library-path.
+            if [ "$(basename "$target")" = "tbc-video-export" ]; then
+              exec "$target" "$@"
+            fi
             if head -c 4 "$target" 2>/dev/null | grep -q $'\177ELF'; then
               exec "$LOADER" --library-path "$APPDIR/usr/lib" "$target" "$@"
             fi
@@ -935,6 +973,11 @@ jobs:
           run_target() {
             local target="$1"
             shift
+            # PyInstaller --onefile binaries self-extract and must run with the
+            # host loader, not the bundled glibc loader/library-path.
+            if [ "$(basename "$target")" = "tbc-video-export" ]; then
+              exec "$target" "$@"
+            fi
             if head -c 4 "$target" 2>/dev/null | grep -q $'\177ELF'; then
               exec "$LOADER" --library-path "$SELF_DIR/lib" "$target" "$@"
             fi
@@ -959,6 +1002,28 @@ jobs:
           run_target "$SELF_DIR/bin/ld-analyse" --force-dark-theme "$@"
           EOF
           chmod +x release/tbc-tools-run
+
+      - name: Build self-contained tbc-video-export (PyInstaller)
+        # Replace the CMake bash wrapper (which execs a *host* Python with host
+        # site-packages) with a PyInstaller --onefile ELF binary that bundles the
+        # interpreter and all deps. Built with the runner's system python3 (3.12
+        # on ubuntu-24.04-arm) so the bootloader uses the standard system loader.
+        run: |
+          cd src/tbc-video-export
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r pyinstaller/requirements-build-linux.txt
+          export PYTHONPATH="$PWD/src"
+          mkdir -p build
+          python3 pyinstaller/build_linux.py
+          cd ../..
+          if [ ! -f src/tbc-video-export/dist/tbc-video-export ]; then
+            echo "PyInstaller did not produce src/tbc-video-export/dist/tbc-video-export"
+            exit 1
+          fi
+          # Overwrite the CMake bash wrapper with the self-contained ELF binary.
+          cp -f src/tbc-video-export/dist/tbc-video-export release/bin/tbc-video-export
+          chmod +x release/bin/tbc-video-export
+          echo "Bundled self-contained tbc-video-export PyInstaller binary"
 
       - name: Validate arm64 release bundle
         run: bash ci/verify_linux_bundle.sh arm64-release release

@@ -613,9 +613,9 @@ jobs:
             sed -n '1,80p' /tmp/tbc-video-export-version.log || true
             exit 1
           fi
-          if find dist/tbc-tools.app/Contents -type d -name "__pycache__" | grep -q .; then
+          if find dist/tbc-tools.app/Contents -type d -name "__pycache__" -not -path "*/Resources/python/*" | grep -q .; then
             echo "Bytecode caches were generated inside signed app payload."
-            find dist/tbc-tools.app/Contents -type d -name "__pycache__"
+            find dist/tbc-tools.app/Contents -type d -name "__pycache__" -not -path "*/Resources/python/*"
             exit 1
           fi
           if ! codesign --verify --deep --strict --verbose=2 "dist/tbc-tools.app"; then

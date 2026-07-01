@@ -40,6 +40,14 @@ jobs:
           submodules: true
           ref: ${{ inputs.checkout_ref || github.ref }}
 
+      - name: Setup Python
+        # tbc-video-export requires Python >=3.10 (uses structural pattern
+        # matching), but the macOS system /usr/bin/python3 is Xcode's 3.9.
+        # Install a compatible Python for the PyInstaller build step.
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
@@ -180,8 +188,11 @@ jobs:
         # current runner arch so the build-universal-macos lipo merge unifies it.
         run: |
           EXPORTER_ROOT="${{ github.workspace }}/src/tbc-video-export"
-          PYTHON_BIN="/usr/bin/python3"
-          if [ ! -x "$PYTHON_BIN" ]; then
+          # Use the Python 3.11 installed by the Setup Python step (on PATH as
+          # `python`), not the macOS system /usr/bin/python3 (Xcode 3.9, which
+          # cannot parse the package's 3.10+ structural pattern matching).
+          PYTHON_BIN="$(command -v python || true)"
+          if [ -z "$PYTHON_BIN" ]; then
             PYTHON_BIN="$(command -v python3 || true)"
           fi
           if [ -z "$PYTHON_BIN" ]; then

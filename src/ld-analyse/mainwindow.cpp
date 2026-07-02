@@ -3736,16 +3736,10 @@ void MainWindow::setViewValues()
 {
     qint32 currentNumber, maximum;
     QString buttonLabel, spinLabel;
-    const bool rgbScopeView = tbcSource.getRgbScopeViewEnabled();
 
 	if (this->width() >= 930)
 	{
-		if (rgbScopeView) {
-			currentNumber = currentFrameNumber;
-			maximum = tbcSource.getNumberOfFrames();
-			spinLabel = QString("Frame #:");
-			buttonLabel = QString("RGB Scope");
-		} else if (tbcSource.getFieldViewEnabled()) {
+		if (tbcSource.getFieldViewEnabled()) {
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
@@ -3768,12 +3762,7 @@ void MainWindow::setViewValues()
 	}
 	else
 	{
-		if (rgbScopeView) {
-			currentNumber = currentFrameNumber;
-			maximum = tbcSource.getNumberOfFrames();
-			spinLabel = QString("Frame #:");
-			buttonLabel = QString("RGB");
-		} else if (tbcSource.getFieldViewEnabled()) {
+		if (tbcSource.getFieldViewEnabled()) {
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
@@ -5094,6 +5083,33 @@ void MainWindow::on_actionEFM_Handler_triggered()
     efmHandlerDialog->raise();
     efmHandlerDialog->activateWindow();
     statusBar()->showMessage(tr("Opened EFM Handler. Configure EFM/AC3 stages and run the pipeline."), 5000);
+}
+
+void MainWindow::on_actionLDS_Converter_triggered()
+{
+    const QString toolPath = resolveExternalExecutable({QStringLiteral("ld-lds-converter")});
+    if (toolPath.isEmpty()) {
+        QMessageBox::warning(this, tr("Tool not found"),
+                             tr("ld-lds-converter was not found in PATH or alongside the application."));
+        return;
+    }
+
+    const QStringList toolArguments = {QStringLiteral("--gui")};
+    const QString workingDirectory = QFileInfo(toolPath).absolutePath();
+    qint64 launchedProcessId = 0;
+    const bool started = QProcess::startDetached(toolPath,
+                                                 toolArguments,
+                                                 workingDirectory,
+                                                 &launchedProcessId);
+    if (!started) {
+        QMessageBox::warning(this, tr("Launch failed"),
+                             tr("Could not launch ld-lds-converter as an independent application."));
+        return;
+    }
+
+    if (statusBar()) {
+        statusBar()->showMessage(tr("Opened LDS Converter as an independent application."), 5000);
+    }
 }
 // Start saving the modified metadata
 void MainWindow::on_actionSave_Metadata_triggered()
@@ -6678,10 +6694,10 @@ void MainWindow::on_viewPushButton_clicked()
                 // Set field mode with 2:1 aspect
                 tbcSource.setStretchField(true);
             } else {
-                tbcDebugStream() << "Changing to RGB_SCOPE_VIEW mode";
+                tbcDebugStream() << "Changing to FRAME_VIEW mode";
 
-                // Set RGB scope mode
-                tbcSource.setViewMode(TbcSource::ViewMode::RGB_SCOPE_VIEW);
+                // Set frame mode
+                tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
                 tbcSource.setStretchField(false);
             }
             break;
@@ -7514,9 +7530,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 				ui->viewPushButton->setText(tr("Field 1:1"));
 			}
 		} else {
-			if (tbcSource.getRgbScopeViewEnabled()) {
-				ui->viewPushButton->setText(tr("RGB Scope"));
-			} else if (tbcSource.getSplitViewEnabled()) {
+			if (tbcSource.getSplitViewEnabled()) {
 				ui->viewPushButton->setText(tr("Split View"));
 			} else {
 				ui->viewPushButton->setText(tr("Frame View"));
@@ -7532,9 +7546,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 				ui->viewPushButton->setText(tr("Field 1:1"));
 			}
 		} else {
-			if (tbcSource.getRgbScopeViewEnabled()) {
-				ui->viewPushButton->setText(tr("RGB"));
-			} else if (tbcSource.getSplitViewEnabled()) {
+			if (tbcSource.getSplitViewEnabled()) {
 				ui->viewPushButton->setText(tr("Split"));
 			} else {
 				ui->viewPushButton->setText(tr("Frame"));

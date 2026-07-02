@@ -85,7 +85,6 @@ class ContractCoverageTests(unittest.TestCase):
         expected = {
             "workflow_dispatch:",
             "workflow_call:",
-            "result/share/tbc-video-export",
             "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
             "/nix/store/*)",
             "dep_unique_name()",
@@ -94,6 +93,29 @@ class ContractCoverageTests(unittest.TestCase):
             "Bundled dependency verification failed.",
         }
         self.assertTrue(expected.issubset(set(check_ci_contracts.MACOS_REQUIRED_SNIPPETS)))
+
+    def test_macos_contract_covers_aaa_vendor_and_pyinstaller_self_containment(self) -> None:
+        expected = {
+            "Bundled AAA vendor payload to $AAA_VENDOR_DST",
+            "Build self-contained tbc-video-export (PyInstaller)",
+            "tbc-video-export is not a Mach-O binary",
+            "Missing AAA vendor payload: dist/tbc-tools.app/Contents/MacOS/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe",
+        }
+        self.assertTrue(expected.issubset(set(check_ci_contracts.MACOS_REQUIRED_SNIPPETS)))
+
+    def test_windows_contract_covers_aaa_vendor_bundling(self) -> None:
+        expected = {
+            "Copy AAA (Auto Audio Align) vendor payload to release directory",
+            "AAA vendor payload missing under",
+        }
+        self.assertTrue(expected.issubset(set(check_ci_contracts.WINDOWS_REQUIRED_SNIPPETS)))
+
+    def test_linux_contract_covers_pyinstaller_self_containment(self) -> None:
+        expected = {
+            "requirements-build-linux.txt",
+            "pyinstaller/build_linux.py",
+        }
+        self.assertTrue(expected.issubset(set(check_ci_contracts.LINUX_REQUIRED_SNIPPETS)))
 
     def test_macos_contract_forbids_host_dependency_capture(self) -> None:
         expected_forbidden = {
@@ -118,6 +140,16 @@ class ContractCoverageTests(unittest.TestCase):
             'run_smoke_test "arm64-launcher-tbc-video-export"',
             'require_path "$ROOT/usr/bin/tbc-video-export"',
             'require_path "$TARGET/bin/tbc-video-export"',
+        }
+        self.assertTrue(expected.issubset(set(check_ci_contracts.BUNDLE_VERIFY_REQUIRED_SNIPPETS)))
+
+    def test_bundle_verifier_contract_includes_aaa_vendor_and_elf_checks(self) -> None:
+        expected = {
+            'require_path "$ROOT/usr/bin/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe"',
+            'require_path "$ROOT/usr/bin/vendor/vhs_decode_auto_audio_align/Binah.dll"',
+            'require_path "$TARGET/bin/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe"',
+            'require_path "$TARGET/bin/vendor/vhs_decode_auto_audio_align/Binah.dll"',
+            'tbc-video-export is not an ELF binary',
         }
         self.assertTrue(expected.issubset(set(check_ci_contracts.BUNDLE_VERIFY_REQUIRED_SNIPPETS)))
 

@@ -119,6 +119,7 @@ private slots:
     void on_actionFix_JSON_SNR_triggered();
     void on_actionAuto_Audio_Align_triggered();
     void on_actionEFM_Handler_triggered();
+    void on_actionLDS_Converter_triggered();
     void on_actionTeletext_Viewer_triggered();
 
     // Media control frame handlers

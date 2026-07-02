@@ -28,15 +28,44 @@
 #include <QObject>
 #include <QDebug>
 #include <QFile>
+#include <FLAC/stream_encoder.h>
+#include <atomic>
+#include <cstdio>
 
 class DataConverter : public QObject
 {
     Q_OBJECT
 public:
-    explicit DataConverter(QString inputFileNameParam, QString outputFileNameParam, bool isPackingParam, bool isRIFFParam, QObject *parent = nullptr);
+    enum class OutputFormat {
+        Flac,
+        FlacLdf,
+        S16Raw,
+        RiffWave
+    };
+
+    // Flac and FlacLdf both write real FLAC containers; FlacLdf only differs
+    // in the on-disk extension (.ldf) used as a "LaserDisc FLAC" context label.
+    static bool isFlacFamily(OutputFormat outputFormatParam)
+    {
+        return outputFormatParam == OutputFormat::Flac || outputFormatParam == OutputFormat::FlacLdf;
+    }
+
+    explicit DataConverter(QString inputFileNameParam,
+                           QString outputFileNameParam,
+                           bool isPackingParam,
+                           OutputFormat outputFormatParam,
+                           int flacSampleRateParam = 40000,
+                           int flacCompressionLevelParam = 8,
+                           bool verifyOutputEnabledParam = false,
+                           QObject *parent = nullptr);
     bool process(void);
+    void requestCancel();
+    bool wasCancelled() const;
+    static QString outputExtensionForFormat(OutputFormat outputFormatParam);
+    static QString defaultOutputPath(const QString &inputFileNameParam, bool isPackingParam, OutputFormat outputFormatParam);
 
 signals:
+    void progressUpdated(qint64 processedBytes, qint64 totalBytes);
 
 public slots:
 
@@ -44,18 +73,34 @@ private:
     QString inputFileName;
     QString outputFileName;
     bool isPacking;
-    bool isRIFF;
+    OutputFormat outputFormat;
+    int flacSampleRate;
+    int flacCompressionLevel;
 
     QFile *inputFileHandle;
     QFile *outputFileHandle;
+    FLAC__StreamEncoder *flacEncoder;
+    qint64 totalInputBytes;
+    qint64 processedInputBytes;
+    qint64 nextOutputFlushInputBytes;
+    bool verifyOutputEnabled;
+    std::atomic_bool cancelRequested;
+    std::atomic_bool conversionCancelled;
+    FILE *flacOutputFileHandle;
+    bool closeFlacOutputFileHandle;
 
     // Private methods
     bool openInputFile(void);
     void closeInputFile(void);
     bool openOutputFile(void);
     void closeOutputFile(void);
-    void packFile(void);
-    void unpackFile(void);
+    bool flushOutputBuffersIfNeeded(bool forceFlush = false);
+    bool verifyOutputFile(void) const;
+    bool openFlacEncoder(void);
+    bool writeRiffHeader(void);
+    bool writeUnpackedSamples(const qint16 *samples, qint32 sampleCount);
+    bool packFile(void);
+    bool unpackFile(void);
 };
 
 #endif // DATACONVERTER_H

@@ -41,6 +41,7 @@
 #include "metadataexportdialog.h"
 
 #include "tbc/logging.h"
+#include "tbc/uistyle.h"
 #include "lddecodemetadata.h"
 #ifdef Q_OS_WIN
 #include <QSettings>
@@ -281,10 +282,9 @@ int main(int argc, char *argv[])
     qInstallMessageHandler(debugOutputHandler);
     if (wantsGui(argc, argv)) {
         detachConsoleWindowForGui();
+        tbc::ui::normalizeUnsupportedStyleOverrideToFusion();
         QApplication a(argc, argv);
-        if (QStyleFactory::keys().contains(QStringLiteral("Fusion"), Qt::CaseInsensitive)) {
-            a.setStyle(QStringLiteral("Fusion"));
-        }
+        tbc::ui::applyFusionStyleIfAvailable(a);
 
         // Set application name and version
         QCoreApplication::setApplicationName("tbc-export-metadata");
@@ -313,6 +313,7 @@ int main(int argc, char *argv[])
         if (forceDarkTheme || isDarkModeEnabled()) {
             applyDarkTheme(a);
         }
+        tbc::ui::enforceInputWidgetContrast(a);
 
         MetadataExportDialog::InitialOptions initialOptions;
         initialOptions.inputFile = resolveInputFilename(parser, options, false);

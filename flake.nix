@@ -27,6 +27,7 @@
         isLinuxX86_64 = isLinux && pkgsUnstable.stdenv.hostPlatform.isx86_64;
         enableCuda = isLinuxX86_64;
         pkgs = if isLinux then legacyPkgs else pkgsUnstable;
+        flacPackage = if isLinux then pkgsUnstable.flac else pkgs.flac;
         # Vendor older CUDA package sets from legacy nixpkgs for Pascal/GTX 1000 support.
         # Keep both sets available; default to CUDA 11.8 for pre-Volta compatibility.
         vendoredCudaPackages11 = if enableCuda then legacyPkgs.cudaPackages_11_8 else null;
@@ -112,7 +113,7 @@
         runtimeLibraryPath = pkgs.lib.optionalString isLinux (pkgs.lib.makeLibraryPath ([ onnxruntimePackage ] ++ cudaRuntimeDependencies));
       in
       let
-        packageVersion = "3.2.2";
+        packageVersion = "3.2.3";
         rev = if self ? rev then self.rev else "";
         shortRev = if self ? shortRev then self.shortRev else (if rev != "" then builtins.substring 0 7 rev else "unknown");
         dirtySuffix = if self ? dirtyRev then "-dirty" else "";
@@ -152,6 +153,7 @@
             qt6.qtbase
             qt6.qtsvg
             fftw
+            flacPackage
             ffmpeg
             sqlite
             libGL
@@ -192,6 +194,7 @@
             qt6.qtbase
             qt6.qtsvg
             fftw
+            flacPackage
             ffmpeg
             sqlite
             libGL

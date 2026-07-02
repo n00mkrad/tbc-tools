@@ -167,7 +167,15 @@ case "$MODE" in
     require_path "$ROOT/usr/bin/ld-process-vbi"
     require_path "$ROOT/usr/bin/tbc-video-export"
     require_path "$ROOT/usr/bin/qt.conf"
-    require_path "$ROOT/usr/share/tbc-video-export/src/tbc_video_export/__main__.py"
+    # AAA (Auto Audio Align) vendor payload must be bundled at the resolver path.
+    require_path "$ROOT/usr/bin/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe"
+    require_path "$ROOT/usr/bin/vendor/vhs_decode_auto_audio_align/Binah.dll"
+    # tbc-video-export is now a self-contained PyInstaller ELF binary, not a
+    # bash wrapper + package source. Verify it is an ELF executable.
+    if ! head -c 4 "$ROOT/usr/bin/tbc-video-export" 2>/dev/null | grep -q $'\177ELF'; then
+      echo "tbc-video-export is not an ELF binary (expected PyInstaller --onefile): $ROOT/usr/bin/tbc-video-export" >&2
+      exit 1
+    fi
     require_no_nix_store_shebang "$ROOT/AppRun"
     for candidate in "$ROOT"/usr/bin/*; do
       [ -f "$candidate" ] || continue
@@ -202,7 +210,15 @@ case "$MODE" in
     require_path "$TARGET/bin/ld-process-vbi"
     require_path "$TARGET/bin/tbc-video-export"
     require_path "$TARGET/bin/qt.conf"
-    require_path "$TARGET/share/tbc-video-export/src/tbc_video_export/__main__.py"
+    # AAA (Auto Audio Align) vendor payload must be bundled at the resolver path.
+    require_path "$TARGET/bin/vendor/vhs_decode_auto_audio_align/VhsDecodeAutoAudioAlign.exe"
+    require_path "$TARGET/bin/vendor/vhs_decode_auto_audio_align/Binah.dll"
+    # tbc-video-export is now a self-contained PyInstaller ELF binary, not a
+    # bash wrapper + package source. Verify it is an ELF executable.
+    if ! head -c 4 "$TARGET/bin/tbc-video-export" 2>/dev/null | grep -q $'\177ELF'; then
+      echo "tbc-video-export is not an ELF binary (expected PyInstaller --onefile): $TARGET/bin/tbc-video-export" >&2
+      exit 1
+    fi
     require_no_nix_store_shebang "$TARGET/tbc-tools-run"
     for candidate in "$TARGET"/bin/*; do
       [ -f "$candidate" ] || continue
